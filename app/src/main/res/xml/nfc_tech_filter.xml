@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tags QuickScanActivity accepts via TECH_DISCOVERED (blank or with content
+     no other app claimed): anything NDEF-capable, formatted or not. -->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <tech-list>
+        <tech>android.nfc.tech.Ndef</tech>
+    </tech-list>
+    <tech-list>
+        <tech>android.nfc.tech.NdefFormatable</tech>
+    </tech-list>
+</resources>

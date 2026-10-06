@@ -1,0 +1,15 @@
+.gradle/
+build/
+/app/build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+
+# Private settings and notes
+config.properties
+CLAUDE.md
+/.claude/
+*.jks
+*.keystore

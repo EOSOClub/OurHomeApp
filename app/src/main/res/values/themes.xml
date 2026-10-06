@@ -1,0 +1,11 @@
+<resources>
+    <!-- Window theme only; Compose draws everything via OurHomeTheme. Dark to
+         match the app's default theme, so launch doesn't flash white. -->
+    <style name="Theme.OurHome" parent="android:Theme.Material.NoActionBar" />
+
+    <!-- QuickScanActivity: no window content, no animation, nothing drawn. -->
+    <style name="Theme.OurHome.Invisible" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowNoDisplay">false</item>
+    </style>
+</resources>
