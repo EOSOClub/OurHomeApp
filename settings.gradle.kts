@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "OurHome"
-include(":app")
+include(":OurHomeApp")
