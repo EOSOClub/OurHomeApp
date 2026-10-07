@@ -12,13 +12,18 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.eosoclub.ourhome.OurHomeApp
 import com.eosoclub.ourhome.MainActivity
 import com.eosoclub.ourhome.R
@@ -31,19 +36,30 @@ import com.eosoclub.ourhome.data.summary
 import java.util.concurrent.TimeUnit
 
 /**
- * Periodic "requests are waiting for you" reminders.
+ * "Requests are waiting for you" reminders, plus the shared check that also
+ * drives [DeadlineReminders] and [BugReportAlerts].
  *
- * There is no push service yet, so a WorkManager job polls the server every
- * [INTERVAL_HOURS] while the user is signed in. Each run re-posts the
- * notification (and alerts again) for as long as something still awaits the
- * user's acceptance, and clears it once nothing does. Android may defer runs
- * in battery saver / Doze, so timing is approximate.
+ * A WorkManager job polls the server every [INTERVAL_HOURS] while the user is
+ * signed in. Each hourly run re-posts the notification (and alerts again) for
+ * as long as something still awaits the user's acceptance, and clears it once
+ * nothing does. Android may defer runs in battery saver / Doze, so timing is
+ * approximate.
+ *
+ * With instant alerts set up ([Push]), the server also wakes the phone when
+ * something changes and [checkNow] runs the same check at once. A push run
+ * alerts only for requests it hasn't alerted about yet, so a push about
+ * something else doesn't re-ring for requests already shown; the hourly run
+ * stays the repeating reminder.
  */
 object RequestReminders {
     const val INTERVAL_HOURS = 1L
     private const val WORK_NAME = "request-reminders"
+    private const val NOW_WORK_NAME = "request-reminders-now"
+    private const val KEY_FROM_PUSH = "from_push"
     private const val CHANNEL_ID = "requests"
     private const val NOTIFICATION_ID = 1001
+    private const val PREFS = "request_reminders"
+    private const val KEY_SHOWN = "shown_ids"
     private const val TAG = "RequestReminders"
 
     /** Intent extra asking MainActivity to open the Requests tab. */
@@ -58,8 +74,24 @@ object RequestReminders {
             .enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 
+    /**
+     * Runs the check right away, for a push. Expedited so a dozing phone runs
+     * it within seconds; queued behind a check already running (APPEND) so
+     * back-to-back pushes never cancel one mid-way or get dropped.
+     */
+    fun checkNow(context: Context) {
+        val request = OneTimeWorkRequestBuilder<Worker>()
+            .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setInputData(workDataOf(KEY_FROM_PUSH to true))
+            .build()
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(NOW_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+    }
+
     fun cancel(context: Context) {
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+        WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK_NAME)
         clear(context)
     }
 
@@ -107,7 +139,31 @@ object RequestReminders {
         }
     }
 
-    fun clear(context: Context) = NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+    /**
+     * Posts or clears the reminder for what's waiting now. [onlyIfNew] (push
+     * runs) skips the post when every waiting request was already in the last
+     * one, so the user isn't re-alerted; the hourly run passes false.
+     */
+    private fun update(context: Context, waiting: List<HouseholdRequest>, onlyIfNew: Boolean) {
+        if (waiting.isEmpty()) {
+            clear(context)
+            return
+        }
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val shown = prefs.getStringSet(KEY_SHOWN, emptySet())!!
+        val ids = waiting.map { it.id }.toSet()
+        if (onlyIfNew && shown.containsAll(ids)) {
+            Log.i(TAG, "nothing new since the last reminder; staying quiet")
+            return
+        }
+        show(context, waiting)
+        prefs.edit { putStringSet(KEY_SHOWN, ids) }
+    }
+
+    fun clear(context: Context) {
+        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { remove(KEY_SHOWN) }
+    }
 
     class Worker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
         override suspend fun doWork(): Result {
@@ -119,10 +175,11 @@ object RequestReminders {
                     clear(applicationContext)
                     return Result.success()
                 }
+                val fromPush = inputData.getBoolean(KEY_FROM_PUSH, false)
                 val requests = api.requests()
                 val waiting = awaitingAcceptanceBy(requests, user.id, user.role)
-                Log.i(TAG, "${waiting.size} request(s) awaiting acceptance")
-                if (waiting.isEmpty()) clear(applicationContext) else show(applicationContext, waiting)
+                Log.i(TAG, "${waiting.size} request(s) awaiting acceptance (${if (fromPush) "push" else "hourly"})")
+                update(applicationContext, waiting, onlyIfNew = fromPush)
                 DeadlineReminders.check(applicationContext, requests, user.id)
                 // Same poll, so bug reports share the cadence; a failure here
                 // must not undo the request check above.

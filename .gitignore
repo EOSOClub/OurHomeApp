@@ -9,6 +9,7 @@ captures/
 
 # Private settings and notes
 config.properties
+google-services.json
 CLAUDE.md
 /.claude/
 *.jks

@@ -8,6 +8,14 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Instant alerts (Firebase Cloud Messaging) are optional: the plugin is only
+// applied when this install's google-services.json (gitignored) is present.
+// Without it the app builds and runs normally on its hourly check alone.
+// Setup: docs/push-notifications.md in the web repo.
+if (file("google-services.json").exists()) {
+    apply(plugin = libs.plugins.google.services.get().pluginId)
+}
+
 // Private per-install settings (gitignored). See config.example.properties.
 val appConfig = Properties().apply {
     val f = rootProject.file("config.properties")
@@ -66,6 +74,9 @@ dependencies {
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
+
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
 
     testImplementation(libs.junit)
 }

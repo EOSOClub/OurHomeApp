@@ -34,7 +34,7 @@ Dashboard, tasks (with steps), shopping list, inventory, bills, requests, notifi
 Controls a role can't use are hidden. The server enforces the real rules.
 
 ### 🔔 Phone notifications
-Request reminders, deadline reminders and bug-report alerts, from an hourly background check.
+Request reminders, deadline reminders and bug-report alerts, from an hourly background check. Add Firebase and they arrive **instantly**. The push carries no content: the phone fetches the details from your server.
 
 </td>
 <td width="50%" valign="top">
@@ -71,7 +71,8 @@ Dark theme with Material You colors.
 
    > [!TIP]
    > If you skip this step, the sign-in screen asks for the server address. You can always change it there under **Server**.
-4. **Build and install:**
+4. **Optional: instant alerts.** Put your Firebase project's `google-services.json` in the `OurHomeApp/` module folder (it's gitignored) and set the matching key on the server. Step-by-step: [docs/push-notifications.md](https://github.com/EOSOClub/OurHome/blob/main/docs/push-notifications.md). Without it, notifications come from the hourly check.
+5. **Build and install:**
    ```bash
    ./gradlew installDebug
    ```
@@ -93,6 +94,7 @@ Sign in with an account created on the web app. 🎉
 | **UI** | Kotlin + Jetpack Compose (Material 3) |
 | **Networking** | OkHttp, kotlinx.serialization |
 | **Background work** | WorkManager |
+| **Instant alerts** | Firebase Cloud Messaging (optional) |
 
 > [!WARNING]
 > The role matrix in `data/Permissions.kt` mirrors `src/lib/permissions.ts` in the [web repo](https://github.com/EOSOClub/OurHome). **Keep the two in sync.**

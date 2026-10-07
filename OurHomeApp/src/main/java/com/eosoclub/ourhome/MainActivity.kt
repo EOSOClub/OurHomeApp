@@ -29,6 +29,7 @@ import com.eosoclub.ourhome.data.ThemeMode
 import com.eosoclub.ourhome.nfc.NfcScans
 import com.eosoclub.ourhome.nfc.TagFormat
 import com.eosoclub.ourhome.nfc.TagRef
+import com.eosoclub.ourhome.notifications.Push
 import com.eosoclub.ourhome.notifications.RequestReminders
 import com.eosoclub.ourhome.ui.HomeScreen
 import com.eosoclub.ourhome.ui.LoginScreen
@@ -125,9 +126,14 @@ private fun Root(
         if (session.state.value == AuthState.Checking) session.restore()
     }
     // Background request reminders run only while someone is signed in.
+    // Registering for instant alerts on every sign-in/launch also keeps the
+    // server's copy of this phone's token fresh.
     LaunchedEffect(state is AuthState.SignedIn, state is AuthState.SignedOut) {
         when (state) {
-            is AuthState.SignedIn -> RequestReminders.schedule(context)
+            is AuthState.SignedIn -> {
+                RequestReminders.schedule(context)
+                Push.register(context)
+            }
             is AuthState.SignedOut -> RequestReminders.cancel(context)
             AuthState.Checking -> Unit
         }

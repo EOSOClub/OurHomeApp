@@ -455,6 +455,16 @@ class ApiClient(
     suspend fun notifications(unreadOnly: Boolean = false): NotificationList =
         call(get("/api/notifications?limit=50&unreadOnly=$unreadOnly"), NotificationList.serializer())
 
+    // --- Instant alerts (FCM) ------------------------------------------------
+
+    /** Tells the server this install's FCM token belongs to the signed-in user. */
+    suspend fun registerPushDevice(token: String) =
+        callUnit(post("/api/push/devices", buildJsonObject { put("token", token) }))
+
+    /** Stops pushes to this install; called just before signing out. */
+    suspend fun unregisterPushDevice(token: String) =
+        callUnit(post("/api/push/devices/delete", buildJsonObject { put("token", token) }))
+
     // --- Bug reports ---------------------------------------------------------
 
     /** Files a bug report; the server notifies the head and emails support. */

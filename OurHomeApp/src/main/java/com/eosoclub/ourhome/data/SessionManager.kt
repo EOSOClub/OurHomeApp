@@ -3,6 +3,7 @@ package com.eosoclub.ourhome.data
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.eosoclub.ourhome.BuildConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -77,7 +78,21 @@ class SessionManager(private val prefs: SharedPreferences, cookiePrefs: SharedPr
         _state.value = AuthState.SignedIn(current.user.copy(mustChangePassword = false))
     }
 
+    /** The FCM token last registered with the server, so sign-out can remove it. */
+    fun rememberPushToken(token: String) = prefs.edit { putString(KEY_PUSH_TOKEN, token) }
+
     suspend fun signOut() {
+        // While the session still works: stop this phone getting the account's
+        // alerts (matters on a shared phone). Best-effort; a stale token only
+        // wakes a signed-out app, which finds no session and stays quiet.
+        prefs.getString(KEY_PUSH_TOKEN, null)?.let { token ->
+            try {
+                api.unregisterPushDevice(token)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
+        }
+        prefs.edit { remove(KEY_PUSH_TOKEN) }
         api.signOut()
         _state.value = AuthState.SignedOut()
     }
@@ -89,5 +104,6 @@ class SessionManager(private val prefs: SharedPreferences, cookiePrefs: SharedPr
 
     private companion object {
         const val KEY_BASE_URL = "base_url"
+        const val KEY_PUSH_TOKEN = "push_token"
     }
 }
