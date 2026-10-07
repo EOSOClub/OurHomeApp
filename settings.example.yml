@@ -1,0 +1,8 @@
+# Our Home (Android app): build settings. Copy to settings.yml (gitignored) and
+# fill it in; the build reads it, so rebuild after a change.
+
+server:
+  # Your OurHomeWeb server, built in as the default address. Leave it blank to
+  # type the address on the sign-in screen instead (it can always be changed
+  # there under Server).
+  url: https://home.example.com

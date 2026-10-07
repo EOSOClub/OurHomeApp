@@ -1,6 +1,12 @@
 // AGP 9 compiles Kotlin itself ("built-in Kotlin"), so there is no
 // org.jetbrains.kotlin.android plugin here — only the compiler plugins.
-import java.util.Properties
+import org.yaml.snakeyaml.Yaml
+
+// SnakeYAML on the build classpath, to read settings.yml below.
+buildscript {
+    repositories { mavenCentral() }
+    dependencies { classpath(libs.snakeyaml) }
+}
 
 plugins {
     alias(libs.plugins.android.application)
@@ -16,10 +22,17 @@ if (file("google-services.json").exists()) {
     apply(plugin = libs.plugins.google.services.get().pluginId)
 }
 
-// Private per-install settings (gitignored). See config.example.properties.
-val appConfig = Properties().apply {
-    val f = rootProject.file("config.properties")
-    if (f.exists()) f.inputStream().use { load(it) }
+// Private per-install settings (gitignored). See settings.example.yml.
+val appSettings: Map<*, *> = rootProject.file("settings.yml").let { f ->
+    if (!f.exists()) emptyMap<Any, Any>()
+    else f.reader().use { Yaml().load<Any?>(it) } as? Map<*, *> ?: emptyMap<Any, Any>()
+}
+
+/** A value from settings.yml by key path, e.g. setting("server", "url"); "" if unset. */
+fun setting(vararg path: String): String {
+    var node: Any? = appSettings
+    for (key in path) node = (node as? Map<*, *>)?.get(key)
+    return node?.toString()?.trim().orEmpty()
 }
 
 android {
@@ -35,9 +48,9 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        // Default server from config.properties; blank means the sign-in
-        // screen asks for it. Always editable there.
-        val baseUrl = appConfig.getProperty("server.url", "").trim()
+        // Default server from settings.yml (server.url); blank means the
+        // sign-in screen asks for it. Always editable there.
+        val baseUrl = setting("server", "url")
         buildConfigField("String", "DEFAULT_BASE_URL", "\"$baseUrl\"")
     }
 

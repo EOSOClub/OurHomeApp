@@ -12,6 +12,7 @@ work = "2.12.0"
 junit = "4.13.2"
 firebaseBom = "34.19.0"
 googleServices = "4.5.0"
+snakeyaml = "2.3"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -30,6 +31,8 @@ androidx-work-runtime-ktx ={ module = "androidx.work:work-runtime-ktx", version.
 kotlinx-serialization-json ={ module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
 firebase-messaging = { module = "com.google.firebase:firebase-messaging" }
+# Build-time only: reads settings.yml in OurHomeApp/build.gradle.kts.
+snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

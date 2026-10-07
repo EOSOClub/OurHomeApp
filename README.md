@@ -65,9 +65,9 @@ Dark theme with Material You colors.
 2. **Clone this repo** and open it in Android Studio.
 3. **Optional: set a default server.**
    ```bash
-   cp config.example.properties config.properties
+   cp settings.example.yml settings.yml
    ```
-   Edit `server.url` to point at your OurHomeWeb server (e.g. `https://home.example.com`). `config.properties` is gitignored.
+   Set `server.url` to your OurHomeWeb server (e.g. `https://home.example.com`), then rebuild. `settings.yml` is gitignored.
 
    > [!TIP]
    > If you skip this step, the sign-in screen asks for the server address. You can always change it there under **Server**.

@@ -8,7 +8,7 @@ local.properties
 captures/
 
 # Private settings and notes
-config.properties
+settings.yml
 google-services.json
 CLAUDE.md
 /.claude/
