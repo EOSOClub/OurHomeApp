@@ -34,10 +34,18 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import android.content.Context
+import com.eosoclub.ourhome.BuildConfig
+import com.eosoclub.ourhome.data.AppRelease
+import com.eosoclub.ourhome.data.AppUpdate
 import com.eosoclub.ourhome.data.ProfileOverview
 import com.eosoclub.ourhome.data.SessionManager
 import kotlinx.coroutines.channels.Channel
@@ -68,6 +76,10 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
         val changingPassword: Boolean = false,
         /** Bumped after a successful password change so the form clears. */
         val passwordFormKey: Int = 0,
+        /** The app build the server offers (null = none, or couldn't ask). */
+        val release: AppRelease? = null,
+        /** 0..1 while an update downloads, else null. */
+        val downloadProgress: Float? = null,
     )
 
     private val api = session.api
@@ -83,6 +95,24 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
             } catch (e: Exception) {
                 it.copy(loading = false, error = e.message)
             }
+        }
+        // Separate, so an older server (no /api/app/info) still shows the profile.
+        val release = runCatching { api.appRelease() }.getOrNull()
+        state.update { it.copy(release = release) }
+    }
+
+    /** Downloads the offered update with this session, checks it, then opens Android's installer. */
+    fun downloadAndInstall(context: Context) = viewModelScope.launch {
+        val release = state.value.release ?: return@launch
+        if (state.value.downloadProgress != null) return@launch
+        state.update { it.copy(downloadProgress = 0f) }
+        try {
+            val apk = AppUpdate.download(context, api, release) { p -> state.update { it.copy(downloadProgress = p) } }
+            AppUpdate.install(context, apk)
+        } catch (e: Exception) {
+            _messages.send(e.message ?: "Couldn't download the update")
+        } finally {
+            state.update { it.copy(downloadProgress = null) }
         }
     }
 
@@ -158,6 +188,10 @@ fun ProfileScreen(
                 }
             }
             AccountCard(profile)
+            state.release?.let { release ->
+                val context = LocalContext.current
+                AppUpdateCard(release, state.downloadProgress) { vm.downloadAndInstall(context.applicationContext) }
+            }
             // Keyed on the saved values so the form resets to them after a save.
             key(profile.name, profile.username, profile.email) {
                 EditProfileCard(profile, saving = state.savingProfile, onSave = vm::saveProfile)
@@ -210,6 +244,52 @@ private fun SectionCard(title: String, subtitle: String, content: @Composable ()
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             content()
+        }
+    }
+}
+
+/**
+ * The server's own build of this app (from the web deploy): up to date, or an
+ * update to download and install. Android asks once to allow installs from Our
+ * Home, then confirms each install; an update keeps the user signed in.
+ */
+@Composable
+private fun AppUpdateCard(release: AppRelease, progress: Float?, onUpdate: () -> Unit) {
+    val context = LocalContext.current
+    val sameApp = release.appId == context.packageName
+    val update = remember(release) { AppUpdate.isUpdate(context, release) }
+    // Re-checked on return from Settings, where installs are allowed.
+    var canInstall by remember { mutableStateOf(AppUpdate.canInstall(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { canInstall = AppUpdate.canInstall(context) }
+    val size = "%.1f MB".format(release.sizeBytes / 1_048_576.0)
+
+    SectionCard("Android app", "Installed: version ${BuildConfig.VERSION_NAME}") {
+        when {
+            !sameApp -> Text(
+                "This server offers its app as ${release.appId}, a separate install from this one " +
+                    "(${context.packageName}). Get it from Profile on the site.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            !update -> Text("You have the latest version.", style = MaterialTheme.typography.bodyMedium)
+            progress != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                Text("Downloading… ${(progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+            }
+            !canInstall -> {
+                Text(
+                    "Version ${release.versionName} is ready ($size). First allow Our Home to install it " +
+                        "(once), then come back here.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Button(onClick = { AppUpdate.openInstallPermission(context) }) { Text("Allow installs from Our Home") }
+            }
+            else -> {
+                Text(
+                    "Version ${release.versionName} is ready ($size). It installs over this one, so you stay signed in.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Button(onClick = onUpdate) { Text("Download and install") }
+            }
         }
     }
 }
