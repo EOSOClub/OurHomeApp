@@ -51,9 +51,11 @@ internal fun TaskEditor(
     task: Task,
     members: List<Member>?,
     saving: Boolean,
+    /** False when the user may only delete this task, not change it. */
+    canSave: Boolean,
     onDismiss: () -> Unit,
     onSave: (TaskEdit) -> Unit,
-    onDelete: () -> Unit,
+    onDelete: (() -> Unit)?,
 ) {
     var title by remember { mutableStateOf(task.title) }
     var notes by remember { mutableStateOf(task.notes.orEmpty()) }
@@ -68,9 +70,9 @@ internal fun TaskEditor(
     }
 
     EditorDialog(
-        title = "Edit task",
+        title = if (canSave) "Edit task" else "Task",
         saving = saving,
-        saveEnabled = title.isNotBlank(),
+        saveEnabled = canSave && title.isNotBlank(),
         onDismiss = onDismiss,
         onSave = {
             onSave(

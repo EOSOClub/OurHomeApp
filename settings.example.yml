@@ -6,3 +6,10 @@ server:
   # type the address on the sign-in screen instead (it can always be changed
   # there under Server).
   url: https://home.example.com
+
+app:
+  # The installed app's id (Android package name). Blank = com.eosoclub.ourhome.
+  # For instant alerts it must match the Android package name in your Firebase
+  # project (the web deploy's setup asks for it and prints the value to use).
+  # Changing it installs a separate app: uninstall the old one, sign in again.
+  id:

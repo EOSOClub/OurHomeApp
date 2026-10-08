@@ -49,10 +49,9 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.Member
-import com.eosoclub.ourhome.data.Permission
+import com.eosoclub.ourhome.data.PageAccess
 import com.eosoclub.ourhome.data.Subtask
 import com.eosoclub.ourhome.data.Task
-import com.eosoclub.ourhome.data.can
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -201,8 +200,13 @@ private val PRIORITIES = listOf("low", "medium", "high", "urgent")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TasksScreen(api: ApiClient, role: String?, showMessage: (String) -> Unit, modifier: Modifier = Modifier) {
-    val canWrite = can(role, Permission.TasksWrite)
+fun TasksScreen(
+    api: ApiClient,
+    access: PageAccess,
+    userId: String,
+    showMessage: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val vm = viewModel { TasksViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
     var adding by remember { mutableStateOf(false) }
@@ -237,13 +241,18 @@ fun TasksScreen(api: ApiClient, role: String?, showMessage: (String) -> Unit, mo
                             onToggleExpanded = { vm.toggleExpanded(task.id) },
                             onComplete = { vm.complete(task) },
                             onToggleStep = { step -> vm.toggleStep(task, step) },
-                            onEdit = if (canWrite) ({ vm.startEdit(task) }) else null,
+                            // The editor also holds Delete, so either opens it.
+                            onEdit = if (access.canEdit(task.createdById, userId) || access.canDelete(task.createdById, userId)) {
+                                { vm.startEdit(task) }
+                            } else {
+                                null
+                            },
                         )
                     }
                 }
             }
         }
-        if (canWrite) {
+        if (access.create) {
             FloatingActionButton(
                 onClick = { adding = true },
                 modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
@@ -257,8 +266,9 @@ fun TasksScreen(api: ApiClient, role: String?, showMessage: (String) -> Unit, mo
             members = state.members,
             saving = state.saving,
             onDismiss = vm::cancelEdit,
+            canSave = access.canEdit(task.createdById, userId),
             onSave = { edit -> vm.save(task, edit) },
-            onDelete = { vm.delete(task) },
+            onDelete = if (access.canDelete(task.createdById, userId)) ({ vm.delete(task) }) else null,
         )
     }
 

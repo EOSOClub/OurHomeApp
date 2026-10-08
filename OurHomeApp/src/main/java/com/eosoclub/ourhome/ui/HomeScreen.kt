@@ -60,14 +60,20 @@ import com.eosoclub.ourhome.data.SessionManager
 import com.eosoclub.ourhome.data.SessionUser
 import com.eosoclub.ourhome.data.ThemeMode
 import com.eosoclub.ourhome.data.DeadlineState
-import com.eosoclub.ourhome.data.Permission
-import com.eosoclub.ourhome.data.can
+import com.eosoclub.ourhome.data.AccessMatrix
+import com.eosoclub.ourhome.data.ApiClient
+import com.eosoclub.ourhome.data.defaultAccess
 import com.eosoclub.ourhome.nfc.NfcScans
 import com.eosoclub.ourhome.data.awaitingAcceptanceBy
 import com.eosoclub.ourhome.data.deadlineAlerts
 import com.eosoclub.ourhome.data.isOpen
 import com.eosoclub.ourhome.notifications.RequestReminders
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /** [label] titles the top bar; [short] fits six items in the bottom bar (matches the web's mobile nav). */
@@ -116,10 +122,14 @@ fun HomeScreen(
     // tab's list come from one fetch.
     val requests = viewModel { RequestsViewModel(session.api) }
     val requestsState by requests.state.collectAsStateWithLifecycle()
-    // Keep both badges current as the user moves around.
+    // What this user may add/edit/delete per page (set by the head on the website).
+    val accessVm = viewModel { AccessViewModel(session.api, user.role) }
+    val access by accessVm.access.collectAsStateWithLifecycle()
+    // Keep both badges and the permissions current as the user moves around.
     LaunchedEffect(tab) {
         notifications.refresh()
         requests.refresh()
+        accessVm.refresh()
     }
 
     // Waiting for my acceptance, plus my own maintenance due today or overdue.
@@ -282,6 +292,7 @@ fun HomeScreen(
                 tab,
                 session,
                 user,
+                access,
                 showMessage,
                 onOpenTab = { tab = it },
                 onOpenScanHistory = { overlay = Overlay.ScanHistory },
@@ -291,7 +302,8 @@ fun HomeScreen(
     }
 
     // Refresh stock afterwards so the Inventory tab shows the new numbers.
-    ScanSheet(scan, canWrite = can(user.role, Permission.InventoryWrite), onFinished = { inventory.refresh() })
+    // ± stock and binding a tag need any Inventory access (as on the server).
+    ScanSheet(scan, canWrite = access.inventory.any, onFinished = { inventory.refresh() })
 
     if (reportingBug) {
         BugReportDialog(
@@ -326,6 +338,7 @@ private fun TabContent(
     tab: Tab,
     session: SessionManager,
     user: SessionUser,
+    access: AccessMatrix,
     showMessage: (String) -> Unit,
     onOpenTab: (Tab) -> Unit,
     onOpenScanHistory: () -> Unit,
@@ -333,10 +346,28 @@ private fun TabContent(
 ) {
     when (tab) {
         Tab.Home -> DashboardScreen(session.api, user.name ?: user.username, onOpenTab = onOpenTab, modifier = modifier)
-        Tab.Tasks -> TasksScreen(session.api, user.role, showMessage, modifier)
-        Tab.Shopping -> ShoppingScreen(session.api, user.role, showMessage, modifier)
-        Tab.Inventory -> InventoryScreen(session.api, user.role, showMessage, onOpenScanHistory, modifier)
-        Tab.Bills -> BillsScreen(session.api, user.role, showMessage, modifier)
-        Tab.Requests -> RequestsScreen(session.api, user, showMessage, modifier)
+        Tab.Tasks -> TasksScreen(session.api, access.tasks, user.id, showMessage, modifier)
+        Tab.Shopping -> ShoppingScreen(session.api, access.shopping, user.id, showMessage, modifier)
+        Tab.Inventory -> InventoryScreen(session.api, access.inventory, user.id, showMessage, onOpenScanHistory, modifier)
+        Tab.Bills -> BillsScreen(session.api, access.bills, user.id, showMessage, modifier)
+        Tab.Requests -> RequestsScreen(session.api, user, canSubmit = access.requests.create, showMessage, modifier)
+    }
+}
+
+/**
+ * The signed-in user's page access from `GET /api/permissions/me`. Starts from
+ * the role's built-in defaults so screens render immediately; keeps the last
+ * good grid when a refresh fails (offline, or a server without the endpoint).
+ */
+internal class AccessViewModel(private val api: ApiClient, role: String?) : ViewModel() {
+    private val _access = MutableStateFlow(defaultAccess(role))
+    val access: StateFlow<AccessMatrix> = _access.asStateFlow()
+
+    fun refresh() = viewModelScope.launch {
+        try {
+            _access.value = api.myAccess().access
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+        }
     }
 }

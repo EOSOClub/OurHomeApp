@@ -219,7 +219,14 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RequestsScreen(api: ApiClient, user: SessionUser, showMessage: (String) -> Unit, modifier: Modifier = Modifier) {
+fun RequestsScreen(
+    api: ApiClient,
+    user: SessionUser,
+    /** Requests "Add" in the head's permissions grid (Members → Permissions). */
+    canSubmit: Boolean,
+    showMessage: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val vm = viewModel { RequestsViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
     val canWrite = can(user.role, Permission.RequestsWrite)
@@ -294,7 +301,7 @@ fun RequestsScreen(api: ApiClient, user: SessionUser, showMessage: (String) -> U
                 }
             }
         }
-        if (canWrite) {
+        if (canSubmit) {
             ExtendedFloatingActionButton(
                 onClick = { vm.startCreate() },
                 icon = { Icon(Icons.Filled.Add, contentDescription = null) },

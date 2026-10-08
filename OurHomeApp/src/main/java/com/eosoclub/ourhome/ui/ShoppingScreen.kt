@@ -17,8 +17,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.remember
 import androidx.compose.ui.text.input.KeyboardType
-import com.eosoclub.ourhome.data.Permission
-import com.eosoclub.ourhome.data.can
+import com.eosoclub.ourhome.data.PageAccess
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -163,18 +162,24 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ShoppingScreen(api: ApiClient, role: String?, showMessage: (String) -> Unit, modifier: Modifier = Modifier) {
+fun ShoppingScreen(
+    api: ApiClient,
+    access: PageAccess,
+    userId: String,
+    showMessage: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val vm = viewModel { ShoppingViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
-    val canWrite = can(role, Permission.ShoppingWrite)
 
     state.editing?.let { item ->
         ShoppingItemEditor(
             item = item,
             saving = state.saving,
+            canSave = access.canEdit(item.createdById, userId),
             onDismiss = vm::cancelEdit,
             onSave = { name, qty, priority, notes, recurring -> vm.save(item, name, qty, priority, notes, recurring) },
-            onDelete = { vm.delete(item) },
+            onDelete = if (access.canDelete(item.createdById, userId)) ({ vm.delete(item) }) else null,
         )
     }
 
@@ -206,19 +211,19 @@ fun ShoppingScreen(api: ApiClient, role: String?, showMessage: (String) -> Unit,
                     TextButton(onClick = { vm.refresh() }) { Text("Retry") }
                 }
                 selected == null -> Centered { Text("No shopping lists yet. Create one on the website.") }
-                else -> ListContent(selected, vm, canWrite)
+                else -> ListContent(selected, vm, access, userId)
             }
         }
     }
 }
 
 @Composable
-private fun ListContent(list: ShoppingList, vm: ShoppingViewModel, canWrite: Boolean) {
+private fun ListContent(list: ShoppingList, vm: ShoppingViewModel, access: PageAccess, userId: String) {
     val open = list.items.filter { !it.purchased }
     val bought = list.items.filter { it.purchased }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        if (canWrite) item(key = "add") { AddItemRow(onAdd = vm::add) }
-        items(open, key = { it.id }) { ItemRow(it, vm, canWrite) }
+        if (access.create) item(key = "add") { AddItemRow(onAdd = vm::add) }
+        items(open, key = { it.id }) { ItemRow(it, vm, access, userId) }
         if (bought.isNotEmpty()) {
             item(key = "bought-header") {
                 HorizontalDivider(Modifier.padding(top = 8.dp))
@@ -229,10 +234,11 @@ private fun ListContent(list: ShoppingList, vm: ShoppingViewModel, canWrite: Boo
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
-                    if (canWrite) TextButton(onClick = { vm.clearBought() }) { Text("Clear bought") }
+                    // Clears only the bought items this user may delete (server-side).
+                    if (access.canDeleteAny) TextButton(onClick = { vm.clearBought() }) { Text("Clear bought") }
                 }
             }
-            items(bought, key = { it.id }) { ItemRow(it, vm, canWrite) }
+            items(bought, key = { it.id }) { ItemRow(it, vm, access, userId) }
         }
     }
 }
@@ -261,12 +267,16 @@ private fun AddItemRow(onAdd: (String) -> Unit) {
 }
 
 @Composable
-private fun ItemRow(item: ShoppingItem, vm: ShoppingViewModel, canWrite: Boolean) {
+private fun ItemRow(item: ShoppingItem, vm: ShoppingViewModel, access: PageAccess, userId: String) {
+    // Ticking bought isn't an edit: any Shopping access will do (as on the server).
+    val canToggle = access.any
+    // The editor also holds Delete, so either opens it.
+    val canOpenEditor = access.canEdit(item.createdById, userId) || access.canDelete(item.createdById, userId)
     Row(
-        Modifier.fillMaxWidth().clickable(enabled = canWrite) { vm.toggle(item) }.padding(start = 4.dp, end = 4.dp),
+        Modifier.fillMaxWidth().clickable(enabled = canToggle) { vm.toggle(item) }.padding(start = 4.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Checkbox(checked = item.purchased, onCheckedChange = { vm.toggle(item) }, enabled = canWrite)
+        Checkbox(checked = item.purchased, onCheckedChange = { vm.toggle(item) }, enabled = canToggle)
         Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
             Text(
                 if (item.quantity > 1) "${item.name} ×${item.quantity}" else item.name,
@@ -283,7 +293,7 @@ private fun ItemRow(item: ShoppingItem, vm: ShoppingViewModel, canWrite: Boolean
                 Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (canWrite) {
+        if (canOpenEditor) {
             IconButton(onClick = { vm.startEdit(item) }) {
                 Icon(Icons.Filled.Edit, contentDescription = "Edit ${item.name}", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -297,9 +307,11 @@ private val SHOPPING_PRIORITIES = listOf("low", "medium", "high")
 private fun ShoppingItemEditor(
     item: ShoppingItem,
     saving: Boolean,
+    /** False when the user may only delete this item, not change it. */
+    canSave: Boolean,
     onDismiss: () -> Unit,
     onSave: (name: String, quantity: Int, priority: String, notes: String?, recurring: Boolean) -> Unit,
-    onDelete: () -> Unit,
+    onDelete: (() -> Unit)?,
 ) {
     var name by remember { mutableStateOf(item.name) }
     var quantity by remember { mutableStateOf(item.quantity.toString()) }
@@ -309,9 +321,9 @@ private fun ShoppingItemEditor(
     val qty = quantity.toIntOrNull()?.takeIf { it in 1..999 }
 
     EditorDialog(
-        title = "Edit item",
+        title = if (canSave) "Edit item" else "Item",
         saving = saving,
-        saveEnabled = name.isNotBlank() && qty != null,
+        saveEnabled = canSave && name.isNotBlank() && qty != null,
         onDismiss = onDismiss,
         onSave = { onSave(name.trim(), qty!!, priority, notes.trim().ifEmpty { null }, recurring) },
         deleteLabel = "Delete item",

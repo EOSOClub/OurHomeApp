@@ -13,8 +13,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.remember
 import androidx.compose.ui.text.input.KeyboardType
-import com.eosoclub.ourhome.data.Permission
-import com.eosoclub.ourhome.data.can
+import com.eosoclub.ourhome.data.PageAccess
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -144,22 +143,23 @@ class InventoryViewModel(private val api: ApiClient) : ViewModel() {
 @Composable
 fun InventoryScreen(
     api: ApiClient,
-    role: String?,
+    access: PageAccess,
+    userId: String,
     showMessage: (String) -> Unit,
     onOpenScanHistory: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val vm = viewModel { InventoryViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
-    val canWrite = can(role, Permission.InventoryWrite)
 
     state.editing?.let { item ->
         InventoryItemEditor(
             item = item,
             saving = state.saving,
+            canSave = access.canEdit(item.createdById, userId),
             onDismiss = vm::cancelEdit,
             onSave = { name, unit, qty, low, days -> vm.save(item, name, unit, qty, low, days) },
-            onDelete = { vm.delete(item) },
+            onDelete = if (access.canDelete(item.createdById, userId)) ({ vm.delete(item) }) else null,
         )
     }
     var lowOnly by rememberSaveable { mutableStateOf(false) }
@@ -195,8 +195,14 @@ fun InventoryScreen(
             items(visible, key = { it.id }) { item ->
                 InventoryRow(
                     item,
-                    onAdjust = if (canWrite) ({ delta -> vm.adjust(item, delta) }) else null,
-                    onEdit = if (canWrite) ({ vm.startEdit(item) }) else null,
+                    // ± stock isn't an edit: any Inventory access will do (as on the server).
+                    onAdjust = if (access.any) ({ delta -> vm.adjust(item, delta) }) else null,
+                    // The editor also holds Delete, so either opens it.
+                    onEdit = if (access.canEdit(item.createdById, userId) || access.canDelete(item.createdById, userId)) {
+                        { vm.startEdit(item) }
+                    } else {
+                        null
+                    },
                 )
             }
         }
@@ -282,9 +288,11 @@ private fun ScanCard(onOpenScanHistory: () -> Unit) {
 private fun InventoryItemEditor(
     item: InventoryItem,
     saving: Boolean,
+    /** False when the user may only delete this item, not change it. */
+    canSave: Boolean,
     onDismiss: () -> Unit,
     onSave: (name: String, unit: String?, quantity: Double, lowThreshold: Double, reorderDays: Int?) -> Unit,
-    onDelete: () -> Unit,
+    onDelete: (() -> Unit)?,
 ) {
     var name by remember { mutableStateOf(item.name) }
     var unit by remember { mutableStateOf(item.unit.orEmpty()) }
@@ -298,9 +306,9 @@ private fun InventoryItemEditor(
     val daysValid = days.isBlank() || daysValue in 1..3650
 
     EditorDialog(
-        title = "Edit item",
+        title = if (canSave) "Edit item" else "Item",
         saving = saving,
-        saveEnabled = name.isNotBlank() && qty != null && lowValue != null && daysValid,
+        saveEnabled = canSave && name.isNotBlank() && qty != null && lowValue != null && daysValid,
         onDismiss = onDismiss,
         onSave = { onSave(name.trim(), unit.trim().ifEmpty { null }, qty!!, lowValue!!, daysValue) },
         deleteLabel = "Delete item",

@@ -16,8 +16,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
-import com.eosoclub.ourhome.data.Permission
-import com.eosoclub.ourhome.data.can
+import com.eosoclub.ourhome.data.PageAccess
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -122,18 +121,32 @@ class BillsViewModel(private val api: ApiClient) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BillsScreen(api: ApiClient, role: String?, showMessage: (String) -> Unit, modifier: Modifier = Modifier) {
+fun BillsScreen(
+    api: ApiClient,
+    access: PageAccess,
+    userId: String,
+    showMessage: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val vm = viewModel { BillsViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
-    val canWrite = can(role, Permission.BillsWrite)
+    // The editor also holds Delete, so either opens it.
+    val editHandler = { bill: Bill ->
+        if (access.canEdit(bill.createdById, userId) || access.canDelete(bill.createdById, userId)) {
+            { vm.startEdit(bill) }
+        } else {
+            null
+        }
+    }
 
     state.editing?.let { bill ->
         BillEditor(
             bill = bill,
             saving = state.saving,
+            canSave = access.canEdit(bill.createdById, userId),
             onDismiss = vm::cancelEdit,
             onSave = { name, amount, due, autoPay, notes -> vm.save(bill, name, amount, due, autoPay, notes) },
-            onDelete = { vm.delete(bill) },
+            onDelete = if (access.canDelete(bill.createdById, userId)) ({ vm.delete(bill) }) else null,
         )
     }
     var paying by remember { mutableStateOf<Bill?>(null) }
@@ -174,8 +187,9 @@ fun BillsScreen(api: ApiClient, role: String?, showMessage: (String) -> Unit, mo
                     bill,
                     unpaid = true,
                     busy = bill.id in state.busy,
-                    onPay = if (canWrite) ({ paying = bill }) else null,
-                    onEdit = if (canWrite) ({ vm.startEdit(bill) }) else null,
+                    // Recording a payment adds a record: Bills "Add".
+                    onPay = if (access.create) ({ paying = bill }) else null,
+                    onEdit = editHandler(bill),
                 )
             }
             if (paid.isNotEmpty()) {
@@ -195,7 +209,7 @@ fun BillsScreen(api: ApiClient, role: String?, showMessage: (String) -> Unit, mo
                         unpaid = false,
                         busy = false,
                         onPay = null,
-                        onEdit = if (canWrite) ({ vm.startEdit(bill) }) else null,
+                        onEdit = editHandler(bill),
                     )
                 }
             }
@@ -267,9 +281,11 @@ private fun BillCard(bill: Bill, unpaid: Boolean, busy: Boolean, onPay: (() -> U
 private fun BillEditor(
     bill: Bill,
     saving: Boolean,
+    /** False when the user may only delete this bill, not change it. */
+    canSave: Boolean,
     onDismiss: () -> Unit,
     onSave: (name: String, amount: Double, dueDate: Instant?, autoPay: Boolean, notes: String?) -> Unit,
-    onDelete: () -> Unit,
+    onDelete: (() -> Unit)?,
 ) {
     var name by remember { mutableStateOf(bill.name) }
     var amount by remember { mutableStateOf(String.format(Locale.US, "%.2f", bill.amount)) }
@@ -279,9 +295,9 @@ private fun BillEditor(
     val amountValue = amount.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0 }
 
     EditorDialog(
-        title = "Edit bill",
+        title = if (canSave) "Edit bill" else "Bill",
         saving = saving,
-        saveEnabled = name.isNotBlank() && amountValue != null,
+        saveEnabled = canSave && name.isNotBlank() && amountValue != null,
         onDismiss = onDismiss,
         onSave = { onSave(name.trim(), amountValue!!, dueInstant(due, bill.dueDate), autoPay, notes.trim().ifEmpty { null }) },
         deleteLabel = "Delete bill",

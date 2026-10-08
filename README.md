@@ -61,17 +61,25 @@ Dark theme with Material You colors.
 
 ## 🚀 Setup
 
+> [!TIP]
+> **No Android Studio needed:** the web server's `./deploy.sh` can build this
+> app for you (answer yes to **"Build the Android app here?"**), with your server
+> address and Firebase app id built in and signed with your install's own key.
+> Everyone then downloads it from the site under **Profile → Android app**, and
+> updates install over the old version. The steps below are for building it
+> yourself.
+
 1. **Install Android Studio** (it includes the JDK and Android SDK).
 2. **Clone this repo** and open it in Android Studio.
 3. **Optional: set a default server.**
    ```bash
    cp settings.example.yml settings.yml
    ```
-   Set `server.url` to your OurHomeWeb server (e.g. `https://home.example.com`), then rebuild. `settings.yml` is gitignored.
+   Set `server.url` to your OurHomeWeb server (e.g. `https://home.example.com`), then rebuild. `settings.yml` is gitignored. A plain `http://` address (a home-network-only server) works too: the build allows unencrypted HTTP for exactly that host and nothing else.
 
    > [!TIP]
    > If you skip this step, the sign-in screen asks for the server address. You can always change it there under **Server**.
-4. **Optional: instant alerts.** Put your Firebase project's `google-services.json` in the `OurHomeApp/` module folder (it's gitignored) and set the matching key on the server. Step-by-step: [docs/push-notifications.md](https://github.com/EOSOClub/OurHome/blob/main/docs/push-notifications.md). Without it, notifications come from the hourly check.
+4. **Optional: instant alerts.** Run the web server's `./deploy.sh` and answer **yes** to Firebase: it asks for your app id (`com.<yourname>.ourhome`), links the Firebase pages, and takes the server key. Then set `app.id` in this `settings.yml` to that same id and put the downloaded `google-services.json` in the `OurHomeApp/` module folder (it's gitignored). No source folders need renaming; only the installed app id changes. Details: [docs/push-notifications.md](https://github.com/EOSOClub/OurHome/blob/main/docs/push-notifications.md). Without it, notifications come from the hourly check.
 5. **Build and install:**
    ```bash
    ./gradlew installDebug
@@ -90,7 +98,7 @@ Sign in with an account created on the web app. 🎉
 
 | | |
 | --- | --- |
-| **Package** | `com.eosoclub.ourhome` |
+| **Package** | `com.eosoclub.ourhome` (installed id: `app.id` in `settings.yml`) |
 | **UI** | Kotlin + Jetpack Compose (Material 3) |
 | **Networking** | OkHttp, kotlinx.serialization |
 | **Background work** | WorkManager |

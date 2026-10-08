@@ -1,0 +1,11 @@
+# When a local checkout is the build context (the web deploy's Android build):
+# build output, caches and private per-install files stay out.
+**/build
+.gradle
+.idea
+.kotlin
+local.properties
+settings.yml
+OurHomeApp/google-services.json
+*.jks
+*.keystore

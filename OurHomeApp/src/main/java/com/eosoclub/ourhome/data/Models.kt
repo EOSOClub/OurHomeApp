@@ -77,6 +77,8 @@ data class Subtask(val id: String, val title: String, val done: Boolean = false,
 @Serializable
 data class Task(
     val id: String,
+    /** Who created it; decides own vs others' for [PageAccess]. Null = nobody recorded. */
+    val createdById: String? = null,
     val title: String,
     val notes: String? = null,
     val type: String,
@@ -94,6 +96,8 @@ data class Task(
 @Serializable
 data class ShoppingItem(
     val id: String,
+    /** Who created it; decides own vs others' for [PageAccess]. Null = nobody recorded. */
+    val createdById: String? = null,
     val listId: String,
     val name: String,
     val quantity: Int = 1,
@@ -108,6 +112,8 @@ data class ShoppingItem(
 @Serializable
 data class InventoryItem(
     val id: String,
+    /** Who created it; decides own vs others' for [PageAccess]. Null = nobody recorded. */
+    val createdById: String? = null,
     val name: String,
     val unit: String? = null,
     val quantity: Double = 0.0,
@@ -122,6 +128,8 @@ data class InventoryItem(
 @Serializable
 data class Bill(
     val id: String,
+    /** Who created it; decides own vs others' for [PageAccess]. Null = nobody recorded. */
+    val createdById: String? = null,
     val name: String,
     val amount: Double,
     val currency: String? = null,
@@ -274,6 +282,8 @@ data class NfcScan(
 @Serializable
 data class ShoppingList(
     val id: String,
+    /** Who created it; decides own vs others' for [PageAccess]. Null = nobody recorded. */
+    val createdById: String? = null,
     val name: String,
     val kind: String,
     val items: List<ShoppingItem> = emptyList(),

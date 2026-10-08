@@ -488,6 +488,11 @@ class ApiClient(
     suspend fun markAllNotificationsRead() =
         callUnit(post("/api/notifications/read", buildJsonObject { put("all", true) }))
 
+    // --- Permissions -------------------------------------------------------
+
+    /** The signed-in user's page access (what they may add/edit/delete). */
+    suspend fun myAccess(): MyAccess = call(get("/api/permissions/me"), MyAccess.serializer())
+
     // --- Plumbing ------------------------------------------------------------
 
     private fun get(path: String) = Request.Builder().url(baseUrl() + path).get().build()
