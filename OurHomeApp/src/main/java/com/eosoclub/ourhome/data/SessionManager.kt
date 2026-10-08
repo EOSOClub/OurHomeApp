@@ -40,6 +40,30 @@ class SessionManager(private val prefs: SharedPreferences, cookiePrefs: SharedPr
         }
     }
 
+    /**
+     * Re-reads the signed-in user when the app comes back to the front, so
+     * changes made on the website meanwhile (a new password clearing the
+     * temporary-password flag, a new name) show without signing in again.
+     * Offline or a server hiccup keeps the current state; only a session the
+     * server no longer knows signs out.
+     */
+    suspend fun refreshUser() {
+        if (_state.value !is AuthState.SignedIn) return
+        val user = try {
+            api.getSession()
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return
+        }
+        // Signed out or switched while the request ran: leave that alone.
+        val current = _state.value as? AuthState.SignedIn ?: return
+        _state.value = when {
+            user == null -> AuthState.SignedOut("Your session has expired. Please sign in again.")
+            user != current.user -> AuthState.SignedIn(user)
+            else -> current
+        }
+    }
+
     /** Signs in and loads the user; throws with a user-facing message on failure. */
     suspend fun signIn(server: String, username: String, password: String) {
         val normalized = normalize(server)

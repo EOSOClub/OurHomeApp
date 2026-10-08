@@ -67,8 +67,11 @@ class ApiClient(
     }
 
     /** The current session's user, or null when signed out. */
+    // disableCookieCache: read the user from the database, not Better Auth's
+    // 5-minute session cookie cache, so a password or name changed on the
+    // website shows here at once (the "temporary password" flag stayed stale).
     suspend fun getSession(): SessionUser? = withContext(Dispatchers.IO) {
-        http.newCall(get("/api/auth/get-session")).execute().use { res ->
+        http.newCall(get("/api/auth/get-session?disableCookieCache=true")).execute().use { res ->
             val text = res.body.string()
             if (!res.isSuccessful) throw ApiException("Could not reach the server (${res.code})")
             if (text.isBlank() || text == "null") null

@@ -18,9 +18,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.eosoclub.ourhome.data.AppSettings
 import com.eosoclub.ourhome.data.AuthState
@@ -36,6 +39,7 @@ import com.eosoclub.ourhome.ui.LoginScreen
 import com.eosoclub.ourhome.ui.theme.OurHomeTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     // A tab a notification asked to open ("requests"); consumed by HomeScreen.
@@ -124,6 +128,11 @@ private fun Root(
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         if (session.state.value == AuthState.Checking) session.restore()
+    }
+    // Back in front: pick up account changes made on the website meanwhile.
+    val scope = rememberCoroutineScope()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        scope.launch { session.refreshUser() }
     }
     // Background request reminders run only while someone is signed in.
     // Registering for instant alerts on every sign-in/launch also keeps the
