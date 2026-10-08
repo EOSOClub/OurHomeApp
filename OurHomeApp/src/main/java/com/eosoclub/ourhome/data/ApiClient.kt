@@ -6,14 +6,20 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
@@ -143,37 +149,75 @@ class ApiClient(
     suspend fun tasks(): List<Task> =
         call(get("/api/tasks"), ListSerializer(Task.serializer()))
 
-    suspend fun createTask(title: String, priority: String): Task =
+    /** Creates a task with its whole checklist in one call, like the web's create form. */
+    suspend fun createTask(input: TaskInput, steps: List<Pair<String, Int?>>): Task =
         call(
-            post("/api/tasks", buildJsonObject { put("title", title); put("priority", priority) }),
+            post(
+                "/api/tasks",
+                buildJsonObject {
+                    putTaskFields(input, forUpdate = false)
+                    if (steps.isNotEmpty()) {
+                        putJsonArray("subtasks") {
+                            steps.forEach { (title, resetDays) ->
+                                addJsonObject {
+                                    put("title", title)
+                                    put("done", false)
+                                    put("resetIntervalDays", resetDays)
+                                }
+                            }
+                        }
+                    }
+                },
+            ),
             Task.serializer(),
         )
+
+    /**
+     * The fields the create and update endpoints share. Update takes null
+     * `notes`/`recurrence` to clear them; create only accepts them absent.
+     */
+    private fun JsonObjectBuilder.putTaskFields(input: TaskInput, forUpdate: Boolean) {
+        put("title", input.title)
+        if (input.notes != null || forUpdate) put("notes", input.notes)
+        put("type", input.type)
+        put("priority", input.priority)
+        put("dueDate", input.dueDate?.toString())
+        put("estimatedMinutes", input.estimatedMinutes)
+        put("categoryId", input.categoryId)
+        put("assigneeId", input.assigneeId)
+        val r = input.recurrence
+        if (r == null) {
+            if (forUpdate) put("recurrence", JsonNull)
+        } else {
+            putJsonObject("recurrence") {
+                put("kind", r.kind)
+                put("interval", r.interval)
+                put("timezone", "UTC")
+                put("until", r.until?.toString())
+                if (r.kind == "weekly" && r.byWeekday.isNotEmpty()) {
+                    putJsonArray("byWeekday") { r.byWeekday.forEach { add(it) } }
+                }
+                if (r.kind == "monthly" && r.byMonthday.isNotEmpty()) {
+                    putJsonArray("byMonthday") { r.byMonthday.forEach { add(it) } }
+                }
+            }
+        }
+    }
 
     suspend fun completeTask(taskId: String): Task =
         call(post("/api/tasks/complete", buildJsonObject { put("taskId", taskId) }), Task.serializer())
 
     /**
      * Saves a task's editable fields. Every field is sent, so a null clears it
-     * (notes, due date, assignee). Head-only on the server (tasks:write).
+     * (notes, due date, estimate, category, assignee, recurrence), as the web's edit form does.
      */
-    suspend fun updateTask(
-        taskId: String,
-        title: String,
-        notes: String?,
-        priority: String,
-        dueDate: Instant?,
-        assigneeId: String?,
-    ): Task =
+    suspend fun updateTask(taskId: String, input: TaskInput): Task =
         call(
             post(
                 "/api/tasks/update",
                 buildJsonObject {
                     put("taskId", taskId)
-                    put("title", title)
-                    put("notes", notes)
-                    put("priority", priority)
-                    put("dueDate", dueDate?.toString())
-                    put("assigneeId", assigneeId)
+                    putTaskFields(input, forUpdate = true)
                 },
             ),
             Task.serializer(),
@@ -182,17 +226,51 @@ class ApiClient(
     suspend fun deleteTask(taskId: String) =
         callUnit(post("/api/tasks/delete", buildJsonObject { put("taskId", taskId) }))
 
-    suspend fun addSubtask(taskId: String, title: String) =
-        callUnit(post("/api/subtasks", buildJsonObject { put("taskId", taskId); put("title", title) }))
+    /** Appends a checklist item; returns the whole updated task. */
+    suspend fun addSubtask(taskId: String, title: String, resetIntervalDays: Int?): Task =
+        call(
+            post(
+                "/api/subtasks",
+                buildJsonObject {
+                    put("taskId", taskId)
+                    put("title", title)
+                    put("resetIntervalDays", resetIntervalDays)
+                },
+            ),
+            Task.serializer(),
+        )
 
-    suspend fun renameSubtask(subtaskId: String, title: String) =
-        callUnit(post("/api/subtasks/update", buildJsonObject { put("subtaskId", subtaskId); put("title", title) }))
+    /** Saves a checklist item's title and auto-uncheck cadence (null clears it). */
+    suspend fun updateSubtask(subtaskId: String, title: String, resetIntervalDays: Int?) =
+        callUnit(
+            post(
+                "/api/subtasks/update",
+                buildJsonObject {
+                    put("subtaskId", subtaskId)
+                    put("title", title)
+                    put("resetIntervalDays", resetIntervalDays)
+                },
+            ),
+        )
 
     suspend fun deleteSubtask(subtaskId: String) =
         callUnit(post("/api/subtasks/delete", buildJsonObject { put("subtaskId", subtaskId) }))
 
-    /** Household members (members:manage — which the head, the only task editor, has). */
-    suspend fun members(): List<Member> = call(get("/api/members"), ListSerializer(Member.serializer()))
+    /** Sets the checklist order to [subtaskIds] (every item of the task). */
+    suspend fun reorderSubtasks(taskId: String, subtaskIds: List<String>) =
+        callUnit(
+            post(
+                "/api/subtasks/reorder",
+                buildJsonObject {
+                    put("taskId", taskId)
+                    putJsonArray("subtaskIds") { subtaskIds.forEach { add(it) } }
+                },
+            ),
+        )
+
+    /** Categories of one kind ("task", …); readable by any member. */
+    suspend fun categories(kind: String): List<CategoryRef> =
+        call(get("/api/categories?kind=$kind"), ListSerializer(CategoryRef.serializer()))
 
     /** Checks/unchecks one checklist step; returns the whole updated task. */
     suspend fun setSubtaskDone(subtaskId: String, done: Boolean): Task =
@@ -490,6 +568,43 @@ class ApiClient(
 
     suspend fun markAllNotificationsRead() =
         callUnit(post("/api/notifications/read", buildJsonObject { put("all", true) }))
+
+    // --- App updates ---------------------------------------------------------
+
+    /** The Android app this server offers, or null when it builds none. */
+    suspend fun appRelease(): AppRelease? = call(get("/api/app/info"), AppInfo.serializer()).release
+
+    /**
+     * Downloads the offered APK into [dest] with this session (the download is
+     * for signed-in members only), reporting progress as 0..1.
+     */
+    suspend fun downloadApp(dest: File, onProgress: (Float) -> Unit) = withContext(Dispatchers.IO) {
+        // A ~30 MB file: allow more than the API's read timeout between chunks.
+        val client = http.newBuilder().readTimeout(2, TimeUnit.MINUTES).build()
+        client.newCall(get("/api/app/download")).execute().use { res ->
+            if (res.code == 401) {
+                onUnauthorized()
+                throw UnauthorizedException()
+            }
+            if (!res.isSuccessful) {
+                throw ApiException(if (res.code == 404) "No app update is on offer right now." else "Download failed (${res.code})")
+            }
+            val total = res.body.contentLength()
+            res.body.byteStream().use { input ->
+                dest.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var done = 0L
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        output.write(buffer, 0, n)
+                        done += n
+                        if (total > 0) onProgress(done.toFloat() / total)
+                    }
+                }
+            }
+        }
+    }
 
     // --- Permissions -------------------------------------------------------
 

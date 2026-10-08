@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * "Requests are waiting for you" reminders, plus the shared check that also
- * drives [DeadlineReminders] and [BugReportAlerts].
+ * drives [DeadlineReminders], [BugReportAlerts] and [AppUpdateAlerts].
  *
  * A WorkManager job polls the server every [INTERVAL_HOURS] while the user is
  * signed in. Each hourly run re-posts the notification (and alerts again) for
@@ -187,6 +187,8 @@ object RequestReminders {
                     runCatching { BugReportAlerts.check(applicationContext, api) }
                         .onFailure { Log.w(TAG, "bug report check failed", it) }
                 }
+                runCatching { AppUpdateAlerts.check(applicationContext, api) }
+                    .onFailure { Log.w(TAG, "app update check failed", it) }
                 Result.success()
             } catch (e: UnauthorizedException) {
                 clear(applicationContext)

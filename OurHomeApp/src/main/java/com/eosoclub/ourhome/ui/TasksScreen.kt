@@ -18,26 +18,20 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -48,6 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eosoclub.ourhome.data.ApiClient
+import com.eosoclub.ourhome.data.CategoryRef
 import com.eosoclub.ourhome.data.Member
 import com.eosoclub.ourhome.data.PageAccess
 import com.eosoclub.ourhome.data.Subtask
@@ -66,9 +61,12 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
         val error: String? = null,
         val busy: Set<String> = emptySet(),
         val editing: Task? = null,
+        /** The editor is open for a new task. */
+        val creating: Boolean = false,
         val saving: Boolean = false,
-        // Null until loaded, or if this role can't list members.
+        // Null until loaded (the editor then shows only the task's current value).
         val members: List<Member>? = null,
+        val categories: List<CategoryRef>? = null,
     )
 
     val state = MutableStateFlow(UiState())
@@ -102,31 +100,72 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
 
     fun startEdit(task: Task) {
         state.update { it.copy(editing = task) }
+        loadLookups()
+    }
+
+    fun startCreate() {
+        state.update { it.copy(creating = true) }
+        loadLookups()
+    }
+
+    /** Assignee and category choices; household members are readable by anyone who may create tasks. */
+    private fun loadLookups() {
         if (state.value.members == null) viewModelScope.launch {
-            runCatching { api.members() }.onSuccess { m -> state.update { it.copy(members = m) } }
+            runCatching { api.householdMembers() }.onSuccess { m -> state.update { it.copy(members = m) } }
+        }
+        if (state.value.categories == null) viewModelScope.launch {
+            runCatching { api.categories("task") }.onSuccess { c -> state.update { it.copy(categories = c) } }
         }
     }
 
-    fun cancelEdit() = state.update { it.copy(editing = null) }
+    fun cancelEdit() = state.update { it.copy(editing = null, creating = false) }
 
-    /** Saves the task's fields, then applies checklist removals, renames and additions. */
+    /** Creates the task with its whole checklist in one call. */
+    fun create(edit: TaskEdit) = viewModelScope.launch {
+        state.update { it.copy(saving = true) }
+        try {
+            val steps = edit.steps.filter { it.title.isNotBlank() }.map { it.title.trim() to it.resetIntervalDays() }
+            val task = api.createTask(edit.input, steps)
+            state.update { it.copy(tasks = it.tasks + task, creating = false) }
+            _messages.send("Added “${task.title}”")
+        } catch (e: Exception) {
+            _messages.send(e.message ?: "Couldn't add task")
+        } finally {
+            state.update { it.copy(saving = false) }
+        }
+    }
+
+    /**
+     * Saves the task's fields, then applies checklist removals, edits and
+     * additions, then the order if it changed.
+     */
     fun save(task: Task, edit: TaskEdit) = viewModelScope.launch {
         state.update { it.copy(saving = true) }
         try {
-            api.updateTask(task.id, edit.title, edit.notes, edit.priority, edit.dueDate, edit.assigneeId)
-            val keptIds = edit.steps.mapNotNull { it.id }.toSet()
+            api.updateTask(task.id, edit.input)
+            val kept = edit.steps.filter { it.title.isNotBlank() }
+            val keptIds = kept.mapNotNull { it.id }.toSet()
             task.subtasks.filter { it.id !in keptIds }.forEach { api.deleteSubtask(it.id) }
-            val originalTitles = task.subtasks.associate { it.id to it.title }
-            edit.steps.forEach { step ->
+            val original = task.subtasks.associateBy { it.id }
+            // New items append on the server; pick each one's id out of the returned task.
+            val knownIds = task.subtasks.map { it.id }.toMutableSet()
+            val finalIds = kept.map { step ->
                 val title = step.title.trim()
-                when {
-                    title.isEmpty() -> if (step.id != null) api.deleteSubtask(step.id)
-                    step.id == null -> api.addSubtask(task.id, title)
-                    originalTitles[step.id] != title -> api.renameSubtask(step.id, title)
+                val reset = step.resetIntervalDays()
+                if (step.id == null) {
+                    val updated = api.addSubtask(task.id, title, reset)
+                    updated.subtasks.first { it.id !in knownIds }.id.also { knownIds += it }
+                } else {
+                    val old = original.getValue(step.id)
+                    if (old.title != title || old.resetIntervalDays != reset) api.updateSubtask(step.id, title, reset)
+                    step.id
                 }
             }
+            val serverOrder = task.subtasks.sortedBy { it.position }.map { it.id }.filter { it in keptIds } +
+                finalIds.filter { it !in keptIds }
+            if (finalIds.size > 1 && finalIds != serverOrder) api.reorderSubtasks(task.id, finalIds)
             state.update { it.copy(editing = null) }
-            _messages.send("Saved “${edit.title}”")
+            _messages.send("Saved “${edit.input.title}”")
         } catch (e: Exception) {
             _messages.send(e.message ?: "Couldn't save task")
         } finally {
@@ -184,19 +223,9 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
             else t.copy(subtasks = t.subtasks.map { if (it.id == stepId) it.copy(done = done) else it })
         })
     }
-
-    fun create(title: String, priority: String) = viewModelScope.launch {
-        try {
-            val task = api.createTask(title, priority)
-            state.update { it.copy(tasks = it.tasks + task) }
-        } catch (e: Exception) {
-            _messages.send(e.message ?: "Couldn't add task")
-        }
-    }
 }
 
 private val OPEN_STATUSES = setOf("pending", "in_progress")
-private val PRIORITIES = listOf("low", "medium", "high", "urgent")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -209,7 +238,6 @@ fun TasksScreen(
 ) {
     val vm = viewModel { TasksViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
-    var adding by remember { mutableStateOf(false) }
     val expandedIds by vm.expanded.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { vm.refresh() }
@@ -254,7 +282,7 @@ fun TasksScreen(
         }
         if (access.create) {
             FloatingActionButton(
-                onClick = { adding = true },
+                onClick = vm::startCreate,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
             ) { Icon(Icons.Filled.Add, contentDescription = "Add task") }
         }
@@ -264,6 +292,7 @@ fun TasksScreen(
         TaskEditor(
             task = task,
             members = state.members,
+            categories = state.categories,
             saving = state.saving,
             onDismiss = vm::cancelEdit,
             canSave = access.canEdit(task.createdById, userId),
@@ -272,10 +301,16 @@ fun TasksScreen(
         )
     }
 
-    if (adding) {
-        AddTaskDialog(
-            onDismiss = { adding = false },
-            onAdd = { title, priority -> vm.create(title, priority); adding = false },
+    if (state.creating) {
+        TaskEditor(
+            task = null,
+            members = state.members,
+            categories = state.categories,
+            saving = state.saving,
+            onDismiss = vm::cancelEdit,
+            canSave = true,
+            onSave = vm::create,
+            onDelete = null,
         )
     }
 }
@@ -368,32 +403,4 @@ private fun TaskCard(
             }
         }
     }
-}
-
-@Composable
-private fun AddTaskDialog(onDismiss: () -> Unit, onAdd: (String, String) -> Unit) {
-    var title by remember { mutableStateOf("") }
-    var priority by remember { mutableStateOf("medium") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("New task") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, singleLine = true)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PRIORITIES.forEach { p ->
-                        FilterChip(
-                            selected = priority == p,
-                            onClick = { priority = p },
-                            label = { Text(p.replaceFirstChar(Char::uppercase)) },
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onAdd(title.trim(), priority) }, enabled = title.isNotBlank()) { Text("Add") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
 }

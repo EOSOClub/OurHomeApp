@@ -67,6 +67,7 @@ import com.eosoclub.ourhome.nfc.NfcScans
 import com.eosoclub.ourhome.data.awaitingAcceptanceBy
 import com.eosoclub.ourhome.data.deadlineAlerts
 import com.eosoclub.ourhome.data.isOpen
+import com.eosoclub.ourhome.notifications.AppUpdateAlerts
 import com.eosoclub.ourhome.notifications.RequestReminders
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -138,13 +139,20 @@ fun HomeScreen(
             .count { !it.forRequester && it.state != DeadlineState.DueTomorrow }
     val anyOpen = requestsState.requests.any { it.isOpen }
 
-    // A tapped reminder notification asks for the Requests tab.
+    // A tapped notification asks for the Requests tab (reminders) or Profile
+    // (an app update to install).
     val pendingTab by openTab.collectAsStateWithLifecycle()
     LaunchedEffect(pendingTab) {
-        if (pendingTab == RequestReminders.TAB_REQUESTS) {
-            overlay = null
-            tab = Tab.Requests
-            onTabOpened()
+        when (pendingTab) {
+            RequestReminders.TAB_REQUESTS -> {
+                overlay = null
+                tab = Tab.Requests
+                onTabOpened()
+            }
+            AppUpdateAlerts.TAB_PROFILE -> {
+                overlay = Overlay.Profile
+                onTabOpened()
+            }
         }
     }
 

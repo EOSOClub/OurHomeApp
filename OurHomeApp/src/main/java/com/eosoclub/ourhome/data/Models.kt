@@ -16,6 +16,22 @@ data class Envelope<T>(
 @Serializable
 data class ErrorBody(val message: String? = null)
 
+/** The Android app the server offers (built by the web deploy); src/server/services/appDownloadService.ts. */
+@Serializable
+data class AppRelease(
+    val versionName: String,
+    val versionCode: Long,
+    val appId: String,
+    val builtAt: String,
+    val sizeBytes: Long,
+    val sha256: String,
+    val firebase: Boolean = false,
+)
+
+/** GET /api/app/info; `release` is null when the server builds no app. */
+@Serializable
+data class AppInfo(val release: AppRelease? = null)
+
 /** Better Auth endpoints answer errors as a bare `{ message, code }`. */
 @Serializable
 data class AuthError(val message: String? = null, val code: String? = null)
@@ -68,11 +84,46 @@ data class UserRef(val id: String, val name: String? = null)
 data class Recurrence(
     val kind: String,
     val interval: Int = 1,
+    /** Comma-separated, 0 = Sunday; null = any day. */
+    val byWeekday: String? = null,
+    /** Comma-separated days of the month; null = any. */
+    val byMonthday: String? = null,
+    val until: String? = null,
     val nextRunAt: String? = null,
 )
 
 @Serializable
-data class Subtask(val id: String, val title: String, val done: Boolean = false, val position: Int = 0)
+data class Subtask(
+    val id: String,
+    val title: String,
+    val done: Boolean = false,
+    val position: Int = 0,
+    /** Auto-uncheck cadence in days; null = resets only with the parent task. */
+    val resetIntervalDays: Int? = null,
+)
+
+/** Recurrence as the web's task form sends it (timezone fixed to UTC, like the web). */
+data class RecurrenceInput(
+    val kind: String,
+    val interval: Int,
+    val byWeekday: List<Int>,
+    val byMonthday: List<Int>,
+    val until: java.time.Instant?,
+)
+
+/** Every field of the web's create/edit task form. */
+data class TaskInput(
+    val title: String,
+    val notes: String?,
+    val type: String,
+    val priority: String,
+    val dueDate: java.time.Instant?,
+    val estimatedMinutes: Int?,
+    val categoryId: String?,
+    val assigneeId: String?,
+    /** Null = not recurring (clears the rule on edit). */
+    val recurrence: RecurrenceInput?,
+)
 
 @Serializable
 data class Task(
