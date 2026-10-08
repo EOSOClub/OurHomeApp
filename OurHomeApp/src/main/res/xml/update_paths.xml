@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the update FileProvider may share with Android's installer: only the
+     downloaded update (AppUpdate), nothing else in the app's storage. -->
+<paths>
+    <cache-path name="updates" path="updates/" />
+</paths>
