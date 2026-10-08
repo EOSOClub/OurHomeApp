@@ -64,6 +64,9 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
         val error: String? = null,
         val editing: ShoppingItem? = null,
         val saving: Boolean = false,
+        // The list editor: creating a new list, or renaming/deleting [editingList].
+        val creatingList: Boolean = false,
+        val editingList: ShoppingList? = null,
     ) {
         val selected: ShoppingList? get() = lists.firstOrNull { it.id == selectedId } ?: lists.firstOrNull()
     }
@@ -149,6 +152,51 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
+    // --- Lists (the "Shopping lists" row of the head's permissions grid) ---
+
+    fun startCreateList() = state.update { it.copy(creatingList = true, editingList = null) }
+
+    fun startEditList(list: ShoppingList) = state.update { it.copy(editingList = list, creatingList = false) }
+
+    fun closeListEditor() = state.update { it.copy(creatingList = false, editingList = null) }
+
+    /** Creates the list and switches to it. */
+    fun createList(name: String, kind: String) = listAction("Couldn't create list") {
+        val list = api.createShoppingList(name, kind)
+        state.update { it.copy(lists = it.lists + list, selectedId = list.id) }
+    }
+
+    fun renameList(list: ShoppingList, name: String) = listAction("Couldn't rename list") {
+        val renamed = api.renameShoppingList(list.id, name)
+        // Keep the items we already have; the reply may not carry them.
+        state.update { s ->
+            s.copy(lists = s.lists.map { if (it.id == list.id) it.copy(name = renamed.name) else it })
+        }
+    }
+
+    fun deleteList(list: ShoppingList) = listAction("Couldn't delete list") {
+        api.deleteShoppingList(list.id)
+        state.update { s ->
+            s.copy(
+                lists = s.lists.filterNot { it.id == list.id },
+                selectedId = s.selectedId.takeIf { it != list.id },
+            )
+        }
+        _messages.send("Deleted “${list.name}”")
+    }
+
+    private fun listAction(failure: String, block: suspend () -> Unit) = viewModelScope.launch {
+        state.update { it.copy(saving = true) }
+        try {
+            block()
+            closeListEditor()
+        } catch (e: Exception) {
+            _messages.send(e.message ?: failure)
+        } finally {
+            state.update { it.copy(saving = false) }
+        }
+    }
+
     private fun editItems(listId: String, transform: (List<ShoppingItem>) -> List<ShoppingItem>) =
         state.update { s ->
             s.copy(lists = s.lists.map { l ->
@@ -164,13 +212,28 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
 @Composable
 fun ShoppingScreen(
     api: ApiClient,
+    /** Items on the lists ("Shopping items" in the head's permissions grid). */
     access: PageAccess,
+    /** The lists themselves: new, rename, delete ("Shopping lists"). */
+    listAccess: PageAccess,
     userId: String,
     showMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val vm = viewModel { ShoppingViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
+
+    if (state.creatingList || state.editingList != null) {
+        val list = state.editingList
+        ShoppingListEditor(
+            list = list,
+            saving = state.saving,
+            canSave = list == null || listAccess.canEdit(list.createdById, userId),
+            onDismiss = vm::closeListEditor,
+            onSave = { name, kind -> if (list == null) vm.createList(name, kind) else vm.renameList(list, name) },
+            onDelete = if (list != null && listAccess.canDelete(list.createdById, userId)) ({ vm.deleteList(list) }) else null,
+        )
+    }
 
     state.editing?.let { item ->
         ShoppingItemEditor(
@@ -199,6 +262,19 @@ fun ShoppingScreen(
                 }
             }
         }
+        if (selected != null) {
+            ListActions(
+                list = selected,
+                // With one list there are no tabs, so show its name here.
+                showName = state.lists.size == 1,
+                canCreate = listAccess.create,
+                // The editor holds Delete too, so either opens it.
+                canOpenEditor = listAccess.canEdit(selected.createdById, userId) ||
+                    listAccess.canDelete(selected.createdById, userId),
+                onCreate = vm::startCreateList,
+                onEdit = { vm.startEditList(selected) },
+            )
+        }
         PullToRefreshBox(
             isRefreshing = state.loading && state.lists.isNotEmpty(),
             onRefresh = { vm.refresh() },
@@ -210,7 +286,12 @@ fun ShoppingScreen(
                     Text(state.error!!, color = MaterialTheme.colorScheme.error)
                     TextButton(onClick = { vm.refresh() }) { Text("Retry") }
                 }
-                selected == null -> Centered { Text("No shopping lists yet. Create one on the website.") }
+                selected == null -> Centered {
+                    Text("No shopping lists yet.")
+                    if (listAccess.create) {
+                        TextButton(onClick = vm::startCreateList) { Text("Create a list") }
+                    }
+                }
                 else -> ListContent(selected, vm, access, userId)
             }
         }
@@ -297,6 +378,98 @@ private fun ItemRow(item: ShoppingItem, vm: ShoppingViewModel, access: PageAcces
             IconButton(onClick = { vm.startEdit(item) }) {
                 Icon(Icons.Filled.Edit, contentDescription = "Edit ${item.name}", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+        }
+    }
+}
+
+/** "New list" and the selected list's edit button, above its items. */
+@Composable
+private fun ListActions(
+    list: ShoppingList,
+    showName: Boolean,
+    canCreate: Boolean,
+    canOpenEditor: Boolean,
+    onCreate: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    if (!showName && !canCreate && !canOpenEditor) return
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            if (showName) list.name else "",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f),
+        )
+        if (canOpenEditor) {
+            IconButton(onClick = onEdit) {
+                Icon(Icons.Filled.Edit, contentDescription = "Edit list ${list.name}", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (canCreate) {
+            TextButton(onClick = onCreate) {
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
+                Text("New list")
+            }
+        }
+    }
+}
+
+// The web's SHOPPING_LIST_KINDS / SHOPPING_LIST_KIND_LABELS.
+private val SHOPPING_LIST_KINDS = listOf(
+    "grocery" to "Grocery",
+    "supplies" to "Supplies",
+    "hardware" to "Hardware",
+    "amazon" to "Amazon",
+    "general" to "General",
+)
+
+/** New list ([list] null: name + kind) or rename/delete one (kind is fixed once made, as on the web). */
+@Composable
+private fun ShoppingListEditor(
+    list: ShoppingList?,
+    saving: Boolean,
+    /** False when the user may only delete this list, not rename it. */
+    canSave: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (name: String, kind: String) -> Unit,
+    onDelete: (() -> Unit)?,
+) {
+    var name by remember { mutableStateOf(list?.name.orEmpty()) }
+    var kind by remember { mutableStateOf(list?.kind ?: "grocery") }
+    EditorDialog(
+        title = when {
+            list == null -> "New list"
+            canSave -> "Edit list"
+            else -> "List"
+        },
+        saving = saving,
+        saveEnabled = canSave && name.isNotBlank() && name.trim().length <= 100,
+        onDismiss = onDismiss,
+        onSave = { onSave(name.trim(), kind) },
+        saveLabel = if (list == null) "Create" else "Save",
+        deleteLabel = "Delete list",
+        onDelete = onDelete,
+    ) {
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it.take(100) },
+            label = { Text("Name") },
+            singleLine = true,
+            enabled = canSave,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (list == null) {
+            DropdownField("Kind", SHOPPING_LIST_KINDS, kind, onSelect = { kind = it })
+        }
+        if (list != null && onDelete != null) {
+            Text(
+                "Deleting a list removes everything on it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

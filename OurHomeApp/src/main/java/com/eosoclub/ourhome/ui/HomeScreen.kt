@@ -65,6 +65,7 @@ import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.defaultAccess
 import com.eosoclub.ourhome.nfc.NfcScans
 import com.eosoclub.ourhome.data.awaitingAcceptanceBy
+import com.eosoclub.ourhome.data.canApproveMedia
 import com.eosoclub.ourhome.data.deadlineAlerts
 import com.eosoclub.ourhome.data.isOpen
 import com.eosoclub.ourhome.notifications.AppUpdateAlerts
@@ -134,7 +135,7 @@ fun HomeScreen(
     }
 
     // Waiting for my acceptance, plus my own maintenance due today or overdue.
-    val waitingOnMe = awaitingAcceptanceBy(requestsState.requests, user.id, user.role).size +
+    val waitingOnMe = awaitingAcceptanceBy(requestsState.requests, user.id, canApproveMedia(access, user.role)).size +
         deadlineAlerts(requestsState.requests, user.id)
             .count { !it.forRequester && it.state != DeadlineState.DueTomorrow }
     val anyOpen = requestsState.requests.any { it.isOpen }
@@ -355,10 +356,17 @@ private fun TabContent(
     when (tab) {
         Tab.Home -> DashboardScreen(session.api, user.name ?: user.username, onOpenTab = onOpenTab, modifier = modifier)
         Tab.Tasks -> TasksScreen(session.api, access.tasks, user.id, showMessage, modifier)
-        Tab.Shopping -> ShoppingScreen(session.api, access.shopping, user.id, showMessage, modifier)
+        Tab.Shopping -> ShoppingScreen(session.api, access.shopping, access.lists, user.id, showMessage, modifier)
         Tab.Inventory -> InventoryScreen(session.api, access.inventory, user.id, showMessage, onOpenScanHistory, modifier)
         Tab.Bills -> BillsScreen(session.api, access.bills, user.id, showMessage, modifier)
-        Tab.Requests -> RequestsScreen(session.api, user, canSubmit = access.requests.create, showMessage, modifier)
+        Tab.Requests -> RequestsScreen(
+            session.api,
+            user,
+            canSubmit = access.requests.create,
+            canApproveMedia = canApproveMedia(access, user.role),
+            showMessage,
+            modifier,
+        )
     }
 }
 

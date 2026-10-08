@@ -62,4 +62,43 @@ class RequestAttentionTest {
         val media = maintenance(today).copy(category = "media")
         assertTrue(alerts(media).isEmpty())
     }
+
+    private fun media(status: String?) = HouseholdRequest(
+        id = "m-$status",
+        category = "media",
+        title = "Dune",
+        status = status,
+        requester = UserRef(other, other),
+        createdAt = "2026-10-01T12:00:00Z",
+    )
+
+    @Test fun `open media waits on approvers only, including old accepted rows`() {
+        val all = listOf(media(null), media("pending"), media("accepted"), media("completed"))
+        assertEquals(
+            listOf("m-null", "m-pending", "m-accepted"),
+            awaitingAcceptanceBy(all, me, approvesMedia = true).map { it.id },
+        )
+        assertTrue(awaitingAcceptanceBy(all, me, approvesMedia = false).isEmpty())
+    }
+
+    @Test fun `media is one step - waiting or added`() {
+        assertEquals("pending", media("accepted").mediaStatus)
+        assertEquals("pending", media(null).mediaStatus)
+        assertEquals("completed", media("completed").mediaStatus)
+    }
+
+    @Test fun `media approval comes from the grid, and the head always has it`() {
+        val approver = AccessMatrix(requests = PageAccess.SUBMIT_AND_APPROVE)
+        assertTrue(canApproveMedia(approver, "member"))
+        assertTrue(canApproveMedia(AccessMatrix(), "head"))
+        assertEquals(false, canApproveMedia(defaultAccess("member"), "member"))
+        assertTrue(canApproveMedia(defaultAccess("manager"), "manager"))
+    }
+
+    @Test fun `maintenance waits only on its pending assignee`() {
+        val mine = maintenance(null, status = "pending")
+        val accepted = maintenance(today, status = "accepted")
+        val theirs = maintenance(null, assignee = other, status = "pending")
+        assertEquals(listOf(mine), awaitingAcceptanceBy(listOf(mine, accepted, theirs), me, approvesMedia = true))
+    }
 }

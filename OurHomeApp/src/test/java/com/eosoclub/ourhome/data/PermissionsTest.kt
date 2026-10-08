@@ -37,10 +37,45 @@ class PermissionsTest {
         assertFalse(defaultAccess("member").tasks.any)
         assertEquals(PageAccess.ALL, defaultAccess("member").shopping)
         assertFalse(defaultAccess("guest").shopping.any)
-        for (role in listOf("manager", "member", "guest")) {
+        for (role in listOf("member", "teen", "child", "guest")) {
             assertEquals(PageAccess.SUBMIT_ONLY, defaultAccess(role).requests)
         }
+        assertEquals(PageAccess.SUBMIT_AND_APPROVE, defaultAccess("manager").requests)
+        assertTrue(defaultAccess("head").requests.approve)
         assertFalse(defaultAccess("stranger").requests.any)
+    }
+
+    @Test
+    fun teensAndChildrenGetTieredDefaults() {
+        val teen = defaultAccess("teen")
+        for (page in listOf(teen.calendar, teen.shopping, teen.inventory)) {
+            assertEquals(PageAccess.OWN_ONLY, page)
+        }
+        assertFalse(teen.lists.any)
+        assertFalse(teen.tasks.any)
+        assertFalse(teen.bills.any)
+
+        val child = defaultAccess("child")
+        assertEquals(PageAccess.ADD_ONLY, child.shopping)
+        assertTrue(child.shopping.any) // enough to tick items off
+        assertFalse(child.lists.any)
+        assertFalse(child.inventory.any)
+    }
+
+    @Test
+    fun listAccessFallsBackToShoppingOnAnOlderServer() {
+        val json = Json { ignoreUnknownKeys = true }
+        val old = json.decodeFromString(
+            AccessMatrix.serializer(),
+            """{"shopping":{"create":true,"editOwn":true,"deleteOwn":true,"editOthers":false,"deleteOthers":false}}""",
+        )
+        assertTrue(old.lists.create)
+        val new = json.decodeFromString(
+            AccessMatrix.serializer(),
+            """{"shopping":{"create":true},"shoppingLists":{"create":false},"requests":{"create":true,"approve":true}}""",
+        )
+        assertFalse(new.lists.create)
+        assertTrue(new.requests.approve)
     }
 
     @Test

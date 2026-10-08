@@ -64,6 +64,8 @@ private val ROLE_LABELS = mapOf(
     "head" to "Head of household",
     "manager" to "Manager",
     "member" to "Member",
+    "teen" to "Teen",
+    "child" to "Child",
     "guest" to "Guest",
 )
 

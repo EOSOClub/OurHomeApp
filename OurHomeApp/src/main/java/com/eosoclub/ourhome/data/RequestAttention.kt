@@ -13,17 +13,35 @@ val HouseholdRequest.effectiveStatus: String get() = status ?: "pending"
 val HouseholdRequest.isOpen: Boolean get() = effectiveStatus != "completed"
 
 /**
- * Requests waiting for [userId] to accept: pending media requests if their role
- * handles media (the head), and pending maintenance requests assigned to them.
+ * A media request's status in the one-step flow: "pending" (waiting to be
+ * added) or "completed" (added). "accepted" from the older accept → available
+ * flow still waits.
  */
-fun awaitingAcceptanceBy(requests: List<HouseholdRequest>, userId: String, role: String?): List<HouseholdRequest> {
-    val handlesMedia = can(role, Permission.RequestsManageMedia)
-    return requests.filter { r ->
-        r.effectiveStatus == "pending" && when (r.category) {
-            "media" -> handlesMedia
-            "maintenance" -> r.assignee?.id == userId
-            else -> false
-        }
+val HouseholdRequest.mediaStatus: String get() = if (isOpen) "pending" else "completed"
+
+/**
+ * Whether the user marks media requests added: the Requests `approve` switch.
+ * The head always may — a server from before the switch existed doesn't send
+ * it, but handled media by role (head only).
+ */
+fun canApproveMedia(access: AccessMatrix, role: String?): Boolean =
+    access.requests.approve || role == "head"
+
+/**
+ * Requests waiting on [userId]: open media requests if they approve media
+ * ([approvesMedia]), and pending maintenance requests assigned to them. Media
+ * is one step (waiting → added); "accepted" media is left over from the older
+ * accept → available flow and still waits to be added.
+ */
+fun awaitingAcceptanceBy(
+    requests: List<HouseholdRequest>,
+    userId: String,
+    approvesMedia: Boolean,
+): List<HouseholdRequest> = requests.filter { r ->
+    when (r.category) {
+        "media" -> approvesMedia && r.isOpen
+        "maintenance" -> r.effectiveStatus == "pending" && r.assignee?.id == userId
+        else -> false
     }
 }
 

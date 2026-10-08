@@ -331,6 +331,22 @@ class ApiClient(
     suspend fun clearBought(listId: String) =
         callUnit(post("/api/shopping/lists/clear", buildJsonObject { put("listId", listId) }))
 
+    /** [kind]: one of the web's SHOPPING_LIST_KINDS (grocery, supplies, …). */
+    suspend fun createShoppingList(name: String, kind: String): ShoppingList =
+        call(
+            post("/api/shopping/lists", buildJsonObject { put("name", name); put("kind", kind) }),
+            ShoppingList.serializer(),
+        )
+
+    suspend fun renameShoppingList(listId: String, name: String): ShoppingList =
+        call(
+            post("/api/shopping/lists/update", buildJsonObject { put("listId", listId); put("name", name) }),
+            ShoppingList.serializer(),
+        )
+
+    suspend fun deleteShoppingList(listId: String) =
+        callUnit(post("/api/shopping/lists/delete", buildJsonObject { put("listId", listId) }))
+
     // --- Dashboard -----------------------------------------------------------
 
     suspend fun dashboard(): Dashboard = call(get("/api/dashboard"), Dashboard.serializer())

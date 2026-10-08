@@ -60,6 +60,7 @@ import com.eosoclub.ourhome.data.SessionUser
 import com.eosoclub.ourhome.data.UserRef
 import com.eosoclub.ourhome.data.can
 import com.eosoclub.ourhome.data.effectiveStatus
+import com.eosoclub.ourhome.data.mediaStatus
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -74,8 +75,10 @@ import java.time.ZoneOffset
 private val CATEGORIES = listOf("media" to "Media", "maintenance" to "Maintenance")
 private val MEDIA_TYPES = listOf("movie" to "Movie", "tv" to "TV show")
 private val MEDIA_SECTIONS = listOf("movie" to "Movies", "tv" to "TV shows")
-private val MEDIA_STATUS_ORDER = listOf("pending", "accepted", "completed")
-private val MEDIA_STATUS_LABELS = mapOf("pending" to "Waiting", "accepted" to "Accepted", "completed" to "Available")
+// Media is one step: waiting → added. ([mediaStatus] folds the older flow's
+// "accepted" into waiting.)
+private val MEDIA_STATUS_ORDER = listOf("pending", "completed")
+private val MEDIA_STATUS_LABELS = mapOf("pending" to "Waiting", "completed" to "Added")
 private val MAINTENANCE_SECTIONS = listOf(
     "pending" to "Waiting for acceptance",
     "accepted" to "In progress",
@@ -190,16 +193,10 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         _messages.send("Done by ${formatDate(updated.dueAt!!)} — got it")
     }
 
-    /** The head accepts a movie/TV request (no date needed). */
-    fun acceptMedia(r: HouseholdRequest) = runBusy(r) {
-        replace(api.acceptRequest(r.id))
-        _messages.send("Accepted “${r.title}”")
-    }
-
-    /** Maintenance: the assignee marks it done. Media: the head marks it available. */
+    /** Maintenance: the assignee marks it done. Media: an approver marks it added (one step). */
     fun complete(r: HouseholdRequest) = runBusy(r) {
         replace(api.completeRequest(r.id))
-        _messages.send(if (r.category == "media") "“${r.title}” is available" else "Marked “${r.title}” done")
+        _messages.send(if (r.category == "media") "Added “${r.title}”" else "Marked “${r.title}” done")
     }
 
     private fun runBusy(r: HouseholdRequest, block: suspend () -> Unit) = viewModelScope.launch {
@@ -224,13 +221,14 @@ fun RequestsScreen(
     user: SessionUser,
     /** Requests "Add" in the head's permissions grid (Members → Permissions). */
     canSubmit: Boolean,
+    /** Requests "Approve" in that grid: marks media requests added. */
+    canApproveMedia: Boolean,
     showMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val vm = viewModel { RequestsViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
     val canWrite = can(user.role, Permission.RequestsWrite)
-    val canManageMedia = can(user.role, Permission.RequestsManageMedia)
 
     LaunchedEffect(Unit) { vm.refresh() }
     LaunchedEffect(Unit) { vm.messages.collect(showMessage) }
@@ -272,9 +270,9 @@ fun RequestsScreen(
                 if (media.isNotEmpty()) {
                     categoryHeader("Media")
                     MEDIA_SECTIONS.forEach { (type, label) ->
-                        // Waiting first, available last.
+                        // Waiting first, added last.
                         val items = media.filter { it.mediaType == type }
-                            .sortedBy { MEDIA_STATUS_ORDER.indexOf(it.effectiveStatus) }
+                            .sortedBy { MEDIA_STATUS_ORDER.indexOf(it.mediaStatus) }
                         sectionHeader("media-$type", label, items.size)
                         if (items.isEmpty()) {
                             item(key = "empty-$type") {
@@ -290,10 +288,9 @@ fun RequestsScreen(
                             MediaCard(
                                 r = r,
                                 isOwn = isOwn,
-                                canManage = canManageMedia,
+                                canManage = canApproveMedia,
                                 busy = r.id in state.busy,
-                                onAccept = { vm.acceptMedia(r) },
-                                onComplete = { vm.complete(r) },
+                                onMarkAdded = { vm.complete(r) },
                                 onEdit = if (isOwn && canWrite) ({ vm.startEdit(r) }) else null,
                             )
                         }
@@ -365,12 +362,11 @@ private fun MediaCard(
     isOwn: Boolean,
     canManage: Boolean,
     busy: Boolean,
-    onAccept: () -> Unit,
-    onComplete: () -> Unit,
+    onMarkAdded: () -> Unit,
     onEdit: (() -> Unit)?,
 ) {
-    val status = r.effectiveStatus
-    // Highlight requests waiting on *you* (the head).
+    val status = r.mediaStatus
+    // Highlight requests waiting on *you* (an approver).
     val colors = if (canManage && status == "pending") {
         CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
     } else {
@@ -399,16 +395,12 @@ private fun MediaCard(
                     IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit ${r.title}") }
                 }
             }
-            if (canManage && status != "completed") {
+            if (canManage && status == "pending") {
                 Row(
                     horizontalArrangement = Arrangement.End,
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 ) {
-                    if (status == "pending") {
-                        Button(onClick = onAccept, enabled = !busy) { Text(if (busy) "Saving…" else "Accept") }
-                    } else {
-                        OutlinedButton(onClick = onComplete, enabled = !busy) { Text(if (busy) "Saving…" else "Mark available") }
-                    }
+                    Button(onClick = onMarkAdded, enabled = !busy) { Text(if (busy) "Saving…" else "Mark as added") }
                 }
             }
         }

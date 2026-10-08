@@ -15,11 +15,9 @@ enum class Permission {
     TasksComplete,
     MembersManage,
     // Edit/delete your own requests, accept/finish ones assigned to you.
-    // *Submitting* a request is [AccessMatrix.requests] `create`.
+    // *Submitting* a request is [AccessMatrix.requests] `create`; marking media
+    // requests added is its `approve`.
     RequestsWrite,
-    // Accept movie/TV requests and mark them available (head-only). Holders
-    // get the "requests waiting" reminders for media.
-    RequestsManageMedia,
     // File a bug report (everyone).
     BugsReport,
     // Receive bug reports — bell + phone notification (head-only).
@@ -36,6 +34,8 @@ private val ROLE_PERMISSIONS: Map<String, Set<Permission>> = mapOf(
     "head" to Permission.entries.toSet(),
     "manager" to EVERYDAY + Permission.MembersManage,
     "member" to EVERYDAY,
+    "teen" to EVERYDAY,
+    "child" to EVERYDAY,
     "guest" to EVERYDAY,
 )
 
@@ -56,6 +56,8 @@ data class PageAccess(
     val deleteOwn: Boolean = false,
     val editOthers: Boolean = false,
     val deleteOthers: Boolean = false,
+    // Requests only: mark media requests added.
+    val approve: Boolean = false,
 ) {
     fun canEdit(ownerId: String?, userId: String): Boolean =
         if (ownerId != null && ownerId == userId) editOwn else editOthers
@@ -64,28 +66,40 @@ data class PageAccess(
         if (ownerId != null && ownerId == userId) deleteOwn else deleteOthers
 
     /** Any switch on — enough for everyday actions (tick bought, ± stock, scans). */
-    val any: Boolean get() = create || editOwn || deleteOwn || editOthers || deleteOthers
+    val any: Boolean get() = create || editOwn || deleteOwn || editOthers || deleteOthers || approve
 
     /** Clearing bought items removes only those you may delete. */
     val canDeleteAny: Boolean get() = deleteOwn || deleteOthers
 
     companion object {
-        val ALL = PageAccess(true, true, true, true, true)
+        val ALL = PageAccess(true, true, true, true, true, true)
         val NONE = PageAccess()
         val SUBMIT_ONLY = PageAccess(create = true)
+        val SUBMIT_AND_APPROVE = PageAccess(create = true, approve = true)
+        val OWN_ONLY = PageAccess(create = true, editOwn = true, deleteOwn = true)
+        val ADD_ONLY = PageAccess(create = true)
     }
 }
 
-/** Requests only uses `create` (submit); edit/delete stay requester-only. */
+/**
+ * Requests uses `create` (submit) and `approve` (mark media added); edit/delete
+ * stay requester-only. [shopping] is the items; [shoppingLists] the lists
+ * themselves (new / rename / delete).
+ */
 @Serializable
 data class AccessMatrix(
     val tasks: PageAccess = PageAccess.NONE,
     val calendar: PageAccess = PageAccess.NONE,
     val shopping: PageAccess = PageAccess.NONE,
+    // A server from before the split has no row; it guarded lists with shopping.
+    val shoppingLists: PageAccess? = null,
     val inventory: PageAccess = PageAccess.NONE,
     val bills: PageAccess = PageAccess.NONE,
     val requests: PageAccess = PageAccess.NONE,
-)
+) {
+    /** List access, falling back to [shopping] where an older server has no row. */
+    val lists: PageAccess get() = shoppingLists ?: shopping
+}
 
 /** `GET /api/permissions/me` (MyAccessDTO). */
 @Serializable
@@ -99,15 +113,29 @@ data class MyAccess(val userId: String, val role: String, val access: AccessMatr
 fun defaultAccess(role: String?): AccessMatrix = when (role) {
     "head" -> AccessMatrix(
         PageAccess.ALL, PageAccess.ALL, PageAccess.ALL, PageAccess.ALL, PageAccess.ALL, PageAccess.ALL,
+        PageAccess.ALL,
     )
     "manager", "member" -> AccessMatrix(
         tasks = PageAccess.NONE,
         calendar = PageAccess.ALL,
         shopping = PageAccess.ALL,
+        shoppingLists = PageAccess.ALL,
         inventory = PageAccess.ALL,
         bills = PageAccess.ALL,
+        requests = if (role == "manager") PageAccess.SUBMIT_AND_APPROVE else PageAccess.SUBMIT_ONLY,
+    )
+    "teen" -> AccessMatrix(
+        calendar = PageAccess.OWN_ONLY,
+        shopping = PageAccess.OWN_ONLY,
+        shoppingLists = PageAccess.NONE,
+        inventory = PageAccess.OWN_ONLY,
         requests = PageAccess.SUBMIT_ONLY,
     )
-    "guest" -> AccessMatrix(requests = PageAccess.SUBMIT_ONLY)
-    else -> AccessMatrix()
+    "child" -> AccessMatrix(
+        shopping = PageAccess.ADD_ONLY,
+        shoppingLists = PageAccess.NONE,
+        requests = PageAccess.SUBMIT_ONLY,
+    )
+    "guest" -> AccessMatrix(shoppingLists = PageAccess.NONE, requests = PageAccess.SUBMIT_ONLY)
+    else -> AccessMatrix(shoppingLists = PageAccess.NONE)
 }
