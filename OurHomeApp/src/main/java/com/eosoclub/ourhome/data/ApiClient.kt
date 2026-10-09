@@ -115,6 +115,27 @@ class ApiClient(
         )
 
     /**
+     * Saves the about-me fields. Every field is sent, so blank/null clears it;
+     * the server checks the emoji is a single one and the birthday ("MM-DD") real.
+     */
+    suspend fun updateAboutMe(profile: PublicProfile): ProfileOverview =
+        call(
+            Request.Builder()
+                .url(baseUrl() + "/api/profile")
+                .patch(
+                    buildJsonObject {
+                        put("bio", profile.bio)
+                        put("pronouns", profile.pronouns)
+                        put("avatarEmoji", profile.avatarEmoji)
+                        put("profileColor", profile.profileColor)
+                        put("birthday", profile.birthday)
+                    }.toString().toRequestBody(jsonType),
+                )
+                .build(),
+            ProfileOverview.serializer(),
+        )
+
+    /**
      * Better Auth's change-password (bare JSON errors, not the app envelope).
      * With [revokeOtherSessions] the server rotates this device's session
      * cookie, which the cookie jar picks up.
@@ -199,6 +220,8 @@ class ApiClient(
         put("pointsFollowTime", input.pointsFollowTime)
         put("categoryId", input.categoryId)
         put("assigneeId", input.assigneeId)
+        // Always sent: [] clears a rotation (an older server ignores the key).
+        putJsonArray("rotationUserIds") { input.rotationUserIds.forEach { add(it) } }
         val r = input.recurrence
         if (r == null) {
             if (forUpdate) put("recurrence", JsonNull)

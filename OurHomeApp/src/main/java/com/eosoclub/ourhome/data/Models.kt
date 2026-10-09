@@ -51,8 +51,33 @@ data class SessionUser(
     val mustChangePassword: Boolean? = null,
 )
 
+/**
+ * A household member (GET /api/household/members). The about-me fields come
+ * from a newer server (HouseholdProfile in profileService.ts); older ones
+ * send only id + name.
+ */
 @Serializable
-data class Member(val id: String, val name: String)
+data class Member(
+    val id: String,
+    val name: String,
+    val role: String? = null,
+    val bio: String? = null,
+    val pronouns: String? = null,
+    val avatarEmoji: String? = null,
+    val profileColor: String? = null,
+    /** "MM-DD", no year. */
+    val birthday: String? = null,
+)
+
+/** The user's own about-me fields (PublicProfile in the web's lib/profile.ts). */
+@Serializable
+data class PublicProfile(
+    val bio: String? = null,
+    val pronouns: String? = null,
+    val avatarEmoji: String? = null,
+    val profileColor: String? = null,
+    val birthday: String? = null,
+)
 
 /** The signed-in user's own account (ProfileOverview in profileService.ts). */
 @Serializable
@@ -64,6 +89,8 @@ data class ProfileOverview(
     val role: String,
     val householdName: String? = null,
     val memberSince: String,
+    /** Null from a server without about-me fields (the card is hidden then). */
+    val profile: PublicProfile? = null,
     val stats: ProfileStats = ProfileStats(),
 )
 
@@ -142,6 +169,8 @@ data class TaskInput(
     val pointsFollowTime: Boolean = true,
     val categoryId: String?,
     val assigneeId: String?,
+    /** People taking turns, in order; empty clears the rotation. */
+    val rotationUserIds: List<String> = emptyList(),
     /** Null = not recurring (clears the rule on edit). */
     val recurrence: RecurrenceInput?,
 )
@@ -235,6 +264,10 @@ data class Task(
     val cycleEndsAt: String? = null,
     val category: CategoryRef? = null,
     val assignee: UserRef? = null,
+    /** Rotating assignees in turn order (empty = no rotation; web lib/taskRotation.ts). */
+    val rotation: List<UserRef> = emptyList(),
+    /** Whose turn comes after [assignee]. */
+    val nextAssignee: UserRef? = null,
     val recurrence: Recurrence? = null,
     val subtasks: List<Subtask> = emptyList(),
     /** Only on POST /api/tasks/complete: the completion, for Undo. */

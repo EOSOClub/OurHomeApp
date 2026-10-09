@@ -394,7 +394,8 @@ private fun TaskCard(
                     task.points.takeIf { it > 0 }?.let { "${formatPoints(it.centi())} pts" },
                     task.priority.takeIf { it == "high" || it == "urgent" }?.replaceFirstChar(Char::uppercase),
                     task.recurrence?.let { if (it.rollover) "Cycles ${it.kind}" else "Repeats ${it.kind}" },
-                    task.assignee?.name,
+                    task.assignee?.name?.let { if (task.rotation.isNotEmpty()) "$it's turn" else it },
+                    task.nextAssignee?.name?.let { "next $it" },
                     task.subtasks.takeIf { it.isNotEmpty() }?.let { s -> "${s.count { it.done }}/${s.size} steps" },
                     task.category?.name,
                 )

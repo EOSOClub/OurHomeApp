@@ -3,6 +3,7 @@ package com.eosoclub.ourhome.ui
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -17,6 +18,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -133,6 +135,8 @@ internal fun TaskEditor(
     var dueTime by remember { mutableStateOf(originalDue?.toLocalTime()) }
     var categoryId by remember { mutableStateOf(task?.category?.id.orEmpty()) }
     var assigneeId by remember { mutableStateOf(task?.assignee?.id.orEmpty()) }
+    // Rotating assignees in turn order (web lib/taskRotation.ts).
+    var rotation by remember { mutableStateOf(task?.rotation?.map { it.id }.orEmpty()) }
     var repeatKind by remember { mutableStateOf(rule?.kind?.takeIf { k -> REPEAT_KINDS.any { it.first == k } } ?: "weekly") }
     var interval by remember { mutableStateOf((rule?.interval ?: 1).toString()) }
     var weekdays by remember { mutableStateOf(parseIntList(rule?.byWeekday).toSet()) }
@@ -155,6 +159,12 @@ internal fun TaskEditor(
     var pendingTotal by remember { mutableStateOf<Pair<String, (Boolean) -> EditResult>?>(null) }
 
     val recurring = type == "recurring"
+    // Turns only move on when a recurring task does, so rotation needs it.
+    val rotating = recurring && rotation.size >= 2
+    val currentTurn = if (rotating && assigneeId !in rotation) rotation.first() else assigneeId
+    // Names for the rotation, even before the member list loads.
+    val memberNames = members?.associate { it.id to it.name }
+        ?: task?.rotation?.associate { it.id to (it.name ?: "Member") }.orEmpty()
     val intervalValue = interval.trim().toIntOrNull()
     val intervalValid = !recurring || intervalValue in 1..365
     val stepsValid = steps.all { it.resetIntervalDays() != 0 }
@@ -186,7 +196,8 @@ internal fun TaskEditor(
                         points = if (base.pointsFollowTime) null else base.basePointsCenti?.asPoints(),
                         pointsFollowTime = base.pointsFollowTime,
                         categoryId = categoryId.ifEmpty { null },
-                        assigneeId = assigneeId.ifEmpty { null },
+                        assigneeId = currentTurn.ifEmpty { null },
+                        rotationUserIds = if (rotating) rotation else emptyList(),
                         recurrence = if (recurring) {
                             RecurrenceInput(
                                 kind = repeatKind,
@@ -238,13 +249,22 @@ internal fun TaskEditor(
         // The web disables the time until a date is picked; here it's hidden.
         if (dueDate != null) TimeField("Due time", dueTime) { dueTime = it }
         // Until the lists load, offer the task's current value so it still shows.
-        DropdownField(
-            "Assignee",
-            listOf("" to "Unassigned") + (members?.map { it.id to it.name }
-                ?: listOfNotNull(task?.assignee?.let { it.id to (it.name ?: "Member") })),
-            assigneeId,
-            onSelect = { assigneeId = it },
-        )
+        if (rotating) {
+            DropdownField(
+                "Whose turn now",
+                rotation.map { it to (memberNames[it] ?: "Member") },
+                currentTurn,
+                onSelect = { assigneeId = it },
+            )
+        } else {
+            DropdownField(
+                "Assignee",
+                listOf("" to "Unassigned") + (members?.map { it.id to it.name }
+                    ?: listOfNotNull(task?.assignee?.let { it.id to (it.name ?: "Member") })),
+                assigneeId,
+                onSelect = { assigneeId = it },
+            )
+        }
         DropdownField(
             "Category",
             listOf("" to "None") + (categories?.map { it.id to it.name }
@@ -296,6 +316,13 @@ internal fun TaskEditor(
                         }
                     }
                     DateField("Ends on (optional)", until) { until = it }
+                    RotationSection(
+                        members = members ?: task?.rotation?.map { Member(it.id, it.name ?: "Member") }.orEmpty(),
+                        rotation = rotation,
+                        rollover = rollover,
+                        onToggle = { id -> rotation = if (id in rotation) rotation - id else rotation + id },
+                        onClear = { rotation = emptyList() },
+                    )
                     CycleSection(
                         repeatKind = repeatKind,
                         interval = intervalValue ?: 1,
@@ -518,6 +545,43 @@ private fun NumberBox(
                 }
             },
     )
+}
+
+/** "Take turns": people in tap order; the number on a chip is their turn. */
+@Composable
+private fun RotationSection(
+    members: List<Member>,
+    rotation: List<String>,
+    rollover: Boolean,
+    onToggle: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    FieldLabel("Take turns (optional)")
+    Text(
+        "Pick people in turn order. Each time it's done" +
+            (if (rollover) " or its cycle ends (even if missed)" else "") +
+            ", it passes to the next person.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        members.forEach { m ->
+            val turn = rotation.indexOf(m.id)
+            FilterChip(
+                selected = turn >= 0,
+                onClick = { onToggle(m.id) },
+                label = { Text(if (turn >= 0) "${turn + 1}. ${m.name}" else m.name) },
+            )
+        }
+    }
+    if (rotation.size == 1) {
+        Text(
+            "Pick at least two people to take turns.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    if (rotation.isNotEmpty()) TextButton(onClick = onClear) { Text("Clear turns") }
 }
 
 @Composable
