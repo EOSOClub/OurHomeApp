@@ -403,6 +403,16 @@ class ApiClient(
 
     suspend fun dashboard(): Dashboard = call(get("/api/dashboard"), Dashboard.serializer())
 
+    /** One page of the activity log, newest first; [before] = the previous page's `nextBefore`. */
+    suspend fun activity(area: String? = null, userId: String? = null, before: String? = null): ActivityPage {
+        val query = listOfNotNull(
+            area?.let { "area=$it" },
+            userId?.let { "userId=$it" },
+            before?.let { "before=$it" },
+        ).joinToString("&")
+        return call(get("/api/activity" + if (query.isEmpty()) "" else "?$query"), ActivityPage.serializer())
+    }
+
     // --- Inventory -----------------------------------------------------------
 
     suspend fun inventory(): List<InventoryItem> =

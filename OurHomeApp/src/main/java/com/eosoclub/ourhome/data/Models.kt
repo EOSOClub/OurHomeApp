@@ -325,7 +325,9 @@ data class NotificationList(
 )
 
 // Dashboard (src/server/services/dashboardService.ts) returns raw Prisma rows,
-// so these are narrower than the list DTOs above.
+// so these are narrower than the list DTOs above. `overdue`/`upcoming` are
+// household-wide; `me` and `doneToday` are null from a server before the
+// 2026-10-09 redesign.
 @Serializable
 data class Dashboard(
     val counts: DashboardCounts,
@@ -333,8 +335,36 @@ data class Dashboard(
     val upcoming: List<DashboardTask> = emptyList(),
     val upcomingBills: List<DashboardBill> = emptyList(),
     val upcomingEvents: List<EventOccurrence> = emptyList(),
-    val recentActivity: List<ActivityEntry> = emptyList(),
+    val me: DashboardMe? = null,
+    val doneToday: DoneToday? = null,
 )
+
+/** What is on the signed-in user. Requests come from the Requests tab's own fetch (RequestAttention). */
+@Serializable
+data class DashboardMe(
+    /** Mine, overdue or due today. */
+    val today: List<DashboardTask> = emptyList(),
+    /** Mine, due later this week. */
+    val later: List<DashboardTask> = emptyList(),
+    /** Unassigned, overdue or due today. */
+    val openToAnyone: List<DashboardTask> = emptyList(),
+    val points: DashboardPoints? = null,
+)
+
+@Serializable
+data class DashboardPoints(
+    val week: Double = 0.0,
+    val queued: Double = 0.0,
+    /** Place in the house this week; null until they have points. */
+    val rank: Int? = null,
+    val leaders: List<PointsLeader> = emptyList(),
+)
+
+@Serializable
+data class PointsLeader(val userId: String, val name: String, val points: Double)
+
+@Serializable
+data class DoneToday(val total: Int = 0, val mine: Int = 0)
 
 @Serializable
 data class DashboardCounts(
@@ -373,12 +403,22 @@ data class EventOccurrence(
     val location: String? = null,
 )
 
+/** One row of the household activity log (GET /api/activity, activityService.listActivity). */
 @Serializable
 data class ActivityEntry(
     val id: String,
     val message: String,
     val createdAt: String,
     val actor: UserRef? = null,
+    /** tasks | shopping | inventory | bills | calendar | requests | household (web lib/activityAreas.ts). */
+    val area: String = "household",
+)
+
+@Serializable
+data class ActivityPage(
+    val items: List<ActivityEntry> = emptyList(),
+    /** Pass back as `before` for the next (older) page; null at the end. */
+    val nextBefore: String? = null,
 )
 
 /**

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
@@ -145,10 +146,14 @@ fun HomeScreen(
         accessVm.refresh()
     }
 
-    // Waiting for my acceptance, plus my own maintenance due today or overdue.
-    val waitingOnMe = awaitingAcceptanceBy(requestsState.requests, user.id, canApproveMedia(access, user.role)).size +
+    // Waiting for my acceptance, plus my own maintenance due today or overdue —
+    // the tab badge counts them and the dashboard's "Needs you" lists them.
+    val waitingRequests = awaitingAcceptanceBy(requestsState.requests, user.id, canApproveMedia(access, user.role))
+        .map { WaitingRequest(it, if (it.category == "media") "Mark added" else "Accept", urgent = false) } +
         deadlineAlerts(requestsState.requests, user.id)
-            .count { !it.forRequester && it.state != DeadlineState.DueTomorrow }
+            .filter { !it.forRequester && it.state != DeadlineState.DueTomorrow }
+            .map { WaitingRequest(it.request, if (it.state == DeadlineState.Overdue) "Overdue" else "Due today", urgent = true) }
+    val waitingOnMe = waitingRequests.size
     val anyOpen = requestsState.requests.any { it.isOpen }
 
     // A tapped notification asks for the Requests tab (reminders), Profile
@@ -263,6 +268,11 @@ fun HomeScreen(
                                     onClick = { menuOpen = false; overlay = Overlay.Points },
                                 )
                                 DropdownMenuItem(
+                                    text = { Text("Activity") },
+                                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
+                                    onClick = { menuOpen = false; overlay = Overlay.Activity },
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Report a bug") },
                                     leadingIcon = { Icon(painterResource(R.drawable.ic_bug), contentDescription = null) },
                                     onClick = { menuOpen = false; reportingBug = true },
@@ -325,14 +335,17 @@ fun HomeScreen(
             Overlay.Profile -> ProfileScreen(session, user.mustChangePassword == true, showMessage, modifier)
             Overlay.ScanHistory -> ScanHistoryScreen(session.api, modifier)
             Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)
+            Overlay.Activity -> ActivityScreen(session.api, user.id, modifier)
             null -> TabContent(
                 tab,
                 session,
                 user,
                 access,
+                waitingRequests,
                 showMessage,
                 showAction,
                 onOpenPoints = { overlay = Overlay.Points },
+                onOpenActivity = { overlay = Overlay.Activity },
                 onOpenTab = { tab = it },
                 onOpenScanHistory = { overlay = Overlay.ScanHistory },
                 modifier = modifier,
@@ -371,6 +384,7 @@ private enum class Overlay(val label: String) {
     Profile("Profile"),
     ScanHistory("Recent scans"),
     Points("Points"),
+    Activity("Activity"),
 }
 
 @Composable
@@ -379,15 +393,26 @@ private fun TabContent(
     session: SessionManager,
     user: SessionUser,
     access: AccessMatrix,
+    waitingRequests: List<WaitingRequest>,
     showMessage: (String) -> Unit,
     showAction: (String, String, () -> Unit) -> Unit,
     onOpenPoints: () -> Unit,
+    onOpenActivity: () -> Unit,
     onOpenTab: (Tab) -> Unit,
     onOpenScanHistory: () -> Unit,
     modifier: Modifier,
 ) {
     when (tab) {
-        Tab.Home -> DashboardScreen(session.api, user.name ?: user.username, onOpenTab = onOpenTab, modifier = modifier)
+        Tab.Home -> DashboardScreen(
+            session.api,
+            user.name ?: user.username,
+            access,
+            waitingRequests,
+            onOpenTab = onOpenTab,
+            onOpenPoints = onOpenPoints,
+            onOpenActivity = onOpenActivity,
+            modifier = modifier,
+        )
         Tab.Tasks -> TasksScreen(session.api, access.tasks, user.id, showMessage, showAction, onOpenPoints, modifier)
         Tab.Shopping -> ShoppingScreen(session.api, access.shopping, access.lists, user.id, showMessage, modifier)
         Tab.Inventory -> InventoryScreen(session.api, access.inventory, user.id, showMessage, onOpenScanHistory, modifier)
