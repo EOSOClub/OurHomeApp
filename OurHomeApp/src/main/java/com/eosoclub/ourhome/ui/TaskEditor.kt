@@ -1,16 +1,20 @@
 package com.eosoclub.ourhome.ui
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -18,6 +22,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,14 +33,36 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.eosoclub.ourhome.data.CategoryRef
+import com.eosoclub.ourhome.data.DEFAULT_MINUTES_PER_POINT
+import com.eosoclub.ourhome.data.EditResult
 import com.eosoclub.ourhome.data.Member
+import com.eosoclub.ourhome.data.PointsState
 import com.eosoclub.ourhome.data.RecurrenceInput
+import com.eosoclub.ourhome.data.StepInput
 import com.eosoclub.ourhome.data.Task
+import com.eosoclub.ourhome.data.TaskBase
 import com.eosoclub.ourhome.data.TaskInput
+import com.eosoclub.ourhome.data.addStep
+import com.eosoclub.ourhome.data.asPoints
+import com.eosoclub.ourhome.data.customisedCount
+import com.eosoclub.ourhome.data.formatPoints
+import com.eosoclub.ourhome.data.liveTotals
+import com.eosoclub.ourhome.data.removeStep
+import com.eosoclub.ourhome.data.setStepFollow
+import com.eosoclub.ourhome.data.setStepMinutes
+import com.eosoclub.ourhome.data.setStepPoints
+import com.eosoclub.ourhome.data.setTaskFollow
+import com.eosoclub.ourhome.data.setTaskMinutes
+import com.eosoclub.ourhome.data.setTaskPoints
+import com.eosoclub.ourhome.data.toCenti
 import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
@@ -43,10 +70,11 @@ import java.time.ZoneId
 /**
  * A checklist row in the editor; [id] is null for a step not yet saved.
  * [resetDays] is the raw "unchecks itself every N days" text ("" = never).
+ * Its time/points live in the editor's [PointsState] at the same index.
  */
 data class StepEdit(val key: Int, val id: String?, val title: String, val resetDays: String = "")
 
-data class TaskEdit(val input: TaskInput, val steps: List<StepEdit>)
+data class TaskEdit(val input: TaskInput, val steps: List<StepInput>)
 
 /** Parsed reset cadence: null when blank, 0 when invalid (1–365 like the web). */
 internal fun StepEdit.resetIntervalDays(): Int? =
@@ -68,12 +96,16 @@ private val REPEAT_KINDS = listOf(
 )
 private val WEEKDAY_LABELS = listOf("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa")
 
+/** Amber outline for values set by hand (the web marks them the same way). */
+private val CustomColor = Color(0xFFF59E0B)
+
 private fun parseIntList(value: String?): List<Int> =
     value?.split(',')?.mapNotNull { it.trim().toIntOrNull() }.orEmpty()
 
 /**
  * The create/edit task form, with every field of the web's form. [task] null =
  * creating. [members] / [categories] are null while loading (or if unreadable).
+ * Time to complete and points follow TaskPoints.kt (the web's taskPoints.ts).
  */
 @Composable
 internal fun TaskEditor(
@@ -83,6 +115,8 @@ internal fun TaskEditor(
     saving: Boolean,
     /** False when the user may only delete this task, not change it. */
     canSave: Boolean,
+    /** Household rate (from any loaded task; the default before that). */
+    minutesPerPoint: Double = task?.minutesPerPoint ?: DEFAULT_MINUTES_PER_POINT,
     onDismiss: () -> Unit,
     onSave: (TaskEdit) -> Unit,
     onDelete: (() -> Unit)?,
@@ -97,7 +131,6 @@ internal fun TaskEditor(
     var priority by remember { mutableStateOf(task?.priority ?: "medium") }
     var dueDate by remember { mutableStateOf(originalDue?.toLocalDate()) }
     var dueTime by remember { mutableStateOf(originalDue?.toLocalTime()) }
-    var estimate by remember { mutableStateOf(task?.estimatedMinutes?.toString().orEmpty()) }
     var categoryId by remember { mutableStateOf(task?.category?.id.orEmpty()) }
     var assigneeId by remember { mutableStateOf(task?.assignee?.id.orEmpty()) }
     var repeatKind by remember { mutableStateOf(rule?.kind?.takeIf { k -> REPEAT_KINDS.any { it.first == k } } ?: "weekly") }
@@ -105,7 +138,11 @@ internal fun TaskEditor(
     var weekdays by remember { mutableStateOf(parseIntList(rule?.byWeekday).toSet()) }
     var monthdays by remember { mutableStateOf(parseIntList(rule?.byMonthday).toSet()) }
     var until by remember { mutableStateOf(rule?.until?.let(::localDate)) }
+    var rollover by remember { mutableStateOf(rule?.rollover ?: false) }
+    var cycleWeekdays by remember { mutableStateOf(parseIntList(rule?.cycleWeekdays).toSet()) }
+    var cycleMonthdays by remember { mutableStateOf(parseIntList(rule?.cycleMonthdays).toSet()) }
     var nextKey by remember { mutableStateOf(task?.subtasks?.size ?: 0) }
+    // Titles/reset days per step, and their time/points at the same index.
     val steps = remember {
         mutableStateListOf<StepEdit>().apply {
             task?.subtasks?.sortedBy { it.position }?.forEachIndexed { i, s ->
@@ -113,13 +150,16 @@ internal fun TaskEditor(
             }
         }
     }
+    var points by remember { mutableStateOf(task?.pointsState() ?: PointsState(TaskBase(null, null, true), emptyList())) }
+    // A total edit that would overwrite customised steps, waiting for "Rescale".
+    var pendingTotal by remember { mutableStateOf<Pair<String, (Boolean) -> EditResult>?>(null) }
 
     val recurring = type == "recurring"
-    val estimateValue = estimate.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
-    val estimateValid = estimate.isBlank() || estimateValue in 1..100_000
     val intervalValue = interval.trim().toIntOrNull()
     val intervalValid = !recurring || intervalValue in 1..365
     val stepsValid = steps.all { it.resetIntervalDays() != 0 }
+    val cycleValid = !recurring || !rollover ||
+        (repeatKind != "weekly" || cycleWeekdays.isNotEmpty()) && (repeatKind != "monthly" || cycleMonthdays.isNotEmpty())
 
     EditorDialog(
         title = when {
@@ -129,9 +169,10 @@ internal fun TaskEditor(
         },
         saveLabel = if (task == null) "Add" else "Save",
         saving = saving,
-        saveEnabled = canSave && title.isNotBlank() && estimateValid && intervalValid && stepsValid,
+        saveEnabled = canSave && title.isNotBlank() && intervalValid && stepsValid && cycleValid,
         onDismiss = onDismiss,
         onSave = {
+            val base = points.task
             onSave(
                 TaskEdit(
                     input = TaskInput(
@@ -141,7 +182,9 @@ internal fun TaskEditor(
                         priority = priority,
                         // Like the web: a blank time means noon local.
                         dueDate = dueDate?.atTime(dueTime ?: LocalTime.NOON)?.atZone(zone)?.toInstant(),
-                        estimatedMinutes = estimateValue,
+                        estimatedMinutes = base.baseMinutes?.takeIf { it > 0 },
+                        points = if (base.pointsFollowTime) null else base.basePointsCenti?.asPoints(),
+                        pointsFollowTime = base.pointsFollowTime,
                         categoryId = categoryId.ifEmpty { null },
                         assigneeId = assigneeId.ifEmpty { null },
                         recurrence = if (recurring) {
@@ -151,12 +194,19 @@ internal fun TaskEditor(
                                 byWeekday = weekdays.sorted(),
                                 byMonthday = monthdays.sorted(),
                                 until = until?.atTime(LocalTime.NOON)?.atZone(zone)?.toInstant(),
+                                rollover = rollover,
+                                cycleWeekdays = cycleWeekdays.sorted(),
+                                cycleMonthdays = cycleMonthdays.sorted(),
                             )
                         } else {
                             null
                         },
                     ),
-                    steps = steps.toList(),
+                    steps = steps.mapIndexedNotNull { i, s ->
+                        s.title.trim().takeIf { it.isNotEmpty() }?.let {
+                            StepInput(s.id, it, s.resetIntervalDays(), points.steps[i])
+                        }
+                    },
                 ),
             )
         },
@@ -187,16 +237,6 @@ internal fun TaskEditor(
         DateField("Due date", dueDate) { dueDate = it; if (it == null) dueTime = null }
         // The web disables the time until a date is picked; here it's hidden.
         if (dueDate != null) TimeField("Due time", dueTime) { dueTime = it }
-        OutlinedTextField(
-            value = estimate,
-            onValueChange = { v -> estimate = v.filter(Char::isDigit) },
-            label = { Text("Estimated effort (min)") },
-            placeholder = { Text("e.g. 15") },
-            singleLine = true,
-            isError = !estimateValid,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-        )
         // Until the lists load, offer the task's current value so it still shows.
         DropdownField(
             "Assignee",
@@ -256,39 +296,293 @@ internal fun TaskEditor(
                         }
                     }
                     DateField("Ends on (optional)", until) { until = it }
+                    CycleSection(
+                        repeatKind = repeatKind,
+                        interval = intervalValue ?: 1,
+                        rollover = rollover,
+                        onRollover = { rollover = it },
+                        weekdays = cycleWeekdays,
+                        onWeekday = { d -> cycleWeekdays = if (d in cycleWeekdays) cycleWeekdays - d else cycleWeekdays + d },
+                        monthdays = cycleMonthdays,
+                        onMonthday = { d -> cycleMonthdays = if (d in cycleMonthdays) cycleMonthdays - d else cycleMonthdays + d },
+                        valid = cycleValid,
+                    )
                 }
             }
         }
+
+        PointsSection(
+            points = points,
+            minutesPerPoint = minutesPerPoint,
+            onChange = { points = it },
+            onTotalEdit = { what, run ->
+                val r = run(false)
+                if (r.needsConfirm) pendingTotal = what to run else points = r.state
+            },
+        )
 
         FieldLabel(if (task == null) "Checklist (optional)" else "Checklist")
         steps.forEachIndexed { index, step ->
             ChecklistStepRow(
                 step = step,
+                values = points.steps[index],
                 index = index,
                 isFirst = index == 0,
                 isLast = index == steps.lastIndex,
                 onChange = { steps[index] = it },
+                onMinutes = { m -> points = setStepMinutes(points, index, m, minutesPerPoint) },
+                onPoints = { c -> points = setStepPoints(points, index, c) },
+                onFollow = { on -> points = setStepFollow(points, index, on, minutesPerPoint) },
                 onMove = { delta ->
                     val other = index + delta
                     steps[index] = steps[other].also { steps[other] = steps[index] }
+                    val values = points.steps.toMutableList()
+                    values[index] = values[other].also { values[other] = values[index] }
+                    points = points.copy(steps = values)
                 },
-                onRemove = { steps.removeAt(index) },
+                onRemove = {
+                    steps.removeAt(index)
+                    points = removeStep(points, index)
+                },
             )
         }
-        TextButton(onClick = { steps.add(StepEdit(nextKey, null, "")); nextKey++ }) {
+        TextButton(onClick = {
+            steps.add(StepEdit(nextKey, null, ""))
+            points = addStep(points)
+            nextKey++
+        }) {
             Icon(Icons.Filled.Add, contentDescription = null)
             Text("Add step")
         }
     }
+
+    pendingTotal?.let { (what, run) ->
+        AlertDialog(
+            onDismissRequest = { pendingTotal = null },
+            title = { Text("Rescale every step?") },
+            text = {
+                Text(
+                    "Some steps have values set by hand. Changing the task's $what spreads it across all steps " +
+                        "in proportion and clears those custom values.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { points = run(true).state; pendingTotal = null }) { Text("Rescale steps") }
+            },
+            dismissButton = { TextButton(onClick = { pendingTotal = null }) { Text("Cancel") } },
+        )
+    }
+}
+
+/**
+ * Task totals: TTC, points and "Points follow time". Edits are applied against
+ * the state from when the field gained focus (so typing "1" then "12" scales
+ * the original split), live while nothing is customised; with customised steps
+ * they wait for the field to lose focus, then ask.
+ */
+@Composable
+private fun PointsSection(
+    points: PointsState,
+    minutesPerPoint: Double,
+    onChange: (PointsState) -> Unit,
+    onTotalEdit: (String, (Boolean) -> EditResult) -> Unit,
+) {
+    val live = liveTotals(points)
+    val custom = customisedCount(points.steps)
+    var snapshot by remember { mutableStateOf<PointsState?>(null) }
+    val hasMinutes = points.steps.isNotEmpty() || points.task.baseMinutes != null
+    val hasPoints = points.steps.isNotEmpty() || points.task.basePointsCenti != null
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumberBox(
+                    label = "Time (min)",
+                    value = if (hasMinutes) live.minutes.toDouble() else null,
+                    decimals = false,
+                    marked = custom > 0,
+                    modifier = Modifier.weight(1f),
+                    onFocus = { snapshot = points },
+                    onValue = { v ->
+                        val base = snapshot ?: points
+                        if (custom == 0) onChange(setTaskMinutes(base, v?.toInt(), minutesPerPoint).state)
+                    },
+                    onCommit = { v ->
+                        val base = snapshot ?: points
+                        snapshot = null
+                        if (custom > 0 && v?.toInt() != live.minutes) {
+                            onTotalEdit("time to complete") { c -> setTaskMinutes(base, v?.toInt(), minutesPerPoint, c) }
+                        }
+                    },
+                )
+                NumberBox(
+                    label = "Points",
+                    value = if (hasPoints) live.pointsCenti / 100.0 else null,
+                    decimals = true,
+                    marked = custom > 0,
+                    modifier = Modifier.weight(1f),
+                    onFocus = { snapshot = points },
+                    onValue = { v ->
+                        val base = snapshot ?: points
+                        if (custom == 0) onChange(setTaskPoints(base, v?.let(::toCenti)).state)
+                    },
+                    onCommit = { v ->
+                        val base = snapshot ?: points
+                        snapshot = null
+                        if (custom > 0 && v?.let(::toCenti) != live.pointsCenti) {
+                            onTotalEdit("points") { c -> setTaskPoints(base, v?.let(::toCenti), c) }
+                        }
+                    },
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Points follow time", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "1 point per ${formatPoints(toCenti(minutesPerPoint))} min",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = points.task.pointsFollowTime,
+                    onCheckedChange = { on -> onTotalEdit("points") { c -> setTaskFollow(points, on, minutesPerPoint, c) } },
+                )
+            }
+            if (custom > 0) {
+                Text(
+                    "Totals influenced by $custom customised step${if (custom == 1) "" else "s"}" +
+                        " (task set to ${points.task.baseMinutes ?: 0} min · ${formatPoints(points.task.basePointsCenti ?: 0)} pts)." +
+                        " Changing a total rescales every step.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = CustomColor,
+                )
+            }
+        }
+    }
+}
+
+/** Number field that keeps its own text while focused; reports parsed values. */
+@Composable
+private fun NumberBox(
+    label: String,
+    value: Double?,
+    decimals: Boolean,
+    marked: Boolean,
+    modifier: Modifier = Modifier,
+    onFocus: () -> Unit = {},
+    onValue: (Double?) -> Unit,
+    onCommit: (Double?) -> Unit = {},
+) {
+    var text by remember { mutableStateOf<String?>(null) }
+    var focused by remember { mutableStateOf(false) }
+    val focus = LocalFocusManager.current
+    fun show(v: Double?) = when {
+        v == null -> ""
+        decimals -> formatPoints(toCenti(v))
+        else -> v.toInt().toString()
+    }
+    fun parse(t: String): Double? {
+        val n = t.trim().toDoubleOrNull() ?: return null
+        if (n < 0) return null
+        return if (decimals) toCenti(n) / 100.0 else n.toInt().toDouble()
+    }
+    OutlinedTextField(
+        value = text ?: show(value),
+        onValueChange = { t ->
+            val clean = t.filter { it.isDigit() || (decimals && it == '.') }
+            text = clean
+            onValue(parse(clean))
+        },
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = if (decimals) KeyboardType.Decimal else KeyboardType.Number,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
+        modifier = modifier
+            .then(if (marked) Modifier.border(1.dp, CustomColor, RoundedCornerShape(4.dp)) else Modifier)
+            .onFocusChanged { f ->
+                if (f.isFocused && !focused) {
+                    focused = true
+                    text = show(value)
+                    onFocus()
+                } else if (!f.isFocused && focused) {
+                    focused = false
+                    onCommit(text?.let(::parse))
+                    text = null
+                }
+            },
+    )
+}
+
+@Composable
+private fun CycleSection(
+    repeatKind: String,
+    interval: Int,
+    rollover: Boolean,
+    onRollover: (Boolean) -> Unit,
+    weekdays: Set<Int>,
+    onWeekday: (Int) -> Unit,
+    monthdays: Set<Int>,
+    onMonthday: (Int) -> Unit,
+    valid: Boolean,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Runs in cycles", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Not done when the next cycle starts = missed: steps reset and queued points drop. Done early, it waits.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = rollover, onCheckedChange = onRollover)
+    }
+    if (!rollover) return
+    when (repeatKind) {
+        "weekly" -> {
+            FieldLabel("A new cycle starts on")
+            DayToggleRow(WEEKDAY_LABELS.indices.toList(), weekdays, { WEEKDAY_LABELS[it] }, onToggle = onWeekday)
+        }
+        "monthly" -> {
+            FieldLabel("A new cycle starts on day")
+            (1..31).chunked(7).forEach { week ->
+                DayToggleRow(week, monthdays, { it.toString() }, columns = 7, onToggle = onMonthday)
+            }
+            if (monthdays.any { it > 28 }) {
+                Text(
+                    "In months without that day, the cycle starts on the month's last day.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        else -> Text(
+            if (repeatKind == "daily" && interval <= 1) "A new cycle starts every midnight."
+            else "A new cycle starts every $interval days at midnight.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    if (!valid) Text("Pick when each cycle starts.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
 private fun ChecklistStepRow(
     step: StepEdit,
+    values: com.eosoclub.ourhome.data.StepValues,
     index: Int,
     isFirst: Boolean,
     isLast: Boolean,
     onChange: (StepEdit) -> Unit,
+    onMinutes: (Int) -> Unit,
+    onPoints: (Int) -> Unit,
+    onFollow: (Boolean) -> Unit,
     onMove: (Int) -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -307,6 +601,28 @@ private fun ChecklistStepRow(
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove step") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(end = 8.dp, top = 4.dp)) {
+                NumberBox(
+                    label = if (values.minutesCustom) "Min (set)" else "Min",
+                    value = values.minutes.toDouble(),
+                    decimals = false,
+                    marked = values.minutesCustom,
+                    modifier = Modifier.weight(1f),
+                    onValue = { v -> v?.let { onMinutes(it.toInt()) } },
+                )
+                NumberBox(
+                    label = if (values.pointsFollowTime) "Pts" else "Pts (set)",
+                    value = values.pointsCenti / 100.0,
+                    decimals = true,
+                    marked = !values.pointsFollowTime,
+                    modifier = Modifier.weight(1f),
+                    onValue = { v -> v?.let { onPoints(toCenti(it)) } },
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 4.dp)) {
+                Text("Points follow time", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                Switch(checked = values.pointsFollowTime, onCheckedChange = onFollow)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(

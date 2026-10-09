@@ -150,27 +150,39 @@ class ApiClient(
         call(get("/api/tasks"), ListSerializer(Task.serializer()))
 
     /** Creates a task with its whole checklist in one call, like the web's create form. */
-    suspend fun createTask(input: TaskInput, steps: List<Pair<String, Int?>>): Task =
+    suspend fun createTask(input: TaskInput, steps: List<StepInput>): Task =
         call(
             post(
                 "/api/tasks",
                 buildJsonObject {
                     putTaskFields(input, forUpdate = false)
-                    if (steps.isNotEmpty()) {
-                        putJsonArray("subtasks") {
-                            steps.forEach { (title, resetDays) ->
-                                addJsonObject {
-                                    put("title", title)
-                                    put("done", false)
-                                    put("resetIntervalDays", resetDays)
-                                }
-                            }
-                        }
-                    }
+                    if (steps.isNotEmpty()) putSteps(steps)
                 },
             ),
             Task.serializer(),
         )
+
+    /**
+     * The checklist as the editor left it (TaskPoints.kt values included): on
+     * update it replaces the task's checklist — items with an id are kept,
+     * new ones created, missing ones deleted, order = list order.
+     */
+    private fun JsonObjectBuilder.putSteps(steps: List<StepInput>) {
+        putJsonArray("subtasks") {
+            steps.forEach { s ->
+                addJsonObject {
+                    if (s.id != null) put("id", s.id)
+                    put("title", s.title)
+                    put("done", false)
+                    put("resetIntervalDays", s.resetIntervalDays)
+                    put("minutes", s.values.minutes)
+                    put("points", s.values.pointsCenti.asPoints())
+                    put("minutesCustom", s.values.minutesCustom)
+                    put("pointsFollowTime", s.values.pointsFollowTime)
+                }
+            }
+        }
+    }
 
     /**
      * The fields the create and update endpoints share. Update takes null
@@ -183,6 +195,8 @@ class ApiClient(
         put("priority", input.priority)
         put("dueDate", input.dueDate?.toString())
         put("estimatedMinutes", input.estimatedMinutes)
+        put("points", input.points)
+        put("pointsFollowTime", input.pointsFollowTime)
         put("categoryId", input.categoryId)
         put("assigneeId", input.assigneeId)
         val r = input.recurrence
@@ -200,28 +214,66 @@ class ApiClient(
                 if (r.kind == "monthly" && r.byMonthday.isNotEmpty()) {
                     putJsonArray("byMonthday") { r.byMonthday.forEach { add(it) } }
                 }
+                put("rollover", r.rollover)
+                if (r.rollover && r.kind == "weekly") putJsonArray("cycleWeekdays") { r.cycleWeekdays.forEach { add(it) } }
+                if (r.rollover && r.kind == "monthly") putJsonArray("cycleMonthdays") { r.cycleMonthdays.forEach { add(it) } }
             }
         }
     }
 
+    /** Completes a task and pays its points; the result carries `completionId` for Undo. */
     suspend fun completeTask(taskId: String): Task =
         call(post("/api/tasks/complete", buildJsonObject { put("taskId", taskId) }), Task.serializer())
 
+    /** Undo a completion (completer within 10 min, head any time); its points are voided. */
+    suspend fun undoCompletion(completionId: String): Task =
+        call(post("/api/tasks/completions/undo", buildJsonObject { put("completionId", completionId) }), Task.serializer())
+
+    /** A task's history, newest first, incl. missed cycles and whether the caller may undo. */
+    suspend fun taskCompletions(taskId: String): List<TaskCompletion> =
+        call(get("/api/tasks/completions?taskId=$taskId"), ListSerializer(TaskCompletion.serializer()))
+
     /**
-     * Saves a task's editable fields. Every field is sent, so a null clears it
-     * (notes, due date, estimate, category, assignee, recurrence), as the web's edit form does.
+     * Saves a task's editable fields and its whole checklist in one call.
+     * Every field is sent, so a null clears it (notes, due date, estimate,
+     * category, assignee, recurrence), as the web's edit form does.
      */
-    suspend fun updateTask(taskId: String, input: TaskInput): Task =
+    suspend fun updateTask(taskId: String, input: TaskInput, steps: List<StepInput>): Task =
         call(
             post(
                 "/api/tasks/update",
                 buildJsonObject {
                     put("taskId", taskId)
                     putTaskFields(input, forUpdate = true)
+                    putSteps(steps)
                 },
             ),
             Task.serializer(),
         )
+
+    // --- Points ----------------------------------------------------------------
+
+    /** Totals for the day/week/month/year containing [date] ("YYYY-MM-DD"; null = today). */
+    suspend fun pointsSummary(period: String, date: String? = null): PointsSummary =
+        call(
+            get("/api/points/summary?period=$period" + (date?.let { "&date=$it" } ?: "")),
+            PointsSummary.serializer(),
+        )
+
+    /** The ledger for a period, newest first (voided entries included). */
+    suspend fun pointAwards(period: String, date: String? = null, userId: String? = null): List<PointAward> =
+        call(
+            get(
+                "/api/points/awards?period=$period" +
+                    (date?.let { "&date=$it" } ?: "") +
+                    (userId?.let { "&userId=$it" } ?: ""),
+            ),
+            ListSerializer(PointAward.serializer()),
+        )
+
+    /** Head only: strike an entry from the totals, with a reason. */
+    suspend fun voidAward(awardId: String, reason: String) =
+        callUnit(post("/api/points/awards/void", buildJsonObject { put("awardId", awardId); put("reason", reason) }))
 
     suspend fun deleteTask(taskId: String) =
         callUnit(post("/api/tasks/delete", buildJsonObject { put("taskId", taskId) }))

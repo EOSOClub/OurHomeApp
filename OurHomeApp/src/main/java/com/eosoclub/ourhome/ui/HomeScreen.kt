@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -32,7 +33,9 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -118,6 +121,13 @@ fun HomeScreen(
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val showMessage: (String) -> Unit = { msg -> scope.launch { snackbar.showSnackbar(msg) } }
+    // A message with one action (e.g. Undo after completing a task).
+    val showAction: (String, String, () -> Unit) -> Unit = { msg, label, action ->
+        scope.launch {
+            val result = snackbar.showSnackbar(msg, actionLabel = label, duration = SnackbarDuration.Long)
+            if (result == SnackbarResult.ActionPerformed) action()
+        }
+    }
 
     val notifications = viewModel { NotificationsViewModel(session.api) }
     val notifState by notifications.state.collectAsStateWithLifecycle()
@@ -248,6 +258,11 @@ fun HomeScreen(
                                     onClick = { menuOpen = false; overlay = Overlay.Profile },
                                 )
                                 DropdownMenuItem(
+                                    text = { Text("Points") },
+                                    leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null) },
+                                    onClick = { menuOpen = false; overlay = Overlay.Points },
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Report a bug") },
                                     leadingIcon = { Icon(painterResource(R.drawable.ic_bug), contentDescription = null) },
                                     onClick = { menuOpen = false; reportingBug = true },
@@ -309,12 +324,15 @@ fun HomeScreen(
             Overlay.Notifications -> NotificationsScreen(notifications, showMessage, modifier)
             Overlay.Profile -> ProfileScreen(session, user.mustChangePassword == true, showMessage, modifier)
             Overlay.ScanHistory -> ScanHistoryScreen(session.api, modifier)
+            Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)
             null -> TabContent(
                 tab,
                 session,
                 user,
                 access,
                 showMessage,
+                showAction,
+                onOpenPoints = { overlay = Overlay.Points },
                 onOpenTab = { tab = it },
                 onOpenScanHistory = { overlay = Overlay.ScanHistory },
                 modifier = modifier,
@@ -352,6 +370,7 @@ private enum class Overlay(val label: String) {
     Notifications("Notifications"),
     Profile("Profile"),
     ScanHistory("Recent scans"),
+    Points("Points"),
 }
 
 @Composable
@@ -361,13 +380,15 @@ private fun TabContent(
     user: SessionUser,
     access: AccessMatrix,
     showMessage: (String) -> Unit,
+    showAction: (String, String, () -> Unit) -> Unit,
+    onOpenPoints: () -> Unit,
     onOpenTab: (Tab) -> Unit,
     onOpenScanHistory: () -> Unit,
     modifier: Modifier,
 ) {
     when (tab) {
         Tab.Home -> DashboardScreen(session.api, user.name ?: user.username, onOpenTab = onOpenTab, modifier = modifier)
-        Tab.Tasks -> TasksScreen(session.api, access.tasks, user.id, showMessage, modifier)
+        Tab.Tasks -> TasksScreen(session.api, access.tasks, user.id, showMessage, showAction, onOpenPoints, modifier)
         Tab.Shopping -> ShoppingScreen(session.api, access.shopping, access.lists, user.id, showMessage, modifier)
         Tab.Inventory -> InventoryScreen(session.api, access.inventory, user.id, showMessage, onOpenScanHistory, modifier)
         Tab.Bills -> BillsScreen(session.api, access.bills, user.id, showMessage, modifier)

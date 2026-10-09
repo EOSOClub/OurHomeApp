@@ -90,6 +90,12 @@ data class Recurrence(
     val byMonthday: String? = null,
     val until: String? = null,
     val nextRunAt: String? = null,
+    /** Runs in cycles that roll over at local midnight (household time zone). */
+    val rollover: Boolean = false,
+    /** Weekly cycle start days, "1,5" (0 = Sunday). */
+    val cycleWeekdays: String? = null,
+    /** Monthly cycle start days, "1,20" (past a month's end → its last day). */
+    val cycleMonthdays: String? = null,
 )
 
 @Serializable
@@ -100,6 +106,15 @@ data class Subtask(
     val position: Int = 0,
     /** Auto-uncheck cadence in days; null = resets only with the parent task. */
     val resetIntervalDays: Int? = null,
+    /** Who checked it. */
+    val doneBy: UserRef? = null,
+    /** Whose points are queued on it until the task is completed. */
+    val queuedFor: UserRef? = null,
+    /** This step's share (see TaskPoints.kt). */
+    val minutes: Int = 0,
+    val points: Double = 0.0,
+    val minutesCustom: Boolean = false,
+    val pointsFollowTime: Boolean = true,
 )
 
 /** Recurrence as the web's task form sends it (timezone fixed to UTC, like the web). */
@@ -109,6 +124,9 @@ data class RecurrenceInput(
     val byWeekday: List<Int>,
     val byMonthday: List<Int>,
     val until: java.time.Instant?,
+    val rollover: Boolean = false,
+    val cycleWeekdays: List<Int> = emptyList(),
+    val cycleMonthdays: List<Int> = emptyList(),
 )
 
 /** Every field of the web's create/edit task form. */
@@ -118,11 +136,76 @@ data class TaskInput(
     val type: String,
     val priority: String,
     val dueDate: java.time.Instant?,
+    /** The task-level (base) TTC and points; points null while they follow time. */
     val estimatedMinutes: Int?,
+    val points: Double? = null,
+    val pointsFollowTime: Boolean = true,
     val categoryId: String?,
     val assigneeId: String?,
     /** Null = not recurring (clears the rule on edit). */
     val recurrence: RecurrenceInput?,
+)
+
+/** One checklist step as the editor saves it (the whole list replaces the checklist). */
+data class StepInput(
+    val id: String?,
+    val title: String,
+    val resetIntervalDays: Int?,
+    val values: StepValues,
+)
+
+/** One row of a task's history (GET /api/tasks/completions). */
+@Serializable
+data class TaskCompletion(
+    val id: String,
+    val note: String? = null,
+    val completedAt: String,
+    val user: UserRef? = null,
+    /** "completed" | "missed" (a cycle ran out unfinished). */
+    val outcome: String = "completed",
+    val undoneAt: String? = null,
+    val points: Double = 0.0,
+    val canUndo: Boolean = false,
+)
+
+/** GET /api/points/summary (pointsService.pointsSummary). */
+@Serializable
+data class PointsSummary(
+    val period: String,
+    val startDate: String,
+    val days: Int,
+    val elapsedDays: Int,
+    val members: List<PointsMember> = emptyList(),
+    val householdTotal: Double = 0.0,
+    val averagePerPerson: Double = 0.0,
+    val averagePerPersonPerDay: Double = 0.0,
+)
+
+@Serializable
+data class PointsMember(
+    val userId: String,
+    val name: String,
+    val points: Double = 0.0,
+    val perDay: Double = 0.0,
+    val awards: Int = 0,
+    /** Checked steps waiting for their task to be completed. */
+    val queued: Double = 0.0,
+)
+
+/** One ledger entry (GET /api/points/awards). */
+@Serializable
+data class PointAward(
+    val id: String,
+    val userId: String,
+    val userName: String? = null,
+    /** "task" | "step" | "step_repeat" */
+    val kind: String,
+    val points: Double,
+    val taskTitle: String,
+    val stepTitle: String? = null,
+    val awardedAt: String,
+    val voided: Boolean = false,
+    val voidReason: String? = null,
 )
 
 @Serializable
@@ -137,12 +220,37 @@ data class Task(
     val status: String,
     val dueDate: String? = null,
     val completedAt: String? = null,
+    /** Live TTC: the sum of the steps (or the base without steps). */
     val estimatedMinutes: Int? = null,
+    /** Live points, same rule; paid when the task is completed. */
+    val points: Double = 0.0,
+    /** Task-level values the user set (they define the task's rate). */
+    val baseMinutes: Int? = null,
+    val basePoints: Double? = null,
+    val pointsFollowTime: Boolean = true,
+    /** Household rate, for the editor's live points. */
+    val minutesPerPoint: Double = DEFAULT_MINUTES_PER_POINT,
+    /** Current cycle window; completed inside it = done for this cycle. */
+    val cycleStartedAt: String? = null,
+    val cycleEndsAt: String? = null,
     val category: CategoryRef? = null,
     val assignee: UserRef? = null,
     val recurrence: Recurrence? = null,
     val subtasks: List<Subtask> = emptyList(),
-)
+    /** Only on POST /api/tasks/complete: the completion, for Undo. */
+    val completionId: String? = null,
+) {
+    /** Completed inside its cycle: waits for the next cycle start. */
+    val doneThisCycle: Boolean get() = status == "completed" && cycleEndsAt != null
+
+    /** The editor's starting points state. */
+    fun pointsState(): PointsState = PointsState(
+        TaskBase(baseMinutes, basePoints?.centi(), pointsFollowTime),
+        subtasks.sortedBy { it.position }.map {
+            StepValues(it.minutes, it.points.centi(), it.minutesCustom, it.pointsFollowTime)
+        },
+    )
+}
 
 @Serializable
 data class ShoppingItem(
