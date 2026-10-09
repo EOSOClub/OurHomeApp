@@ -204,12 +204,17 @@ data class Notification(
     val title: String,
     val body: String? = null,
     val subjectType: String? = null,
+    val subjectId: String? = null,
     val read: Boolean = false,
     val createdAt: String,
 )
 
 @Serializable
-data class NotificationList(val items: List<Notification> = emptyList(), val unreadCount: Int = 0)
+data class NotificationList(
+    val items: List<Notification> = emptyList(),
+    val unreadCount: Int = 0,
+    val hasMore: Boolean = false,
+)
 
 // Dashboard (src/server/services/dashboardService.ts) returns raw Prisma rows,
 // so these are narrower than the list DTOs above.

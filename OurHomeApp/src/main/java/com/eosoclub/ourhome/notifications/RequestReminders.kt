@@ -39,7 +39,8 @@ import java.util.concurrent.TimeUnit
 
 /**
  * "Requests are waiting for you" reminders, plus the shared check that also
- * drives [DeadlineReminders], [BugReportAlerts] and [AppUpdateAlerts].
+ * drives [DeadlineReminders], [BugReportAlerts], [AppUpdateAlerts] and
+ * [HouseholdReminderAlerts].
  *
  * A WorkManager job polls the server every [INTERVAL_HOURS] while the user is
  * signed in. Each hourly run re-posts the notification (and alerts again) for
@@ -95,6 +96,8 @@ object RequestReminders {
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
         WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK_NAME)
         clear(context)
+        // Signed out: household reminders shouldn't linger in the shade either.
+        HouseholdReminderAlerts.clear(context)
     }
 
     fun ensureChannel(context: Context) {
@@ -175,6 +178,7 @@ object RequestReminders {
                 if (user == null) {
                     Log.i(TAG, "not signed in; nothing to check")
                     clear(applicationContext)
+                    HouseholdReminderAlerts.clear(applicationContext)
                     return Result.success()
                 }
                 val fromPush = inputData.getBoolean(KEY_FROM_PUSH, false)
@@ -194,9 +198,12 @@ object RequestReminders {
                 }
                 runCatching { AppUpdateAlerts.check(applicationContext, api) }
                     .onFailure { Log.w(TAG, "app update check failed", it) }
+                runCatching { HouseholdReminderAlerts.check(applicationContext, api) }
+                    .onFailure { Log.w(TAG, "household reminder check failed", it) }
                 Result.success()
             } catch (e: UnauthorizedException) {
                 clear(applicationContext)
+                HouseholdReminderAlerts.clear(applicationContext)
                 Result.success()
             } catch (e: Exception) {
                 Log.w(TAG, "check failed; will retry", e)

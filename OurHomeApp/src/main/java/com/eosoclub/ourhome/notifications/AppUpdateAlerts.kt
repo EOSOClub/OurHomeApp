@@ -23,7 +23,8 @@ import com.eosoclub.ourhome.data.AppUpdate
  */
 object AppUpdateAlerts {
     private const val CHANNEL_ID = "app_updates"
-    private const val NOTIFICATION_ID = 1003
+    // Not 1003: that's DeadlineReminders, and sharing it made each replace the other.
+    private const val NOTIFICATION_ID = 1004
     private const val PREFS = "app_update_alerts"
     private const val KEY_ALERTED = "alerted_version_code"
     private const val TAG = "AppUpdateAlerts"
