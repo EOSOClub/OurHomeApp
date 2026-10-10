@@ -730,12 +730,159 @@ class ApiClient(
     /** The signed-in user's page access (what they may add/edit/delete). */
     suspend fun myAccess(): MyAccess = call(get("/api/permissions/me"), MyAccess.serializer())
 
+    // --- Settings (head + managers; the server checks settings:manage) -------
+
+    /** Every category of every kind, for Settings. */
+    suspend fun allCategories(): List<CategoryAdmin> =
+        call(get("/api/categories"), ListSerializer(CategoryAdmin.serializer()))
+
+    /** Creates (null [id]) or changes a category. [color] is "#rrggbb". */
+    suspend fun saveCategory(id: String?, name: String, kind: String, color: String, icon: String?) {
+        val body = buildJsonObject {
+            id?.let { put("id", it) }
+            put("name", name)
+            put("kind", kind)
+            put("color", color)
+            put("icon", icon)
+        }
+        callUnit(post(if (id == null) "/api/categories" else "/api/categories/update", body))
+    }
+
+    suspend fun deleteCategory(id: String) =
+        callUnit(post("/api/categories/delete", buildJsonObject { put("id", id) }))
+
+    /** Creates (null [id]) or renames a floor; answers with every place. */
+    suspend fun saveFloor(id: String?, name: String): Places =
+        call(
+            post("/api/places/floors", buildJsonObject { id?.let { put("id", it) }; put("name", name) }),
+            Places.serializer(),
+        )
+
+    /** Creates (null [id]) or changes a room; null [floorId] = not on a floor. */
+    suspend fun saveRoom(id: String?, name: String, floorId: String?): Places =
+        call(
+            post(
+                "/api/places/rooms",
+                buildJsonObject {
+                    id?.let { put("id", it) }
+                    put("name", name)
+                    put("floorId", floorId)
+                },
+            ),
+            Places.serializer(),
+        )
+
+    /** [kind] "floor" | "room"; a floor's rooms are kept, a room's tasks move up a level. */
+    suspend fun deletePlace(kind: String, id: String): Places =
+        call(post("/api/places/delete", buildJsonObject { put("kind", kind); put("id", id) }), Places.serializer())
+
+    /** The full new order of the floors, or of the rooms on one floor. */
+    suspend fun reorderPlaces(kind: String, ids: List<String>): Places =
+        call(
+            post(
+                "/api/places/reorder",
+                buildJsonObject {
+                    put("kind", kind)
+                    putJsonArray("ids") { ids.forEach { add(it) } }
+                },
+            ),
+            Places.serializer(),
+        )
+
+    suspend fun pointsSettings(): PointsSettings = call(get("/api/points/settings"), PointsSettings.serializer())
+
+    /** Head only. The server rejects an unknown time zone. */
+    suspend fun savePointsSettings(minutesPerPoint: Double, timezone: String, weekStartsOn: Int): PointsSettings =
+        call(
+            post(
+                "/api/points/settings",
+                buildJsonObject {
+                    put("minutesPerPoint", minutesPerPoint)
+                    put("timezone", timezone)
+                    put("weekStartsOn", weekStartsOn)
+                },
+            ),
+            PointsSettings.serializer(),
+        )
+
+    suspend fun integrations(): List<Integration> =
+        call(get("/api/integrations"), ListSerializer(Integration.serializer()))
+
+    /** A new Home Assistant token; [CreatedIntegration.token] is never shown again. */
+    suspend fun createIntegration(name: String): CreatedIntegration =
+        call(post("/api/integrations", buildJsonObject { put("name", name) }), CreatedIntegration.serializer())
+
+    suspend fun revokeIntegration(id: String) =
+        callUnit(post("/api/integrations/delete", buildJsonObject { put("id", id) }))
+
+    suspend fun nfcTags(): List<NfcTag> = call(get("/api/nfc/tags"), ListSerializer(NfcTag.serializer()))
+
+    /** Maps a tag id typed by hand (e.g. a Home Assistant tag) to an item. */
+    suspend fun registerNfcTag(tagId: String, label: String, itemId: String, represents: String) =
+        callUnit(
+            post(
+                "/api/nfc/tags",
+                buildJsonObject {
+                    put("tagId", tagId)
+                    put("label", label)
+                    put("itemId", itemId)
+                    put("represents", represents)
+                },
+            ),
+        )
+
+    suspend fun deleteNfcTag(id: String) =
+        callUnit(post("/api/nfc/tags/delete", buildJsonObject { put("id", id) }))
+
+    suspend fun paperlessStatus(): PaperlessStatus =
+        call(get("/api/integrations/paperless"), PaperlessStatus.serializer())
+
+    /** Imports now instead of waiting for the 15-minute sweep. */
+    suspend fun syncPaperless(): PaperlessStatus =
+        call(post("/api/integrations/paperless/sync", JsonObject(emptyMap())), PaperlessStatus.serializer())
+
+    /**
+     * Head only: connect or change the household's own Paperless. A null [token]
+     * keeps the saved one. The server tries the connection before saving.
+     */
+    suspend fun savePaperless(url: String, publicUrl: String, token: String?): PaperlessStatus =
+        call(
+            putRequest(
+                "/api/integrations/paperless",
+                buildJsonObject {
+                    put("url", url)
+                    put("publicUrl", publicUrl)
+                    put("token", token)
+                },
+            ),
+            PaperlessStatus.serializer(),
+        )
+
+    suspend fun disconnectPaperless(): PaperlessStatus =
+        call(post("/api/integrations/paperless/disconnect", JsonObject(emptyMap())), PaperlessStatus.serializer())
+
+    /** Head only: streams the household export (plain JSON, not the envelope) into [out]. */
+    suspend fun downloadExport(out: java.io.OutputStream) = withContext(Dispatchers.IO) {
+        val client = http.newBuilder().readTimeout(2, TimeUnit.MINUTES).build()
+        client.newCall(get("/api/household/export")).execute().use { res ->
+            if (res.code == 401) {
+                onUnauthorized(null)
+                throw UnauthorizedException()
+            }
+            if (!res.isSuccessful) throw ApiException("Export failed (${res.code})")
+            res.body.byteStream().use { it.copyTo(out) }
+        }
+    }
+
     // --- Plumbing ------------------------------------------------------------
 
     private fun get(path: String) = Request.Builder().url(baseUrl() + path).get().build()
 
     private fun post(path: String, body: JsonElement) =
         Request.Builder().url(baseUrl() + path).post(body.toString().toRequestBody(jsonType)).build()
+
+    private fun putRequest(path: String, body: JsonElement) =
+        Request.Builder().url(baseUrl() + path).put(body.toString().toRequestBody(jsonType)).build()
 
     /** Executes an app-API call and returns the envelope's `data`. */
     private suspend fun <T> call(request: Request, serializer: KSerializer<T>): T =

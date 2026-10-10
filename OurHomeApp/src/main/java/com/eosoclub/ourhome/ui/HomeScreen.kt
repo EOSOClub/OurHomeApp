@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
@@ -68,6 +69,8 @@ import com.eosoclub.ourhome.data.AccessMatrix
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.defaultAccess
 import com.eosoclub.ourhome.data.Features
+import com.eosoclub.ourhome.data.Permission
+import com.eosoclub.ourhome.data.can
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
@@ -306,6 +309,13 @@ fun HomeScreen(
                                     leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
                                     onClick = { menuOpen = false; overlay = Overlay.Activity },
                                 )
+                                if (can(user.role, Permission.SettingsManage)) {
+                                    DropdownMenuItem(
+                                        text = { Text("Settings") },
+                                        leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                                        onClick = { menuOpen = false; overlay = Overlay.Settings },
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Report a bug") },
                                     leadingIcon = { Icon(painterResource(R.drawable.ic_bug), contentDescription = null) },
@@ -388,6 +398,7 @@ fun HomeScreen(
             Overlay.ScanHistory -> ScanHistoryScreen(session.api, modifier)
             Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)
             Overlay.Activity -> ActivityScreen(session.api, user.id, modifier)
+            Overlay.Settings -> SettingsScreen(session.api, session.baseUrl, isHead = user.role == "head", features, showMessage, modifier)
             null -> TabContent(
                 tab,
                 session,
@@ -437,6 +448,7 @@ private enum class Overlay(val label: String) {
     ScanHistory("Recent scans"),
     Points("Points"),
     Activity("Activity"),
+    Settings("Settings"),
 }
 
 @Composable

@@ -14,6 +14,10 @@ import kotlinx.serialization.Serializable
 enum class Permission {
     TasksComplete,
     MembersManage,
+    // The Settings page: categories, rooms, Home Assistant tokens, NFC tags,
+    // Paperless status. Its head-only parts (points rate, Paperless connection,
+    // export) check the role instead, like the web's household:manage.
+    SettingsManage,
     // Edit/delete your own requests, accept/finish ones assigned to you.
     // *Submitting* a request is [AccessMatrix.requests] `create`; marking media
     // requests added is its `approve`.
@@ -32,7 +36,7 @@ private val EVERYDAY = setOf(
 
 private val ROLE_PERMISSIONS: Map<String, Set<Permission>> = mapOf(
     "head" to Permission.entries.toSet(),
-    "manager" to EVERYDAY + Permission.MembersManage,
+    "manager" to EVERYDAY + Permission.MembersManage + Permission.SettingsManage,
     "member" to EVERYDAY,
     "teen" to EVERYDAY,
     "child" to EVERYDAY,

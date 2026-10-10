@@ -542,3 +542,53 @@ data class ShoppingList(
     val openCount: Int = 0,
     val purchasedCount: Int = 0,
 )
+
+// --- Settings (head + managers) ----------------------------------------------
+
+/** A category as Settings manages it (CategoryAdminDTO). [kind]: task / shopping / inventory / general. */
+@Serializable
+data class CategoryAdmin(
+    val id: String,
+    val name: String,
+    val kind: String,
+    val color: String? = null,
+    val icon: String? = null,
+)
+
+/** A Home Assistant connection token (IntegrationDTO); the token itself is shown once, on create. */
+@Serializable
+data class Integration(val id: String, val name: String, val active: Boolean = true, val createdAt: String)
+
+@Serializable
+data class CreatedIntegration(val integration: Integration, val token: String)
+
+/** Head only: the points rate and the household calendar (PointsSettingsDTO). */
+@Serializable
+data class PointsSettings(val timezone: String, val weekStartsOn: Int = 0, val minutesPerPoint: Double)
+
+@Serializable
+data class PaperlessConnection(val source: String, val url: String, val publicUrl: String? = null)
+
+@Serializable
+data class PaperlessSkipped(val id: Long, val title: String, val reason: String, val url: String? = null)
+
+@Serializable
+data class PaperlessSyncResult(
+    val checked: Int = 0,
+    /** Count per outcome: created / updated / linked / duplicate / skipped. */
+    val imported: Map<String, Int> = emptyMap(),
+    val skipped: List<PaperlessSkipped> = emptyList(),
+)
+
+/** The household's Paperless bill import (PaperlessStatusDTO). [canEdit]: head may change the connection. */
+@Serializable
+data class PaperlessStatus(
+    val configured: Boolean = false,
+    val connection: PaperlessConnection? = null,
+    val canEdit: Boolean = false,
+    val privateNetworkAllowed: Boolean = false,
+    val since: String? = null,
+    val lastRunAt: String? = null,
+    val lastError: String? = null,
+    val lastResult: PaperlessSyncResult? = null,
+)
