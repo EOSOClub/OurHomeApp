@@ -13,9 +13,11 @@ added with the fixes:
 | Item | Status |
 | --- | --- |
 | W4 | Fixed for task assignee and categories, and shopping/inventory categories. Bill assignees were already checked. |
-| W8 | Fixed on the dashboard (household zone). The related *hydration mismatch* in client lists (task/bill rows server-rendered in UTC) is **not fixed**. React repairs it on load, so you may see a label flip in the evening. Proper fix: pass the household zone to those lists. |
+| W8 | **Fixed, including the evening label flip.** Every page now gets the household time zone (`HouseholdZoneProvider` in the app layout), and every client-side date label uses it, so the server render and the browser always produce the same text. That covers tasks, bills, bill detail, requests, calendar (which day an event falls on, the Today highlight, the default week, the starting month), profile, settings and Paperless. "5m ago" labels use `<RelativeTime>`, which refreshes every minute. A production build passes. |
 | W12, W13 | Fixed by rewriting the recurrence engine to use the household's local time, the start date and every-N weeks/months. |
-| W21 ("HTTPS only" is server-wide) | **Left as is, by design.** It's checked before anyone signs in, so it can't be per household, and this server has one household. |
+| W21 ("HTTPS only" is server-wide) | **Resolved by multi-household Phase 1 (2026-10-10).** It's now a server-wide setting that only the server admin can change (Server page), which is correct, since it's checked before anyone signs in. |
+| Build warning (new note) | `next build` warns that `src/server/settings.ts` (via `instrumentation.ts`) makes Turbopack trace the whole project. Not user-facing and not new tonight, but worth tidying with a `turbopackIgnore` comment on its file read. |
+| Build-time DB query (new, fixed) | `/login` and `/setup` queried the database while Next prerendered them during `next build`. Both now mark themselves per-request first, so the build never touches the database. |
 | W27 | Fixed as part of the bell change: requests, events and settings now link. |
 | A7 | Fixed: scan hand-offs to MainActivity now carry a per-install secret. |
 | Not reviewed | The calendar, members, settings, auth and command-palette screens on the web. The reviewer ran out of time there. |

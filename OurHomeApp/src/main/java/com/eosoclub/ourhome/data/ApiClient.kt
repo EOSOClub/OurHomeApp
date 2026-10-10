@@ -6,6 +6,8 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
@@ -33,7 +35,8 @@ class UnauthorizedException : Exception("Your session has expired. Please sign i
 class ApiClient(
     private val baseUrl: () -> String,
     private val cookieJar: PersistentCookieJar,
-    private val onUnauthorized: () -> Unit,
+    /** Signed out by the server; the message says why (null = session expired). */
+    private val onUnauthorized: (String?) -> Unit,
 ) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val jsonType = "application/json".toMediaType()
@@ -687,7 +690,7 @@ class ApiClient(
         val client = http.newBuilder().readTimeout(2, TimeUnit.MINUTES).build()
         client.newCall(get("/api/app/download")).execute().use { res ->
             if (res.code == 401) {
-                onUnauthorized()
+                onUnauthorized(null)
                 throw UnauthorizedException()
             }
             if (!res.isSuccessful) {
@@ -735,7 +738,7 @@ class ApiClient(
         withContext(Dispatchers.IO) {
             http.newCall(request).execute().use { res ->
                 if (res.code == 401) {
-                    onUnauthorized()
+                    onUnauthorized(null)
                     throw UnauthorizedException()
                 }
                 val text = res.body.string()
@@ -743,6 +746,13 @@ class ApiClient(
                     json.decodeFromString(Envelope.serializer(serializer), text)
                 }.getOrElse { throw ApiException("Unexpected response from server (${res.code})") }
                 if (!envelope.ok) {
+                    // The server admin turned this household off: nothing works
+                    // until it's back on, so sign out and say why.
+                    val code = (envelope.error?.details as? JsonObject)?.get("code")?.jsonPrimitive?.contentOrNull
+                    if (res.code == 403 && code == "household_disabled") {
+                        onUnauthorized(envelope.error?.message)
+                        throw UnauthorizedException()
+                    }
                     throw ApiException(envelope.error?.message ?: "Request failed (${res.code})")
                 }
                 envelope

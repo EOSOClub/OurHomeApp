@@ -28,7 +28,7 @@ class SessionManager(private val prefs: SharedPreferences, cookiePrefs: SharedPr
     val api = ApiClient(
         baseUrl = { baseUrl },
         cookieJar = cookieJar,
-        onUnauthorized = { _state.value = AuthState.SignedOut("Your session has expired. Please sign in again.") },
+        onUnauthorized = { why -> _state.value = AuthState.SignedOut(why ?: "Your session has expired. Please sign in again.") },
     )
 
     /** Restores a saved session on launch. */

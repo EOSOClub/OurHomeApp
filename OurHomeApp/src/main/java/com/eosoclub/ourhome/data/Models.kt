@@ -14,7 +14,11 @@ data class Envelope<T>(
 )
 
 @Serializable
-data class ErrorBody(val message: String? = null)
+data class ErrorBody(
+    val message: String? = null,
+    /** Machine-readable extras, e.g. {"code": "household_disabled"}. */
+    val details: kotlinx.serialization.json.JsonElement? = null,
+)
 
 /** The Android app the server offers (built by the web deploy); src/server/services/appDownloadService.ts. */
 @Serializable
