@@ -76,13 +76,17 @@ class InventoryViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
-        state.update {
-            try {
-                it.copy(items = api.inventory(), loading = false, error = null)
-            } catch (e: Exception) {
-                it.copy(loading = false, error = e.message)
-            }
-        }
+        state.load(
+            { api.inventory() },
+            { s, fresh ->
+                // Items with an adjustment still in flight keep their optimistic
+                // count; the adjustment's own response settles them.
+                val shown = s.items.associateBy { it.id }
+                val merged = fresh.map { item -> if ((pending[item.id] ?: 0) > 0) shown[item.id] ?: item else item }
+                s.copy(items = merged, loading = false, error = null)
+            },
+            { s, e -> s.copy(loading = false, error = e) },
+        )
     }
 
     fun adjust(item: InventoryItem, delta: Double) {

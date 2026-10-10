@@ -94,13 +94,7 @@ class BillsViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
-        state.update {
-            try {
-                it.copy(bills = api.bills(), loading = false, error = null)
-            } catch (e: Exception) {
-                it.copy(loading = false, error = e.message)
-            }
-        }
+        state.load({ api.bills() }, { s, v -> s.copy(bills = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
     }
 
     /** [amount] null pays the remaining balance. */

@@ -77,13 +77,7 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
-        state.update {
-            try {
-                it.copy(lists = api.shoppingLists(), loading = false, error = null)
-            } catch (e: Exception) {
-                it.copy(loading = false, error = e.message)
-            }
-        }
+        state.load({ api.shoppingLists() }, { s, v -> s.copy(lists = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
     }
 
     fun select(listId: String) = state.update { it.copy(selectedId = listId) }

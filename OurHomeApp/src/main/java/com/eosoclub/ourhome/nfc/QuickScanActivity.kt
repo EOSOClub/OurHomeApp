@@ -39,7 +39,7 @@ class QuickScanActivity : ComponentActivity() {
             } else {
                 Log.i("QuickScan", "${ref.tagId} → open app")
                 startActivity(
-                    Intent(this@QuickScanActivity, MainActivity::class.java)
+                    ScanHandoff.stamp(this@QuickScanActivity, Intent(this@QuickScanActivity, MainActivity::class.java))
                         .putExtra(MainActivity.EXTRA_SCANNED_TAG, ref.tagId)
                         .putExtra(MainActivity.EXTRA_SCANNED_FORMAT, ref.format.name)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),

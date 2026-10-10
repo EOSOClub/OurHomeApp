@@ -46,14 +46,11 @@ class NotificationsViewModel(private val api: ApiClient) : ViewModel() {
     // brings overdue/low-stock/bill-due notices up to date.
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
-        state.update {
-            try {
-                val list = api.notifications()
-                it.copy(items = list.items, unreadCount = list.unreadCount, loading = false, error = null)
-            } catch (e: Exception) {
-                it.copy(loading = false, error = e.message)
-            }
-        }
+        state.load(
+            { api.notifications() },
+            { s, list -> s.copy(items = list.items, unreadCount = list.unreadCount, loading = false, error = null) },
+            { s, e -> s.copy(loading = false, error = e) },
+        )
     }
 
     fun markRead(n: Notification) {
@@ -79,9 +76,19 @@ class NotificationsViewModel(private val api: ApiClient) : ViewModel() {
     }
 }
 
+/**
+ * The bell as a to-do list: only unread notifications show. Tapping one marks
+ * it read (so it leaves the list, here and on the website) and [onOpen] goes
+ * to what it's about.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NotificationsScreen(vm: NotificationsViewModel, showMessage: (String) -> Unit, modifier: Modifier = Modifier) {
+fun NotificationsScreen(
+    vm: NotificationsViewModel,
+    showMessage: (String) -> Unit,
+    onOpen: (Notification) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val state by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refresh() }
     LaunchedEffect(Unit) { vm.messages.collect(showMessage) }
@@ -91,15 +98,19 @@ fun NotificationsScreen(vm: NotificationsViewModel, showMessage: (String) -> Uni
         onRefresh = { vm.refresh() },
         modifier = modifier.fillMaxSize(),
     ) {
-        if (LoadState(state.loading, state.error, state.items.isEmpty(), "You're all caught up.", vm::refresh)) {
+        val unread = state.items.filter { !it.read }
+        if (LoadState(state.loading, state.error, unread.isEmpty(), "You're all caught up.", vm::refresh)) {
             return@PullToRefreshBox
         }
         LazyColumn(Modifier.fillMaxSize()) {
-            items(state.items, key = { it.id }) { n ->
+            items(unread, key = { it.id }) { n ->
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .clickable { vm.markRead(n) }
+                        .clickable {
+                            vm.markRead(n)
+                            onOpen(n)
+                        }
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                 ) {
                     Text(

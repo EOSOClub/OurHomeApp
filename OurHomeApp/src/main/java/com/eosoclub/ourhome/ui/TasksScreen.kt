@@ -87,13 +87,7 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
-        state.update {
-            try {
-                it.copy(tasks = api.tasks(), loading = false, error = null)
-            } catch (e: Exception) {
-                it.copy(loading = false, error = e.message)
-            }
-        }
+        state.load({ api.tasks() }, { s, v -> s.copy(tasks = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
     }
 
     /** Completes the task (paying its points) and offers Undo for the 10-minute window. */
@@ -224,7 +218,9 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
                     state.update { s -> s.copy(tasks = s.tasks.map { if (it.id == updated.id) updated else it }) }
                 }
             } catch (e: Exception) {
-                replaceStep(task.id, step.id, step.done)
+                // Undo this tap only if nothing tapped the step again since.
+                val now = state.value.tasks.firstOrNull { it.id == task.id }?.subtasks?.firstOrNull { it.id == step.id }
+                if (now?.done == target) replaceStep(task.id, step.id, !target)
                 say(e.message ?: "Couldn't update step")
             } finally {
                 pendingSteps[task.id] = (pendingSteps[task.id] ?: 1) - 1

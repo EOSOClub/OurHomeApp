@@ -110,13 +110,7 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
-        state.update {
-            try {
-                it.copy(profile = api.profile(), loading = false, error = null)
-            } catch (e: Exception) {
-                it.copy(loading = false, error = e.message)
-            }
-        }
+        state.load({ api.profile() }, { s, v -> s.copy(profile = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
         // Separate, so an older server (no /api/app/info) still shows the profile.
         val release = runCatching { api.appRelease() }.getOrNull()
         // An older server lists id + name only (no role): no directory then.
@@ -139,10 +133,10 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
         }
     }
 
-    fun saveProfile(name: String?, username: String?, email: String?) = viewModelScope.launch {
+    fun saveProfile(name: String?, username: String?, email: String?, currentPassword: String?) = viewModelScope.launch {
         state.update { it.copy(savingProfile = true) }
         try {
-            val updated = api.updateProfile(name, username, email)
+            val updated = api.updateProfile(name, username, email, currentPassword)
             state.update { it.copy(profile = updated) }
             session.applyProfile(updated)
             _messages.send("Profile updated")
@@ -163,7 +157,7 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
                     // Show the change in the household list without a reload.
                     members = s.members?.map { m ->
                         if (m.id != updated.id) m else m.copy(
-                            bio = about.bio, pronouns = about.pronouns, avatarEmoji = about.avatarEmoji,
+                            bio = about.bio, avatarEmoji = about.avatarEmoji,
                             profileColor = about.profileColor, birthday = about.birthday,
                         )
                     },
@@ -265,10 +259,7 @@ private fun AccountCard(p: ProfileOverview) {
                 ProfileAvatar(p.name, p.profile?.avatarEmoji, p.profile?.profileColor, size = 56.dp)
                 Column {
                     Text(p.name, style = MaterialTheme.typography.headlineSmall)
-                    Text(
-                        listOfNotNull(p.username?.let { "@$it" }, p.profile?.pronouns).joinToString(" · "),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    p.username?.let { Text("@$it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
             Text(
@@ -366,7 +357,6 @@ private fun AboutMeCard(
 ) {
     var emoji by remember { mutableStateOf(p.avatarEmoji.orEmpty()) }
     var color by remember { mutableStateOf(p.profileColor) }
-    var pronouns by remember { mutableStateOf(p.pronouns.orEmpty()) }
     var bio by remember { mutableStateOf(p.bio.orEmpty()) }
     var month by remember { mutableStateOf(p.birthday?.substring(0, 2)?.toIntOrNull()) }
     var day by remember { mutableStateOf(p.birthday?.substring(3)?.toIntOrNull()?.toString().orEmpty()) }
@@ -376,7 +366,6 @@ private fun AboutMeCard(
     val birthdayValid = (month == null && day.isBlank()) || birthday != null
     val next = PublicProfile(
         bio = bio.trim().ifEmpty { null },
-        pronouns = pronouns.trim().ifEmpty { null },
         avatarEmoji = emoji.trim().ifEmpty { null },
         profileColor = color,
         birthday = birthday,
@@ -386,10 +375,7 @@ private fun AboutMeCard(
     SectionCard("About me", "Make your profile yours. Everyone in the household can see this.") {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             ProfileAvatar(name, next.avatarEmoji, color, size = 56.dp)
-            Column {
-                Text(name, style = MaterialTheme.typography.titleMedium)
-                next.pronouns?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-            }
+            Text(name, style = MaterialTheme.typography.titleMedium)
         }
         FieldLabel("Avatar emoji")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -421,13 +407,6 @@ private fun AboutMeCard(
                 )
             }
         }
-        OutlinedTextField(
-            value = pronouns,
-            onValueChange = { if (it.length <= ProfileStyle.PRONOUNS_MAX) pronouns = it },
-            label = { Text("Pronouns (optional)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 DropdownField(
@@ -480,7 +459,7 @@ private fun HouseholdCard(members: List<Member>, userId: String) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(if (m.id == userId) "${m.name} (you)" else m.name, style = MaterialTheme.typography.titleSmall)
                     Text(
-                        listOfNotNull(m.role?.let { ROLE_LABELS[it] ?: it }, m.pronouns).joinToString(" · "),
+                        m.role?.let { ROLE_LABELS[it] ?: it }.orEmpty(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -502,11 +481,13 @@ private fun HouseholdCard(members: List<Member>, userId: String) {
 private fun EditProfileCard(
     p: ProfileOverview,
     saving: Boolean,
-    onSave: (name: String?, username: String?, email: String?) -> Unit,
+    onSave: (name: String?, username: String?, email: String?, currentPassword: String?) -> Unit,
 ) {
     var name by remember { mutableStateOf(p.name) }
     var username by remember { mutableStateOf(p.username.orEmpty()) }
     var email by remember { mutableStateOf(p.email) }
+    // Changing the email (where password resets go) needs the password.
+    var emailPassword by remember { mutableStateOf("") }
 
     val nameDirty = name.trim() != p.name
     val usernameDirty = username.trim() != p.username.orEmpty()
@@ -514,7 +495,8 @@ private fun EditProfileCard(
     val nameValid = name.trim().length in 1..80
     val usernameValid = USERNAME_RE.matches(username.trim())
     val emailValid = EMAIL_RE.matches(email.trim())
-    val canSave = (nameDirty || usernameDirty || emailDirty) && nameValid && usernameValid && emailValid && !saving
+    val canSave = (nameDirty || usernameDirty || emailDirty) && nameValid && usernameValid && emailValid &&
+        (!emailDirty || emailPassword.isNotEmpty()) && !saving
 
     SectionCard("Edit profile", "Your display name, sign-in username, and recovery email.") {
         OutlinedTextField(
@@ -546,12 +528,20 @@ private fun EditProfileCard(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth(),
         )
+        if (emailDirty) {
+            PasswordField(
+                "Current password",
+                emailPassword,
+                supporting = "Needed to change your email, since password resets go there.",
+            ) { emailPassword = it }
+        }
         Button(
             onClick = {
                 onSave(
                     name.trim().takeIf { nameDirty },
                     username.trim().takeIf { usernameDirty },
                     email.trim().takeIf { emailDirty },
+                    emailPassword.takeIf { emailDirty },
                 )
             },
             enabled = canSave,

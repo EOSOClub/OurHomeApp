@@ -62,7 +62,6 @@ data class Member(
     val name: String,
     val role: String? = null,
     val bio: String? = null,
-    val pronouns: String? = null,
     val avatarEmoji: String? = null,
     val profileColor: String? = null,
     /** "MM-DD", no year. */
@@ -73,7 +72,6 @@ data class Member(
 @Serializable
 data class PublicProfile(
     val bio: String? = null,
-    val pronouns: String? = null,
     val avatarEmoji: String? = null,
     val profileColor: String? = null,
     val birthday: String? = null,

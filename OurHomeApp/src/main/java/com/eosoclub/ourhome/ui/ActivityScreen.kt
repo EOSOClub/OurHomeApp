@@ -77,15 +77,11 @@ class ActivityViewModel(private val api: ApiClient) : ViewModel() {
         job = viewModelScope.launch {
             state.update { it.copy(loading = true) }
             val s = state.value
-            state.update {
-                try {
-                    val page = api.activity(s.area, s.userId)
-                    it.copy(items = page.items, nextBefore = page.nextBefore, loading = false, error = null)
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    it.copy(loading = false, error = e.message)
-                }
-            }
+            state.load(
+                { api.activity(s.area, s.userId) },
+                { st, page -> st.copy(items = page.items, nextBefore = page.nextBefore, loading = false, error = null) },
+                { st, e -> st.copy(loading = false, error = e) },
+            )
         }
         if (state.value.members.isEmpty()) viewModelScope.launch {
             runCatching { api.householdMembers() }.onSuccess { m -> state.update { it.copy(members = m) } }

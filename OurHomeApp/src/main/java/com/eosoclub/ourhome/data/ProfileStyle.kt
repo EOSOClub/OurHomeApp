@@ -23,7 +23,6 @@ object ProfileStyle {
     )
 
     const val BIO_MAX = 500
-    const val PRONOUNS_MAX = 40
 
     /** Quick picks; any single emoji can be typed instead. */
     val EMOJI_PICKS = listOf("😀", "😎", "🦊", "🐱", "🐶", "🦄", "🌻", "🌈", "⚽", "🎮", "🎸", "📚", "🍕", "🚀", "⭐", "🏡")

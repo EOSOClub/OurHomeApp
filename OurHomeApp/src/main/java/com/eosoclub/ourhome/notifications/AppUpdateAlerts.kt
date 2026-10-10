@@ -32,6 +32,12 @@ object AppUpdateAlerts {
     /** Intent extra value asking MainActivity to open Profile. */
     const val TAB_PROFILE = "profile"
 
+    /** Signed out: drop the alert and what was alerted (it belongs to that account). */
+    fun clear(context: Context) {
+        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { clear() }
+    }
+
     suspend fun check(context: Context, api: ApiClient) {
         val release = api.appRelease()
         if (release == null || !AppUpdate.isUpdate(context, release)) {

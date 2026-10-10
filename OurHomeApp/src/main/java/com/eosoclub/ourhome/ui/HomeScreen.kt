@@ -331,7 +331,21 @@ fun HomeScreen(
     ) { padding ->
         val modifier = Modifier.padding(padding)
         when (overlay) {
-            Overlay.Notifications -> NotificationsScreen(notifications, showMessage, modifier)
+            Overlay.Notifications -> NotificationsScreen(
+                notifications,
+                showMessage,
+                onOpen = { n ->
+                    // Go to what it's about; anything else just clears.
+                    when (n.subjectType) {
+                        "task" -> { overlay = null; tab = Tab.Tasks }
+                        "bill" -> { overlay = null; tab = Tab.Bills }
+                        "inventory_item" -> { overlay = null; tab = Tab.Inventory }
+                        "request" -> { overlay = null; tab = Tab.Requests }
+                        "app_release" -> overlay = Overlay.Profile
+                    }
+                },
+                modifier,
+            )
             Overlay.Profile -> ProfileScreen(session, user.mustChangePassword == true, showMessage, modifier)
             Overlay.ScanHistory -> ScanHistoryScreen(session.api, modifier)
             Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)

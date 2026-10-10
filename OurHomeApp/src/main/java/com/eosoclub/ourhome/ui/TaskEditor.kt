@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -350,28 +351,31 @@ internal fun TaskEditor(
 
         FieldLabel(if (task == null) "Checklist (optional)" else "Checklist")
         steps.forEachIndexed { index, step ->
-            ChecklistStepRow(
-                step = step,
-                values = points.steps[index],
-                index = index,
-                isFirst = index == 0,
-                isLast = index == steps.lastIndex,
-                onChange = { steps[index] = it },
-                onMinutes = { m -> points = setStepMinutes(points, index, m, minutesPerPoint) },
-                onPoints = { c -> points = setStepPoints(points, index, c) },
-                onFollow = { on -> points = setStepFollow(points, index, on, minutesPerPoint) },
-                onMove = { delta ->
-                    val other = index + delta
-                    steps[index] = steps[other].also { steps[other] = steps[index] }
-                    val values = points.steps.toMutableList()
-                    values[index] = values[other].also { values[other] = values[index] }
-                    points = points.copy(steps = values)
-                },
-                onRemove = {
-                    steps.removeAt(index)
-                    points = removeStep(points, index)
-                },
-            )
+            // Keyed by the step, so a row's typed text and focus move with it.
+            key(step.key) {
+                ChecklistStepRow(
+                    step = step,
+                    values = points.steps[index],
+                    index = index,
+                    isFirst = index == 0,
+                    isLast = index == steps.lastIndex,
+                    onChange = { steps[index] = it },
+                    onMinutes = { m -> points = setStepMinutes(points, index, m, minutesPerPoint) },
+                    onPoints = { c -> points = setStepPoints(points, index, c) },
+                    onFollow = { on -> points = setStepFollow(points, index, on, minutesPerPoint) },
+                    onMove = { delta ->
+                        val other = index + delta
+                        steps[index] = steps[other].also { steps[other] = steps[index] }
+                        val values = points.steps.toMutableList()
+                        values[index] = values[other].also { values[other] = values[index] }
+                        points = points.copy(steps = values)
+                    },
+                    onRemove = {
+                        steps.removeAt(index)
+                        points = removeStep(points, index)
+                    },
+                )
+            }
         }
         TextButton(onClick = {
             steps.add(StepEdit(nextKey, null, ""))

@@ -63,13 +63,7 @@ class DashboardViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
-        state.update {
-            try {
-                it.copy(data = api.dashboard(), loading = false, error = null)
-            } catch (e: Exception) {
-                it.copy(loading = false, error = e.message)
-            }
-        }
+        state.load({ api.dashboard() }, { s, v -> s.copy(data = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
     }
 }
 

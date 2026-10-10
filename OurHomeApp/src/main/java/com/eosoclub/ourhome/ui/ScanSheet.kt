@@ -51,6 +51,8 @@ import com.eosoclub.ourhome.nfc.TagRef
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 private const val OPEN = "open"
@@ -112,17 +114,27 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
+    private var lookupJob: Job? = null
+
     fun open(ref: TagRef) {
         NfcScans.cancelWrite()
-        state.value = UiState(phase = Phase.Loading(ref.tagId), format = ref.format)
-        viewModelScope.launch {
+        // A newer scan (or closing) supersedes a slow lookup: its answer must
+        // not reopen the sheet or show the wrong tag.
+        lookupJob?.cancel()
+        val loading = Phase.Loading(ref.tagId)
+        state.value = UiState(phase = loading, format = ref.format)
+        lookupJob = viewModelScope.launch {
             try {
                 val lookup = api.nfcLookup(ref.tagId)
+                if (state.value.phase != loading) return@launch
                 val needsSetup = lookup.item == null
                 state.update { it.copy(phase = Phase.Ready(lookup), settingUp = needsSetup) }
                 loadLists()
                 if (needsSetup) loadItems()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                if (state.value.phase != loading) return@launch
                 state.update { it.copy(phase = Phase.Failed(ref.tagId, e.message ?: "Couldn't look up that tag")) }
             }
         }
@@ -130,6 +142,7 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
 
     fun close() {
         NfcScans.cancelWrite()
+        lookupJob?.cancel()
         state.value = UiState()
     }
 

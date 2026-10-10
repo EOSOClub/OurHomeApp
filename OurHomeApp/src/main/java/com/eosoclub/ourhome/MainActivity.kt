@@ -30,11 +30,14 @@ import com.eosoclub.ourhome.data.AuthState
 import com.eosoclub.ourhome.data.SessionManager
 import com.eosoclub.ourhome.data.ThemeMode
 import com.eosoclub.ourhome.nfc.NfcScans
+import com.eosoclub.ourhome.nfc.ScanHandoff
 import com.eosoclub.ourhome.nfc.TagFormat
 import com.eosoclub.ourhome.nfc.TagRef
 import com.eosoclub.ourhome.notifications.Push
 import com.eosoclub.ourhome.notifications.RequestReminders
+import com.eosoclub.ourhome.ui.ClearUserScope
 import com.eosoclub.ourhome.ui.HomeScreen
+import com.eosoclub.ourhome.ui.UserScope
 import com.eosoclub.ourhome.ui.LoginScreen
 import com.eosoclub.ourhome.ui.theme.OurHomeTheme
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -86,6 +89,8 @@ class MainActivity : ComponentActivity() {
     /** A tag handed over by QuickScanActivity or a quick-scan notification tap. */
     private fun emitScanFrom(intent: Intent) {
         val tagId = intent.getStringExtra(EXTRA_SCANNED_TAG) ?: return
+        // Only from this app (see ScanHandoff); other apps can start us too.
+        if (!ScanHandoff.isOurs(this, intent)) return
         val format = intent.getStringExtra(EXTRA_SCANNED_FORMAT)
             ?.let { runCatching { TagFormat.valueOf(it) }.getOrNull() } ?: TagFormat.OurHome
         NfcScans.emit(TagRef(tagId, format))
@@ -151,7 +156,13 @@ private fun Root(
         AuthState.Checking -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
         }
-        is AuthState.SignedOut -> LoginScreen(session, s.message)
-        is AuthState.SignedIn -> HomeScreen(session, settings, s.user, openTab, onTabOpened)
+        is AuthState.SignedOut -> {
+            ClearUserScope()
+            LoginScreen(session, s.message)
+        }
+        // Each account gets its own screen state (see UserScopes).
+        is AuthState.SignedIn -> UserScope(s.user.id) {
+            HomeScreen(session, settings, s.user, openTab, onTabOpened)
+        }
     }
 }

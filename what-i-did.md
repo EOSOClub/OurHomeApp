@@ -1,4 +1,80 @@
-# What I did overnight (2026-10-09)
+# What I did overnight
+
+## Round 2 (night of 2026-10-10): your follow-ups + bug fixes
+
+Still **nothing committed, pushed or deployed**. Both repos build and pass
+their checks:
+- **Web:** typecheck clean, 251/251 tests, eslint clean.
+- **App:** `assembleDebug` + unit tests pass, and the merged manifest is still
+  free of showWhenLocked/turnScreenOn.
+
+Not clicked through live; please try the items under "Worth a manual test"
+after you deploy.
+
+### Your three asks
+1. **"Your turn" notifications.** A new notification type, `task_ready`, goes
+   to a task's assignee when the task becomes theirs to do:
+   - someone creates it for them, or reassigns it to them
+   - a rotation passes it to them
+   - a new cycle opens
+   - without cycles, someone else completed it and the next occurrence is open
+
+   Each one lands in their bell and on their phone (push, then the app's
+   household-reminder notification, still lock-screen safe).
+   - There's at most one per task. Completing, archiving or deleting the task
+     removes it.
+   - You aren't notified about something you did yourself: assigning yourself,
+     or completing a task and getting it straight back.
+   - **Decision:** not emailed, because daily tasks would flood inboxes. Easy
+     to add.
+2. **Pronouns removed** from profiles everywhere: database field, API, website
+   and app.
+3. **The bell goes to the thing and then clears.**
+   - **Website:** the notifications page now shows **unread** by default. Clicking
+     one marks it read and opens what it's about. Tasks open on the task itself
+     (`/tasks?task=<id>` expands and highlights it); bills, stock, requests,
+     calendar and settings links also work. Notifications with no page clear
+     when clicked. The "Read" and "All" filters keep the history.
+   - **App:** the bell lists unread only. Tapping one marks it read and opens
+     its tab. The app doesn't scroll to the exact task within the tab yet.
+
+### Bugs fixed (details and anything left in `bugs.md`)
+Fixed W1–W3, W5–W20, W22–W31 and A1–A8.
+
+Decisions I made along the way:
+- **Overdue rule:** a due date picked without a time (stored at 12:00) is due
+  all day, and is overdue from the next day. A task given an explicit due time
+  is overdue once that time passes. Pages, the dashboard counts and bell
+  reminders now all agree.
+- **Recurrence follows your household time zone** (Settings → Task points). A
+  noon due date stays noon across daylight saving, and "Monday" means your
+  Monday. This changes when existing evening-time weekly tasks land. They now
+  land on the right local day, which was the bug.
+- **Completed stays completed in the editor:** an edit can't mark a task
+  completed (use Complete, which pays) or reopen a completed one (use Undo,
+  which takes the points back).
+- **Changing your own email now asks for your current password**, on web and
+  app, because password resets go to that address.
+- **Contact-form messages are now Head-only** (managers no longer see them).
+- **Undo is refused** if someone edited the task after it was completed, so it
+  can't silently overwrite their edit.
+- **Archiving a task that runs in cycles pauses its cycles.** Un-archiving
+  starts a fresh cycle, with no backlog of "missed" rows.
+
+### Worth a manual test after deploying
+- Assign a task to someone else, and check they get a "Your turn"
+  notification. Then complete a rotating task and check the next person gets
+  one.
+- Click a bell notification for a task: it should open, highlight the task,
+  and drop off the unread list.
+- Report a bug on the website and type in Details. Focus should stay put now.
+- Sign out on the phone and sign in as someone else. Nothing from the first
+  account should show, and no old alerts should stay in the shade.
+- Change your email: it should ask for your password.
+
+---
+
+# Round 1 (2026-10-09)
 
 Two features, built on both the website (OurHomeWeb) and the app (OurHomeApp).
 **Nothing is committed or pushed**, and the server isn't redeployed. Until you

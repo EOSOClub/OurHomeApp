@@ -96,8 +96,12 @@ object RequestReminders {
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
         WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK_NAME)
         clear(context)
-        // Signed out: household reminders shouldn't linger in the shade either.
+        // Signed out: nothing from that account may linger in the shade, and
+        // the next account starts with a fresh "already alerted" memory.
         HouseholdReminderAlerts.clear(context)
+        BugReportAlerts.clear(context)
+        DeadlineReminders.clear(context)
+        AppUpdateAlerts.clear(context)
     }
 
     fun ensureChannel(context: Context) {

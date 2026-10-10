@@ -113,13 +113,7 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
-        state.update {
-            try {
-                it.copy(requests = api.requests(), loading = false, error = null)
-            } catch (e: Exception) {
-                it.copy(loading = false, error = e.message)
-            }
-        }
+        state.load({ api.requests() }, { s, v -> s.copy(requests = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
     }
 
     private fun loadMembers() {

@@ -12,6 +12,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
 import com.eosoclub.ourhome.OurHomeApp
 import com.eosoclub.ourhome.MainActivity
+import com.eosoclub.ourhome.nfc.ScanHandoff
 import com.eosoclub.ourhome.R
 import com.eosoclub.ourhome.data.InventoryItem
 import com.eosoclub.ourhome.nfc.parseScanAmount
@@ -84,7 +85,7 @@ object QuickScanNotifier {
         val open = PendingIntent.getActivity(
             context,
             notificationId(tagId),
-            Intent(context, MainActivity::class.java)
+            ScanHandoff.stamp(context, Intent(context, MainActivity::class.java))
                 .putExtra(MainActivity.EXTRA_SCANNED_TAG, tagId)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,

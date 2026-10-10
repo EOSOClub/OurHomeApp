@@ -36,9 +36,17 @@ object BugReportAlerts {
         Log.i(TAG, "${unread.size} unread bug report(s), ${fresh.size} new")
         if (fresh.isEmpty()) return
         show(context, fresh)
-        // Remember what we alerted about (bounded) so the next poll stays quiet.
-        val updated = (alerted + fresh.map { it.id }).toList().takeLast(MAX_REMEMBERED).toSet()
+        // Remember what we alerted about so the next poll stays quiet. Only
+        // still-unread ids are worth keeping (a read one never comes back).
+        val unreadIds = unread.map { it.id }.toSet()
+        val updated = (alerted.filter { it in unreadIds } + fresh.map { it.id }).takeLast(MAX_REMEMBERED).toSet()
         prefs.edit { putStringSet(KEY_ALERTED, updated) }
+    }
+
+    /** Signed out: drop the alert and what was alerted (it belongs to that account). */
+    fun clear(context: Context) {
+        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { clear() }
     }
 
     private fun show(context: Context, reports: List<Notification>) {

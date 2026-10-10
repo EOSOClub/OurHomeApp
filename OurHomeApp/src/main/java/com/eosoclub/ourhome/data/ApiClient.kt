@@ -98,8 +98,11 @@ class ApiClient(
 
     suspend fun profile(): ProfileOverview = call(get("/api/profile"), ProfileOverview.serializer())
 
-    /** Updates only the fields passed (non-null); the server checks username/email uniqueness. */
-    suspend fun updateProfile(name: String?, username: String?, email: String?): ProfileOverview =
+    /**
+     * Updates only the fields passed (non-null); the server checks username/email
+     * uniqueness. A new email needs [currentPassword] (password resets go there).
+     */
+    suspend fun updateProfile(name: String?, username: String?, email: String?, currentPassword: String? = null): ProfileOverview =
         call(
             Request.Builder()
                 .url(baseUrl() + "/api/profile")
@@ -108,6 +111,7 @@ class ApiClient(
                         name?.let { put("name", it) }
                         username?.let { put("username", it) }
                         email?.let { put("email", it) }
+                        currentPassword?.let { put("currentPassword", it) }
                     }.toString().toRequestBody(jsonType),
                 )
                 .build(),
@@ -125,7 +129,6 @@ class ApiClient(
                 .patch(
                     buildJsonObject {
                         put("bio", profile.bio)
-                        put("pronouns", profile.pronouns)
                         put("avatarEmoji", profile.avatarEmoji)
                         put("profileColor", profile.profileColor)
                         put("birthday", profile.birthday)

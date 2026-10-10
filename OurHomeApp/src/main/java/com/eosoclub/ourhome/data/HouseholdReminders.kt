@@ -3,11 +3,12 @@ package com.eosoclub.ourhome.data
 /**
  * The bell notifications the web's reminder sweep generates (its
  * `MANAGED_TYPES`): overdue tasks, low or soon-depleted stock, and bills
- * coming due. The server decides who sees which (the people tied to the
+ * coming due — plus "task_ready" (a task became this user's to do: assigned,
+ * their turn in a rotation, or a new cycle). The server decides who sees which (the people tied to the
  * task/bill/item plus that page's managers) and tracks read state per person,
  * so the app alerts on exactly what the user's bell returns.
  */
-val HOUSEHOLD_REMINDER_TYPES = setOf("overdue", "low_inventory", "reminder", "bill_due")
+val HOUSEHOLD_REMINDER_TYPES = setOf("overdue", "low_inventory", "reminder", "bill_due", "task_ready")
 
 /**
  * What the phone should do with the current unread reminders.
@@ -50,6 +51,7 @@ fun Notification.reminderLine(): String {
         "low_inventory" -> "Low"
         "reminder" -> "Running out"
         "bill_due" -> "Bill"
+        "task_ready" -> "Your turn"
         else -> null
     }
     return if (label == null) title else "$label: $title"

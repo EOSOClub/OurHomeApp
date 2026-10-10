@@ -33,13 +33,7 @@ class ScanHistoryViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
-        state.update {
-            try {
-                it.copy(scans = api.nfcScans(), loading = false, error = null)
-            } catch (e: Exception) {
-                it.copy(loading = false, error = e.message)
-            }
-        }
+        state.load({ api.nfcScans() }, { s, v -> s.copy(scans = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
     }
 }
 

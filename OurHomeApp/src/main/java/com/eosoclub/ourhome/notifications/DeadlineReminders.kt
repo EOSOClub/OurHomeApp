@@ -54,8 +54,18 @@ object DeadlineReminders {
         // notification alone so a dismissed one doesn't come back every poll.
         if (fresh.isEmpty()) return
         show(context, alerts)
-        val updated = (alerted + fresh).toList().takeLast(MAX_REMEMBERED).toSet()
+        // Keep keys only for requests that still exist (a set has no order, so
+        // capping it would drop arbitrary, still-needed keys and re-alert).
+        val live = requests.map { "${it.id}:" }
+        val kept = alerted.filter { key -> live.any { key.startsWith(it) } }
+        val updated = (kept + fresh).takeLast(MAX_REMEMBERED).toSet()
         prefs.edit { putStringSet(KEY_ALERTED, updated) }
+    }
+
+    /** Signed out: drop the alert and what was alerted (it belongs to that account). */
+    fun clear(context: Context) {
+        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { clear() }
     }
 
     private fun DeadlineAlert.key(today: LocalDate): String {

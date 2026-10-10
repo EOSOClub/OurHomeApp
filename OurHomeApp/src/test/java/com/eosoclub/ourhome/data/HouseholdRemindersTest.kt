@@ -49,5 +49,12 @@ class HouseholdRemindersTest {
     fun reminderLineLabelsByType() {
         assertEquals("Bill: T1", n("1", "bill_due").reminderLine())
         assertEquals("Low: T2", n("2", "low_inventory").reminderLine())
+        assertEquals("Your turn: T3", n("3", "task_ready").reminderLine())
+    }
+
+    @Test
+    fun taskReadyAlertsLikeOtherReminders() {
+        val plan = planReminderAlert(listOf(n("1", "task_ready"), n("2", "bug_report")), alerted = emptySet())
+        assertEquals(listOf("1"), plan.alert.map { it.id })
     }
 }

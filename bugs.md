@@ -1,5 +1,27 @@
 # Bugs found (review pass, 2026-10-09 night)
 
+## Status after the fix pass (2026-10-10 night)
+
+Everything below is **fixed (uncommitted)** unless listed here. The tests
+added with the fixes:
+- `recurrenceService.test.ts`: next occurrence, DST, local weekdays,
+  every-other-week
+- `format.test.ts`: overdue and due-today labels
+- `taskReadyService.test.ts`
+- `HouseholdRemindersTest`
+
+| Item | Status |
+| --- | --- |
+| W4 | Fixed for task assignee and categories, and shopping/inventory categories. Bill assignees were already checked. |
+| W8 | Fixed on the dashboard (household zone). The related *hydration mismatch* in client lists (task/bill rows server-rendered in UTC) is **not fixed**. React repairs it on load, so you may see a label flip in the evening. Proper fix: pass the household zone to those lists. |
+| W12, W13 | Fixed by rewriting the recurrence engine to use the household's local time, the start date and every-N weeks/months. |
+| W21 ("HTTPS only" is server-wide) | **Left as is, by design.** It's checked before anyone signs in, so it can't be per household, and this server has one household. |
+| W27 | Fixed as part of the bell change: requests, events and settings now link. |
+| A7 | Fixed: scan hand-offs to MainActivity now carry a per-install secret. |
+| Not reviewed | The calendar, members, settings, auth and command-palette screens on the web. The reviewer ran out of time there. |
+
+---
+
 **How this was done:** a read-only code review of the website (OurHomeWeb) and
 the app, split into four areas: task/points services, other web services, web
 UI, and the Android app. **Nothing here is fixed.** The only code changes

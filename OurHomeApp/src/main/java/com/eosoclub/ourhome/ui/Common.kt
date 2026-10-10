@@ -90,3 +90,28 @@ internal fun formatMoney(amount: Double, currency: String?): String {
 /** Drops a trailing ".0" so whole quantities read as "3", not "3.0". */
 internal fun formatQuantity(q: Double): String =
     if (q % 1.0 == 0.0) q.toLong().toString() else "%.2f".format(q).trimEnd('0').trimEnd('.')
+
+/**
+ * Loads into a screen's state: fetches first, then applies the result (or the
+ * error) in one update. Never fetch inside `update {}` — it re-runs its lambda
+ * whenever the state changed meanwhile (a tick during a refresh), re-sending
+ * the request each time. Cancellation propagates instead of showing as an error.
+ */
+internal suspend fun <S, T> kotlinx.coroutines.flow.MutableStateFlow<S>.load(
+    fetch: suspend () -> T,
+    onOk: (S, T) -> S,
+    onError: (S, String?) -> S,
+) {
+    val result = try {
+        Result.success(fetch())
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+    while (true) {
+        val current = value
+        val next = result.fold({ onOk(current, it) }, { onError(current, it.message) })
+        if (compareAndSet(current, next)) return
+    }
+}
