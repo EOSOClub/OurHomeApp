@@ -67,6 +67,10 @@ import com.eosoclub.ourhome.data.DeadlineState
 import com.eosoclub.ourhome.data.AccessMatrix
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.defaultAccess
+import com.eosoclub.ourhome.data.Features
+import android.content.Context
+import android.content.SharedPreferences
+import androidx.core.content.edit
 import com.eosoclub.ourhome.nfc.NfcScans
 import com.eosoclub.ourhome.data.awaitingAcceptanceBy
 import com.eosoclub.ourhome.data.canApproveMedia
@@ -103,6 +107,15 @@ private fun Tab.icon(): Painter = when (this) {
     Tab.Requests -> painterResource(R.drawable.ic_request)
 }
 
+private fun Tab.isOn(features: Features): Boolean = when (this) {
+    Tab.Home -> true
+    Tab.Tasks -> features.tasks
+    Tab.Shopping -> features.shopping
+    Tab.Inventory -> features.inventory
+    Tab.Bills -> features.bills
+    Tab.Requests -> features.requests
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -136,9 +149,25 @@ fun HomeScreen(
     // tab's list come from one fetch.
     val requests = viewModel { RequestsViewModel(session.api) }
     val requestsState by requests.state.collectAsStateWithLifecycle()
-    // What this user may add/edit/delete per page (set by the head on the website).
-    val accessVm = viewModel { AccessViewModel(session.api, user.role) }
+    // What this user may add/edit/delete per page (set by the head on the website),
+    // and which features the household has (set by the server admin).
+    val appContext = LocalContext.current.applicationContext
+    val accessVm = viewModel {
+        AccessViewModel(
+            session.api,
+            user.role,
+            appContext.getSharedPreferences(AccessViewModel.PREFS, Context.MODE_PRIVATE),
+            user.id,
+        )
+    }
     val access by accessVm.access.collectAsStateWithLifecycle()
+    val features by accessVm.features.collectAsStateWithLifecycle()
+    val tabs = Tab.entries.filter { it.isOn(features) }
+    // A tab (or Points) the server admin just turned off: back to Home.
+    LaunchedEffect(features) {
+        if (!tab.isOn(features)) tab = Tab.Home
+        if (overlay == Overlay.Points && !features.points) overlay = null
+    }
     // Keep both badges and the permissions current as the user moves around.
     LaunchedEffect(tab) {
         notifications.refresh()
@@ -168,6 +197,8 @@ fun HomeScreen(
             else -> null
         }
         when {
+            // A tab the server admin turned off: the tap just opens the app.
+            target != null && !target.isOn(features) -> onTabOpened()
             target != null -> {
                 overlay = null
                 tab = target
@@ -201,7 +232,8 @@ fun HomeScreen(
     val scanned by NfcScans.latest.collectAsStateWithLifecycle()
     LaunchedEffect(scanned) {
         scanned?.let {
-            scan.open(it.ref)
+            // Tags drive Inventory: with it turned off a scan does nothing.
+            if (features.inventory) scan.open(it.ref)
             NfcScans.consume()
         }
     }
@@ -262,11 +294,13 @@ fun HomeScreen(
                                     leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
                                     onClick = { menuOpen = false; overlay = Overlay.Profile },
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("Points") },
-                                    leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null) },
-                                    onClick = { menuOpen = false; overlay = Overlay.Points },
-                                )
+                                if (features.points) {
+                                    DropdownMenuItem(
+                                        text = { Text("Points") },
+                                        leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null) },
+                                        onClick = { menuOpen = false; overlay = Overlay.Points },
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Activity") },
                                     leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
@@ -306,7 +340,7 @@ fun HomeScreen(
         bottomBar = {
             if (overlay == null) {
                 NavigationBar {
-                    Tab.entries.forEach { t ->
+                    tabs.forEach { t ->
                         NavigationBarItem(
                             selected = tab == t,
                             onClick = { tab = t },
@@ -336,12 +370,16 @@ fun HomeScreen(
                 showMessage,
                 onOpen = { n ->
                     // Go to what it's about; anything else just clears.
-                    when (n.subjectType) {
-                        "task" -> { overlay = null; tab = Tab.Tasks }
-                        "bill" -> { overlay = null; tab = Tab.Bills }
-                        "inventory_item" -> { overlay = null; tab = Tab.Inventory }
-                        "request" -> { overlay = null; tab = Tab.Requests }
-                        "app_release" -> overlay = Overlay.Profile
+                    val target = when (n.subjectType) {
+                        "task" -> Tab.Tasks
+                        "bill" -> Tab.Bills
+                        "inventory_item" -> Tab.Inventory
+                        "request" -> Tab.Requests
+                        else -> null
+                    }
+                    when {
+                        target != null && target.isOn(features) -> { overlay = null; tab = target }
+                        n.subjectType == "app_release" -> overlay = Overlay.Profile
                     }
                 },
                 modifier,
@@ -355,11 +393,11 @@ fun HomeScreen(
                 session,
                 user,
                 access,
+                features,
                 waitingRequests,
                 showMessage,
                 showAction,
                 onOpenPoints = { overlay = Overlay.Points },
-                onOpenActivity = { overlay = Overlay.Activity },
                 onOpenTab = { tab = it },
                 onOpenScanHistory = { overlay = Overlay.ScanHistory },
                 modifier = modifier,
@@ -407,27 +445,29 @@ private fun TabContent(
     session: SessionManager,
     user: SessionUser,
     access: AccessMatrix,
+    features: Features,
     waitingRequests: List<WaitingRequest>,
     showMessage: (String) -> Unit,
     showAction: (String, String, () -> Unit) -> Unit,
     onOpenPoints: () -> Unit,
-    onOpenActivity: () -> Unit,
     onOpenTab: (Tab) -> Unit,
     onOpenScanHistory: () -> Unit,
     modifier: Modifier,
 ) {
+    // Points links go nowhere when the server admin turned Points off.
+    val openPoints = onOpenPoints.takeIf { features.points }
     when (tab) {
         Tab.Home -> DashboardScreen(
             session.api,
             user.name ?: user.username,
             access,
-            waitingRequests,
+            features,
+            if (features.requests) waitingRequests else emptyList(),
             onOpenTab = onOpenTab,
-            onOpenPoints = onOpenPoints,
-            onOpenActivity = onOpenActivity,
+            onOpenPoints = openPoints,
             modifier = modifier,
         )
-        Tab.Tasks -> TasksScreen(session.api, access.tasks, user.id, showMessage, showAction, onOpenPoints, modifier)
+        Tab.Tasks -> TasksScreen(session.api, access.tasks, user.id, showMessage, showAction, openPoints, modifier)
         Tab.Shopping -> ShoppingScreen(session.api, access.shopping, access.lists, user.id, showMessage, modifier)
         Tab.Inventory -> InventoryScreen(session.api, access.inventory, user.id, showMessage, onOpenScanHistory, modifier)
         Tab.Bills -> BillsScreen(session.api, access.bills, user.id, showMessage, modifier)
@@ -447,15 +487,38 @@ private fun TabContent(
  * the role's built-in defaults so screens render immediately; keeps the last
  * good grid when a refresh fails (offline, or a server without the endpoint).
  */
-internal class AccessViewModel(private val api: ApiClient, role: String?) : ViewModel() {
+internal class AccessViewModel(
+    private val api: ApiClient,
+    role: String?,
+    private val prefs: SharedPreferences,
+    userId: String,
+) : ViewModel() {
     private val _access = MutableStateFlow(defaultAccess(role))
     val access: StateFlow<AccessMatrix> = _access.asStateFlow()
 
+    // The household's features (server admin). Starts from the last known set,
+    // so a household without e.g. Shopping doesn't see its tab flash on launch.
+    private val featuresKey = "features_$userId"
+    private val _features = MutableStateFlow(
+        prefs.getStringSet(featuresKey, null)?.let { Features.from(it) } ?: Features.ALL,
+    )
+    val features: StateFlow<Features> = _features.asStateFlow()
+
     fun refresh() = viewModelScope.launch {
         try {
-            _access.value = api.myAccess().access
+            val me = api.myAccess()
+            _access.value = me.access
+            val features = Features.from(me.features)
+            if (features != _features.value) {
+                _features.value = features
+                prefs.edit { putStringSet(featuresKey, features.names()) }
+            }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
         }
+    }
+
+    companion object {
+        const val PREFS = "household_features"
     }
 }

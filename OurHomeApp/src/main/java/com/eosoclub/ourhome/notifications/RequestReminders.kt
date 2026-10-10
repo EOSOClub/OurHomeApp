@@ -34,6 +34,7 @@ import com.eosoclub.ourhome.data.can
 import com.eosoclub.ourhome.data.awaitingAcceptanceBy
 import com.eosoclub.ourhome.data.canApproveMedia
 import com.eosoclub.ourhome.data.defaultAccess
+import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.summary
 import java.util.concurrent.TimeUnit
 
@@ -186,10 +187,14 @@ object RequestReminders {
                     return Result.success()
                 }
                 val fromPush = inputData.getBoolean(KEY_FROM_PUSH, false)
-                val requests = api.requests()
                 // Media approvers come from the head's grid; an older server
                 // without /api/permissions/me gets the role's built-ins.
-                val access = runCatching { api.myAccess().access }.getOrElse { defaultAccess(user.role) }
+                val me = runCatching { api.myAccess() }.getOrNull()
+                val access = me?.access ?: defaultAccess(user.role)
+                // Requests turned off by the server admin: its API refuses, so
+                // don't ask (that would fail the checks below too); the empty
+                // list clears any request alerts still showing.
+                val requests = if (Features.from(me?.features).requests) api.requests() else emptyList()
                 val waiting = awaitingAcceptanceBy(requests, user.id, canApproveMedia(access, user.role))
                 Log.i(TAG, "${waiting.size} request(s) awaiting acceptance (${if (fromPush) "push" else "hourly"})")
                 update(applicationContext, waiting, onlyIfNew = fromPush)

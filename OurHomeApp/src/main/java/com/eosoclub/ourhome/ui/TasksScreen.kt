@@ -247,7 +247,8 @@ fun TasksScreen(
     showMessage: (String) -> Unit,
     /** A snackbar with one action (Undo). */
     showAction: (String, String, () -> Unit) -> Unit,
-    onOpenPoints: () -> Unit,
+    /** null when the server admin turned Points off. */
+    onOpenPoints: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val vm = viewModel { TasksViewModel(api) }
@@ -301,10 +302,12 @@ fun TasksScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    item {
-                        TextButton(onClick = onOpenPoints) {
-                            Icon(Icons.Filled.Star, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Text("Points", modifier = Modifier.padding(start = 6.dp))
+                    if (onOpenPoints != null) {
+                        item {
+                            TextButton(onClick = onOpenPoints) {
+                                Icon(Icons.Filled.Star, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Text("Points", modifier = Modifier.padding(start = 6.dp))
+                            }
                         }
                     }
                     if (open.isEmpty()) {

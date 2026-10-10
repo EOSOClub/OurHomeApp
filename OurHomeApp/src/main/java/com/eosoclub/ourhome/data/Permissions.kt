@@ -101,9 +101,18 @@ data class AccessMatrix(
     val lists: PageAccess get() = shoppingLists ?: shopping
 }
 
-/** `GET /api/permissions/me` (MyAccessDTO). */
+/**
+ * `GET /api/permissions/me` (MyAccessDTO). [features]: the household's
+ * turned-on features (null from a server that predates them); [access] is
+ * already empty on the pages of turned-off ones.
+ */
 @Serializable
-data class MyAccess(val userId: String, val role: String, val access: AccessMatrix)
+data class MyAccess(
+    val userId: String,
+    val role: String,
+    val access: AccessMatrix,
+    val features: List<String>? = null,
+)
 
 /**
  * The web's built-in role defaults (BUILTIN_ROLE_ACCESS). Shown until the real

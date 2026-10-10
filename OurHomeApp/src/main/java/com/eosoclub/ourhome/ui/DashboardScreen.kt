@@ -40,6 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eosoclub.ourhome.data.AccessMatrix
+import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.Dashboard
 import com.eosoclub.ourhome.data.DashboardPoints
@@ -81,10 +82,11 @@ internal fun DashboardScreen(
     api: ApiClient,
     userName: String?,
     access: AccessMatrix,
+    features: Features,
     waitingRequests: List<WaitingRequest>,
     onOpenTab: (Tab) -> Unit,
-    onOpenPoints: () -> Unit,
-    onOpenActivity: () -> Unit,
+    /** null when Points is turned off. */
+    onOpenPoints: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val vm = viewModel { DashboardViewModel(api) }
@@ -109,25 +111,25 @@ internal fun DashboardScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            item { Greeting(userName, data.doneToday) }
-            item { QuickActions(access, onOpenTab) }
-            item {
-                NeedsYouCard(
-                    today = today,
-                    requests = waitingRequests,
-                    openToAnyone = openToAnyone,
-                    later = later,
-                    onOpenTab = onOpenTab,
-                )
-            }
-            me?.points?.let { points -> item { PointsCard(points, onOpenPoints) } }
-            item { HouseholdGlance(data, onOpenTab) }
-            item { ComingUpCard(data, onOpenTab) }
-            item {
-                TextButton(onClick = onOpenActivity, modifier = Modifier.fillMaxWidth()) {
-                    Text("Household activity →")
+            // Cards for features the server admin turned off aren't shown at all.
+            item { Greeting(userName, data.doneToday.takeIf { features.tasks }) }
+            item { QuickActions(access, features, onOpenTab) }
+            if (features.tasks || features.requests) {
+                item {
+                    NeedsYouCard(
+                        today = today,
+                        requests = waitingRequests,
+                        openToAnyone = openToAnyone,
+                        later = later,
+                        onOpenTab = onOpenTab,
+                    )
                 }
             }
+            if (onOpenPoints != null) me?.points?.let { points -> item { PointsCard(points, onOpenPoints) } }
+            if (features.tasks || features.inventory || features.shopping || features.bills) {
+                item { HouseholdGlance(data, features, onOpenTab) }
+            }
+            if (features.calendar || features.bills) item { ComingUpCard(data, features, onOpenTab) }
         }
     }
 }
@@ -173,12 +175,12 @@ private fun doneTodayText(done: DoneToday): String {
 
 /** Shortcuts to the tabs this user may add on (the head's permissions grid). */
 @Composable
-private fun QuickActions(access: AccessMatrix, onOpenTab: (Tab) -> Unit) {
+private fun QuickActions(access: AccessMatrix, features: Features, onOpenTab: (Tab) -> Unit) {
     val actions = listOfNotNull(
-        ("New task" to Tab.Tasks).takeIf { access.tasks.create },
-        ("Add item" to Tab.Shopping).takeIf { access.shopping.create },
-        ("Log payment" to Tab.Bills).takeIf { access.bills.create },
-        ("New request" to Tab.Requests).takeIf { access.requests.create },
+        ("New task" to Tab.Tasks).takeIf { features.tasks && access.tasks.create },
+        ("Add item" to Tab.Shopping).takeIf { features.shopping && access.shopping.create },
+        ("Log payment" to Tab.Bills).takeIf { features.bills && access.bills.create },
+        ("New request" to Tab.Requests).takeIf { features.requests && access.requests.create },
     )
     if (actions.isEmpty()) return
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -304,14 +306,15 @@ private fun PointsCard(points: DashboardPoints, onOpenPoints: () -> Unit) {
 }
 
 @Composable
-private fun HouseholdGlance(data: Dashboard, onOpenTab: (Tab) -> Unit) {
+private fun HouseholdGlance(data: Dashboard, features: Features, onOpenTab: (Tab) -> Unit) {
     val c = data.counts
     val error = MaterialTheme.colorScheme.error
-    val stats = listOf(
-        Stat("Overdue tasks", c.overdue, Tab.Tasks, if (c.overdue > 0) error else null),
-        Stat("Low stock", c.lowInventory, Tab.Inventory, if (c.lowInventory > 0) error else null),
-        Stat("To buy", c.openShopping, Tab.Shopping),
-        Stat("Bills due (7d)", c.billsDue, Tab.Bills, if (c.billsDue > 0) error else null),
+    val stats = listOfNotNull(
+        Stat("Overdue tasks", c.overdue, Tab.Tasks, if (c.overdue > 0) error else null).takeIf { features.tasks },
+        Stat("Low stock", c.lowInventory, Tab.Inventory, if (c.lowInventory > 0) error else null)
+            .takeIf { features.inventory },
+        Stat("To buy", c.openShopping, Tab.Shopping).takeIf { features.shopping },
+        Stat("Bills due (7d)", c.billsDue, Tab.Bills, if (c.billsDue > 0) error else null).takeIf { features.bills },
     )
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SubHeading("Around the house")
@@ -339,7 +342,7 @@ private data class Stat(val label: String, val value: Int, val tab: Tab, val acc
 
 /** Calendar events (next 7 days) and unpaid bills, in date order. */
 @Composable
-private fun ComingUpCard(data: Dashboard, onOpenTab: (Tab) -> Unit) {
+private fun ComingUpCard(data: Dashboard, features: Features, onOpenTab: (Tab) -> Unit) {
     data class Item(val at: Instant, val title: String, val subtitle: String, val late: Boolean, val trailing: String?, val tab: Tab?)
     val time = DateTimeFormatter.ofPattern("h:mm a")
     val items = (
@@ -365,7 +368,11 @@ private fun ComingUpCard(data: Dashboard, onOpenTab: (Tab) -> Unit) {
     DashCard("Coming up") {
         if (items.isEmpty()) {
             Text(
-                "No events this week and no unpaid bills.",
+                when {
+                    features.calendar && features.bills -> "No events this week and no unpaid bills."
+                    features.calendar -> "No events this week."
+                    else -> "No unpaid bills."
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
