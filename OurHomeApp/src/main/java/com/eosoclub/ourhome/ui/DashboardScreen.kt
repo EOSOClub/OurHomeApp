@@ -257,7 +257,7 @@ private fun TaskRows(tasks: List<DashboardTask>, onOpenTab: (Tab) -> Unit, muted
         val urgent = !muted && (task.priority == "urgent" || task.priority == "high")
         Row2(
             title = task.title,
-            subtitle = due?.first,
+            subtitle = listOfNotNull(due?.first, task.place).joinToString(" · ").ifEmpty { null },
             subtitleIsError = due?.second == true,
             trailing = if (urgent) task.priority else null,
             trailingColor = if (task.priority == "urgent") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary,

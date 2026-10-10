@@ -11,8 +11,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.IconButton
+import com.eosoclub.ourhome.data.Places
+import com.eosoclub.ourhome.data.groupByPlace
+import com.eosoclub.ourhome.data.moveId
+import com.eosoclub.ourhome.data.placeLabel
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -74,6 +83,8 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
         val categories: List<CategoryRef>? = null,
         /** Completion history per expanded task (loaded on demand). */
         val history: Map<String, List<TaskCompletion>> = emptyMap(),
+        /** Floors and rooms; null until loaded (or from an older server). */
+        val places: Places? = null,
     )
 
     /** A snackbar message, optionally with one action (e.g. Undo). */
@@ -87,7 +98,38 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
+        // Rooms change rarely and only on the website; a failure (older server) keeps the last.
+        launch { runCatching { api.places() }.onSuccess { p -> state.update { it.copy(places = p) } } }
         state.load({ api.tasks() }, { s, v -> s.copy(tasks = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
+    }
+
+    /** "By room" instead of by due date; kept here so it survives switching tabs. */
+    val byRoom = MutableStateFlow(false)
+
+    /** Folded floor/room headings ("floor:<id>", "room:<id>", "house"). */
+    val collapsed = MutableStateFlow(emptySet<String>())
+
+    fun toggleCollapsed(key: String) = collapsed.update { if (key in it) it - key else it + key }
+
+    // In-flight reorders: while any are pending, a reply must not undo a later move.
+    private var pendingReorders = 0
+
+    /** Hand-set order of one place's tasks: moves at once, reverts if the server refuses. */
+    fun reorder(taskIds: List<String>) {
+        val before = state.value.tasks
+        val rank = taskIds.withIndex().associate { (i, id) -> id to i }
+        state.update { s -> s.copy(tasks = s.tasks.map { t -> rank[t.id]?.let { t.copy(position = it) } ?: t }) }
+        pendingReorders++
+        viewModelScope.launch {
+            try {
+                api.reorderTasks(taskIds)
+            } catch (e: Exception) {
+                if (pendingReorders == 1) state.update { it.copy(tasks = before) }
+                say(e.message ?: "Couldn't reorder")
+            } finally {
+                pendingReorders--
+            }
+        }
     }
 
     /** Completes the task (paying its points) and offers Undo for the 10-minute window. */
@@ -254,6 +296,10 @@ fun TasksScreen(
     val vm = viewModel { TasksViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
     val expandedIds by vm.expanded.collectAsStateWithLifecycle()
+    val byRoomChosen by vm.byRoom.collectAsStateWithLifecycle()
+    val collapsed by vm.collapsed.collectAsStateWithLifecycle()
+    val places = state.places?.takeUnless { it.isEmpty }
+    val byRoom = byRoomChosen && places != null
 
     LaunchedEffect(Unit) { vm.refresh() }
     LaunchedEffect(Unit) {
@@ -267,9 +313,20 @@ fun TasksScreen(
         .sortedWith(compareBy(nullsLast()) { it.dueDate?.let(Instant::parse) })
     // Cycle tasks finished early wait here until their next cycle starts.
     val doneThisCycle = state.tasks.filter { it.doneThisCycle }.sortedBy { it.cycleEndsAt }
-    val cardFor: @Composable (Task) -> Unit = { task ->
+    // [group] = the place's tasks in order, for Move up/down (By room only).
+    val cardFor: @Composable (Task, List<Task>?) -> Unit = { task, group ->
+        val i = group?.indexOfFirst { it.id == task.id } ?: -1
         TaskCard(
             task,
+            showPlace = !byRoom,
+            // Ordering is the household's list: "Edit others'" on Tasks, as on the web.
+            onMove = if (group != null && group.size > 1 && access.editOthers) {
+                { direction -> vm.reorder(moveId(group.map { it.id }, task.id, direction)) }
+            } else {
+                null
+            },
+            canMoveUp = i > 0,
+            canMoveDown = group != null && i in 0 until group.size - 1,
             busy = task.id in state.busy,
             expanded = task.id in expandedIds,
             history = state.history[task.id],
@@ -302,18 +359,60 @@ fun TasksScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    if (onOpenPoints != null) {
+                    if (onOpenPoints != null || places != null) {
                         item {
-                            TextButton(onClick = onOpenPoints) {
-                                Icon(Icons.Filled.Star, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Text("Points", modifier = Modifier.padding(start = 6.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                if (onOpenPoints != null) {
+                                    TextButton(onClick = onOpenPoints) {
+                                        Icon(Icons.Filled.Star, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Text("Points", modifier = Modifier.padding(start = 6.dp))
+                                    }
+                                }
+                                Spacer(Modifier.weight(1f))
+                                // Rooms are set up on the website (Settings → Rooms & floors).
+                                if (places != null) {
+                                    FilterChip(selected = !byRoom, onClick = { vm.byRoom.value = false }, label = { Text("Due date") })
+                                    Spacer(Modifier.size(8.dp))
+                                    FilterChip(selected = byRoom, onClick = { vm.byRoom.value = true }, label = { Text("By room") })
+                                }
                             }
                         }
                     }
                     if (open.isEmpty()) {
                         item { Text("Nothing to do. Nice.", modifier = Modifier.padding(16.dp)) }
                     }
-                    items(open, key = { it.id }) { cardFor(it) }
+                    if (byRoom && places != null) {
+                        val groups = groupByPlace(open, places)
+                        fun LazyListScope.placeTasks(list: List<Task>) =
+                            items(list, key = { it.id }) { cardFor(it, list) }
+                        groups.floors.forEach { g ->
+                            val key = "floor:${g.floor?.id ?: "none"}"
+                            item(key = key) {
+                                PlaceHeading(g.floor?.name ?: "Other rooms", g.tasks.size + g.rooms.sumOf { it.tasks.size }, floor = true,
+                                    open = key !in collapsed, onToggle = { vm.toggleCollapsed(key) })
+                            }
+                            if (key !in collapsed) {
+                                placeTasks(g.tasks)
+                                g.rooms.forEach { r ->
+                                    val roomKey = "room:${r.room.id}"
+                                    item(key = roomKey) {
+                                        PlaceHeading(r.room.name, r.tasks.size, floor = false,
+                                            open = roomKey !in collapsed, onToggle = { vm.toggleCollapsed(roomKey) })
+                                    }
+                                    if (roomKey !in collapsed) placeTasks(r.tasks)
+                                }
+                            }
+                        }
+                        if (groups.house.isNotEmpty()) {
+                            item(key = "house") {
+                                PlaceHeading("Whole house", groups.house.size, floor = true,
+                                    open = "house" !in collapsed, onToggle = { vm.toggleCollapsed("house") })
+                            }
+                            if ("house" !in collapsed) placeTasks(groups.house)
+                        }
+                    } else {
+                        items(open, key = { it.id }) { cardFor(it, null) }
+                    }
                     if (doneThisCycle.isNotEmpty()) {
                         item {
                             Text(
@@ -323,7 +422,7 @@ fun TasksScreen(
                                 modifier = Modifier.padding(top = 12.dp, start = 4.dp),
                             )
                         }
-                        items(doneThisCycle, key = { it.id }) { cardFor(it) }
+                        items(doneThisCycle, key = { it.id }) { cardFor(it, null) }
                     }
                 }
             }
@@ -341,6 +440,7 @@ fun TasksScreen(
             task = task,
             members = state.members,
             categories = state.categories,
+            places = state.places,
             saving = state.saving,
             onDismiss = vm::cancelEdit,
             canSave = access.canEdit(task.createdById, userId),
@@ -354,6 +454,7 @@ fun TasksScreen(
             task = null,
             members = state.members,
             categories = state.categories,
+            places = state.places,
             saving = state.saving,
             onDismiss = vm::cancelEdit,
             canSave = true,
@@ -365,9 +466,40 @@ fun TasksScreen(
     }
 }
 
+/** A floor or room heading in the "By room" list; tap to fold it away. */
+@Composable
+private fun PlaceHeading(title: String, count: Int, floor: Boolean, open: Boolean, onToggle: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(start = if (floor) 4.dp else 16.dp, top = if (floor) 12.dp else 4.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.KeyboardArrowDown,
+            contentDescription = if (open) "Fold" else "Unfold",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp).rotate(if (open) 0f else -90f),
+        )
+        Text(
+            "$title ($count)",
+            style = if (floor) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelLarge,
+            color = if (floor) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+    }
+}
+
 @Composable
 private fun TaskCard(
     task: Task,
+    /** Off under a room heading, which already says where. */
+    showPlace: Boolean,
+    /** Up (-1) / down (+1) within its place; null when it can't be reordered. */
+    onMove: ((Int) -> Unit)?,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
     busy: Boolean,
     expanded: Boolean,
     history: List<TaskCompletion>?,
@@ -396,6 +528,7 @@ private fun TaskCard(
                     task.assignee?.name?.let { if (task.rotation.isNotEmpty()) "$it's turn" else it },
                     task.nextAssignee?.name?.let { "next $it" },
                     task.subtasks.takeIf { it.isNotEmpty() }?.let { s -> "${s.count { it.done }}/${s.size} steps" },
+                    task.placeLabel()?.takeIf { showPlace },
                     task.category?.name,
                 )
                 if (meta.isNotEmpty()) {
@@ -462,10 +595,20 @@ private fun TaskCard(
                     }
                 }
                 HistoryList(history, onUndo)
-                if (onEdit != null) {
-                    TextButton(onClick = onEdit, modifier = Modifier.align(Alignment.End)) {
-                        Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("Edit", modifier = Modifier.padding(start = 6.dp))
+                Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+                    if (onMove != null) {
+                        IconButton(onClick = { onMove(-1) }, enabled = canMoveUp) {
+                            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Move up")
+                        }
+                        IconButton(onClick = { onMove(1) }, enabled = canMoveDown) {
+                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Move down")
+                        }
+                    }
+                    if (onEdit != null) {
+                        TextButton(onClick = onEdit) {
+                            Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text("Edit", modifier = Modifier.padding(start = 6.dp))
+                        }
                     }
                 }
             }

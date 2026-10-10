@@ -44,6 +44,8 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.eosoclub.ourhome.data.CategoryRef
+import com.eosoclub.ourhome.data.Places
+import com.eosoclub.ourhome.data.placeChoice
 import com.eosoclub.ourhome.data.DEFAULT_MINUTES_PER_POINT
 import com.eosoclub.ourhome.data.EditResult
 import com.eosoclub.ourhome.data.Member
@@ -115,6 +117,8 @@ internal fun TaskEditor(
     task: Task?,
     members: List<Member>?,
     categories: List<CategoryRef>?,
+    /** Floors and rooms for the Location picker; null while loading (or unreadable). */
+    places: Places?,
     saving: Boolean,
     /** False when the user may only delete this task, not change it. */
     canSave: Boolean,
@@ -135,6 +139,7 @@ internal fun TaskEditor(
     var dueDate by remember { mutableStateOf(originalDue?.toLocalDate()) }
     var dueTime by remember { mutableStateOf(originalDue?.toLocalTime()) }
     var categoryId by remember { mutableStateOf(task?.category?.id.orEmpty()) }
+    var place by remember { mutableStateOf(task?.placeChoice().orEmpty()) }
     var assigneeId by remember { mutableStateOf(task?.assignee?.id.orEmpty()) }
     // Rotating assignees in turn order (web lib/taskRotation.ts).
     var rotation by remember { mutableStateOf(task?.rotation?.map { it.id }.orEmpty()) }
@@ -197,6 +202,8 @@ internal fun TaskEditor(
                         points = if (base.pointsFollowTime) null else base.basePointsCenti?.asPoints(),
                         pointsFollowTime = base.pointsFollowTime,
                         categoryId = categoryId.ifEmpty { null },
+                        // Without the rooms loaded the picker wasn't shown: keep the place.
+                        place = place.takeIf { places?.isEmpty == false },
                         assigneeId = currentTurn.ifEmpty { null },
                         rotationUserIds = if (rotating) rotation else emptyList(),
                         recurrence = if (recurring) {
@@ -273,6 +280,10 @@ internal fun TaskEditor(
             categoryId,
             onSelect = { categoryId = it },
         )
+        // Rooms are set up on the website (Settings → Rooms & floors).
+        if (places?.isEmpty == false) {
+            DropdownField("Location", places.choices(), place, onSelect = { place = it })
+        }
 
         if (recurring) {
             Card(

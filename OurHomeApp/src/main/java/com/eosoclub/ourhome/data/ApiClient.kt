@@ -225,6 +225,11 @@ class ApiClient(
         put("points", input.points)
         put("pointsFollowTime", input.pointsFollowTime)
         put("categoryId", input.categoryId)
+        // Only when the editor knew the rooms; absent = the place is unchanged.
+        input.place?.let { place ->
+            put("roomId", place.removePrefix("room:").takeIf { place.startsWith("room:") })
+            put("floorId", place.removePrefix("floor:").takeIf { place.startsWith("floor:") })
+        }
         put("assigneeId", input.assigneeId)
         // Always sent: [] clears a rotation (an older server ignores the key).
         putJsonArray("rotationUserIds") { input.rotationUserIds.forEach { add(it) } }
@@ -348,6 +353,13 @@ class ApiClient(
                 },
             ),
         )
+
+    /** Floors and rooms in the household's order; readable by any member. */
+    suspend fun places(): Places = call(get("/api/places"), Places.serializer())
+
+    /** Hand-set order of the tasks in one place (needs "Edit others'" on Tasks). */
+    suspend fun reorderTasks(taskIds: List<String>) =
+        callUnit(post("/api/tasks/reorder", buildJsonObject { putJsonArray("taskIds") { taskIds.forEach { add(it) } } }))
 
     /** Categories of one kind ("task", …); readable by any member. */
     suspend fun categories(kind: String): List<CategoryRef> =
