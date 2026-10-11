@@ -3,7 +3,7 @@ package com.eosoclub.ourhome.data
 /**
  * The bell notifications the web's reminder sweep generates (its
  * `MANAGED_TYPES`): overdue tasks, low or soon-depleted stock, and bills
- * coming due — plus "task_ready" (a task became this user's to do: assigned,
+ * coming due - plus "task_ready" (a task became this user's to do: assigned,
  * their turn in a rotation, or a new cycle). The server decides who sees which (the people tied to the
  * task/bill/item plus that page's managers) and tracks read state per person,
  * so the app alerts on exactly what the user's bell returns.

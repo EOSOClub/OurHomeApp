@@ -184,7 +184,7 @@ fun PointsScreen(
                                 Text(pts(m.points), fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(0.6f))
                                 Text(pts(m.perDay), modifier = Modifier.weight(0.6f))
                                 Text(
-                                    if (m.queued > 0) pts(m.queued) else "—",
+                                    if (m.queued > 0) pts(m.queued) else "-",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(0.6f),
                                 )
@@ -202,7 +202,7 @@ fun PointsScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "${a.userName ?: "Former member"} · ${a.taskTitle}" + (a.stepTitle?.let { " — $it" } ?: ""),
+                        "${a.userName ?: "Former member"} · ${a.taskTitle}" + (a.stepTitle?.let { " - $it" } ?: ""),
                         textDecoration = if (a.voided) TextDecoration.LineThrough else null,
                         style = MaterialTheme.typography.bodyMedium,
                     )

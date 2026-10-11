@@ -45,7 +45,7 @@ fun BugReportDialog(
             scope.launch {
                 try {
                     api.submitBugReport(title.trim(), description.trim(), "App: $where", BuildConfig.VERSION_NAME)
-                    showMessage("Thanks — your bug report was sent.")
+                    showMessage("Thanks - your bug report was sent.")
                     onDismiss()
                 } catch (e: Exception) {
                     showMessage(e.message ?: "Couldn't send your bug report")

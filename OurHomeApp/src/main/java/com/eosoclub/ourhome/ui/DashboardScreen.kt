@@ -167,8 +167,8 @@ private fun doneTodayText(done: DoneToday): String {
     val tasks = if (done.total == 1) "1 task" else "${done.total} tasks"
     val mine = when {
         done.mine == 0 -> ""
-        done.mine == done.total -> " — all by you"
-        else -> " — ${done.mine} by you"
+        done.mine == done.total -> " - all by you"
+        else -> " - ${done.mine} by you"
     }
     return "🎉 $tasks done today$mine."
 }

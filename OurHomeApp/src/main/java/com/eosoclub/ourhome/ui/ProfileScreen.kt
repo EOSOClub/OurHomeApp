@@ -180,7 +180,7 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
             runCatching { api.clearPasswordFlag() }
             session.clearMustChangePassword()
             state.update { it.copy(passwordFormKey = it.passwordFormKey + 1) }
-            _messages.send(if (signOutOthers) "Password changed — other devices were signed out" else "Password changed")
+            _messages.send(if (signOutOthers) "Password changed - other devices were signed out" else "Password changed")
         } catch (e: Exception) {
             _messages.send(e.message ?: "Couldn't change your password")
         } finally {
@@ -412,7 +412,7 @@ private fun AboutMeCard(
             Column(Modifier.weight(1f)) {
                 DropdownField(
                     "Birthday month",
-                    listOf("" to "—") + Month.entries.map {
+                    listOf("" to "-") + Month.entries.map {
                         it.value.toString() to it.getDisplayName(TextStyle.FULL, Locale.getDefault())
                     },
                     month?.toString().orEmpty(),
@@ -513,7 +513,7 @@ private fun EditProfileCard(
             value = username,
             onValueChange = { username = it },
             label = { Text("Username") },
-            supportingText = { Text(if (usernameValid) "You sign in with this." else "3–30 letters, numbers, or . _ -") },
+            supportingText = { Text(if (usernameValid) "You sign in with this." else "3-30 letters, numbers, or . _ -") },
             singleLine = true,
             isError = !usernameValid,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),

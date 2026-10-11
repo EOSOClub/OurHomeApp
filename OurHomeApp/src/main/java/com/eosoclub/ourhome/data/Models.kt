@@ -436,7 +436,7 @@ data class DashboardTask(
     val dueDate: String? = null,
     val priority: String = "medium",
     val assignee: UserRef? = null,
-    /** "Upstairs · Bedroom" — its room/floor; null = whole house or an older server. */
+    /** "Upstairs · Bedroom" - its room/floor; null = whole house or an older server. */
     val place: String? = null,
 )
 
@@ -477,7 +477,7 @@ data class ActivityPage(
 )
 
 /**
- * A household request (RequestDTO) — media or maintenance. Named to avoid
+ * A household request (RequestDTO) - media or maintenance. Named to avoid
  * clashing with OkHttp's Request.
  */
 @Serializable
@@ -494,7 +494,7 @@ data class HouseholdRequest(
     val assignee: UserRef? = null,
     /** "pending" | "accepted" | "completed" for maintenance; null for media. */
     val status: String? = null,
-    /** Done-by date the assignee committed to — the deadline. */
+    /** Done-by date the assignee committed to - the deadline. */
     val dueAt: String? = null,
     val completedAt: String? = null,
     val requester: UserRef,

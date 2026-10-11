@@ -37,7 +37,7 @@ class ScanHistoryViewModel(private val api: ApiClient) : ViewModel() {
     }
 }
 
-/** What was scanned, when, and by whom — from this app and from Home Assistant. */
+/** What was scanned, when, and by whom - from this app and from Home Assistant. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScanHistoryScreen(api: ApiClient, modifier: Modifier = Modifier) {

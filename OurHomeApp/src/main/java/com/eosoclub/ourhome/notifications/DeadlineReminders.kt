@@ -82,10 +82,10 @@ object DeadlineReminders {
         val date = due.format(shortDate)
         val title = request.title
         return when {
-            forRequester -> "$title — ${request.assignee?.name ?: "They"} missed the $date done-by date"
-            state == DeadlineState.DueTomorrow -> "$title — due tomorrow ($date)"
-            state == DeadlineState.DueToday -> "$title — due today"
-            else -> "$title — overdue since $date"
+            forRequester -> "$title - ${request.assignee?.name ?: "They"} missed the $date done-by date"
+            state == DeadlineState.DueTomorrow -> "$title - due tomorrow ($date)"
+            state == DeadlineState.DueToday -> "$title - due today"
+            else -> "$title - overdue since $date"
         }
     }
 

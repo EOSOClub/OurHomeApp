@@ -814,7 +814,7 @@ private fun HomeAssistantCard(
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Copy this token now — it won't be shown again:",
+                        "Copy this token now - it won't be shown again:",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
@@ -899,7 +899,7 @@ private fun NfcTagsCard(tags: List<NfcTag>, items: List<InventoryItem>, places: 
     var tagId by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
     var itemId by remember(items) { mutableStateOf(items.firstOrNull()?.id ?: "") }
-    // "room:<id>" — the room a location tag opens.
+    // "room:<id>" - the room a location tag opens.
     var room by remember { mutableStateOf("") }
     var represents by remember { mutableStateOf("consumable") }
     var deleting by remember { mutableStateOf<NfcTag?>(null) }
@@ -1003,8 +1003,8 @@ private fun ExportCard(busy: Boolean, vm: SettingsViewModel) {
     }
     SectionCard(
         "Export household data",
-        "A copy of everything your household has stored here — members, tasks and points, bills, shopping, stock, " +
-            "requests, calendar and activity — as one JSON file. Passwords and connection tokens are never included.",
+        "A copy of everything your household has stored here - members, tasks and points, bills, shopping, stock, " +
+            "requests, calendar and activity - as one JSON file. Passwords and connection tokens are never included.",
     ) {
         OutlinedButton(onClick = { saveAs.launch("ourhome-export-${LocalDate.now()}.json") }, enabled = !busy) {
             Text("Download export")

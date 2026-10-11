@@ -179,7 +179,7 @@ fun HomeScreen(
         accessVm.refresh()
     }
 
-    // Waiting for my acceptance, plus my own maintenance due today or overdue —
+    // Waiting for my acceptance, plus my own maintenance due today or overdue -
     // the tab badge counts them and the dashboard's "Needs you" lists them.
     val waitingRequests = awaitingAcceptanceBy(requestsState.requests, user.id, canApproveMedia(access, user.role))
         .map { WaitingRequest(it, if (it.category == "media") "Mark added" else "Accept", urgent = false) } +
@@ -222,7 +222,7 @@ fun HomeScreen(
     // Android 13+ needs runtime consent for the request reminders.
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (!granted) showMessage("Notifications are off — you won't get request reminders.")
+        if (!granted) showMessage("Notifications are off - you won't get request reminders.")
     }
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= 33 && !RequestReminders.canNotify(context)) {

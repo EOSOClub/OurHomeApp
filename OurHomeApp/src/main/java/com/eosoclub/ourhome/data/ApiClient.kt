@@ -191,7 +191,7 @@ class ApiClient(
 
     /**
      * The checklist as the editor left it (TaskPoints.kt values included): on
-     * update it replaces the task's checklist — items with an id are kept,
+     * update it replaces the task's checklist - items with an id are kept,
      * new ones created, missing ones deleted, order = list order.
      */
     private fun JsonObjectBuilder.putSteps(steps: List<StepInput>) {

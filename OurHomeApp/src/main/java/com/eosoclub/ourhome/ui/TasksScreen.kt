@@ -160,7 +160,7 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
             val pts = if (showPoints && task.points > 0) " ·${formatPoints(task.points.centi())} pts" else ""
             val text = when {
                 updated.doneThisCycle -> "Done for this cycle$pts"
-                task.recurrence != null && updated.status != "completed" -> "Done — next one scheduled$pts"
+                task.recurrence != null && updated.status != "completed" -> "Done - next one scheduled$pts"
                 else -> "Completed “${task.title}”$pts"
             }
             val completionId = updated.completionId

@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
 
 /**
  * The notification for a tag set to "Quick notification": scanning it (app
- * closed) shows the item with −1 / type an amount / add to shopping list —
+ * closed) shows the item with −1 / type an amount / add to shopping list -
  * no app opens. Every action requires the device to be unlocked
  * (setAuthenticationRequired), and the lock screen shows no item details.
  */
@@ -81,7 +81,7 @@ object QuickScanNotifier {
     }
 
     private fun base(context: Context, tagId: String): NotificationCompat.Builder {
-        // Tapping opens the scan sheet (PIN first if locked — no lock bypass).
+        // Tapping opens the scan sheet (PIN first if locked - no lock bypass).
         val open = PendingIntent.getActivity(
             context,
             notificationId(tagId),
@@ -149,7 +149,7 @@ class QuickScanReceiver : BroadcastReceiver() {
                         if (amount == null) {
                             QuickScanNotifier.showResult(
                                 context, tagId, itemName,
-                                "Couldn't read “${typed.orEmpty()}” — type e.g. -1 (used) or 3 (restocked).",
+                                "Couldn't read “${typed.orEmpty()}” - type e.g. -1 (used) or 3 (restocked).",
                                 offerAmount = true,
                             )
                         } else {
@@ -166,7 +166,7 @@ class QuickScanReceiver : BroadcastReceiver() {
                 }
             } catch (e: Exception) {
                 Log.w("QuickScan", "action ${intent.action} failed for $tagId", e)
-                QuickScanNotifier.showResult(context, tagId, itemName, e.message ?: "That didn't work — try again.")
+                QuickScanNotifier.showResult(context, tagId, itemName, e.message ?: "That didn't work - try again.")
             } finally {
                 pending.finish()
             }

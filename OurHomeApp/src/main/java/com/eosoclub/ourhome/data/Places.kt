@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 
 // Floors and rooms: where tasks are done and stock is kept, and the order
 // they're shown in. Mirror of the web's lib/places.ts (+ PlacesTest, same
-// cases as places.test.ts) — change both together. Set up in Settings → Rooms
+// cases as places.test.ts) - change both together. Set up in Settings → Rooms
 // & floors (here or on the website), shown while Tasks or Inventory is on.
 
 @Serializable
@@ -26,7 +26,7 @@ data class Floor(val id: String, val name: String, val position: Int = 0)
 @Serializable
 data class Room(val id: String, val name: String, val floorId: String? = null, val position: Int = 0)
 
-/** GET /api/places — each list already in the household's order. */
+/** GET /api/places - each list already in the household's order. */
 @Serializable
 data class Places(val floors: List<Floor> = emptyList(), val rooms: List<Room> = emptyList()) {
     val isEmpty: Boolean get() = floors.isEmpty() && rooms.isEmpty()

@@ -132,10 +132,10 @@ private object TagWriter {
                 formatable.use { it.format(message) }
             }
             Log.i("TagWriter", "wrote ${ourTagUri(tagId)}")
-            WriteResult(tagId, ok = true, message = "Tag written — it now opens Our Home.")
+            WriteResult(tagId, ok = true, message = "Tag written - it now opens Our Home.")
         } catch (e: Exception) {
             Log.w("TagWriter", "write failed", e)
-            fail(tagId, "Couldn't write — hold the tag still against the phone and try again.")
+            fail(tagId, "Couldn't write - hold the tag still against the phone and try again.")
         }
     }
 

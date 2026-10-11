@@ -21,7 +21,7 @@ val HouseholdRequest.mediaStatus: String get() = if (isOpen) "pending" else "com
 
 /**
  * Whether the user marks media requests added: the Requests `approve` switch.
- * The head always may — a server from before the switch existed doesn't send
+ * The head always may - a server from before the switch existed doesn't send
  * it, but handled media by role (head only).
  */
 fun canApproveMedia(access: AccessMatrix, role: String?): Boolean =
@@ -82,9 +82,9 @@ fun deadlineAlerts(
     }
 }
 
-/** One-line summary, e.g. "TV: Severance (2025) · S2 — from Jamison". */
+/** One-line summary, e.g. "TV: Severance (2025) · S2 - from Jamison". */
 fun HouseholdRequest.summary(): String {
-    val from = requester.name?.let { " — from $it" }.orEmpty()
+    val from = requester.name?.let { " - from $it" }.orEmpty()
     return when (category) {
         "media" -> {
             val kind = if (mediaType == "tv") "TV" else "Movie"

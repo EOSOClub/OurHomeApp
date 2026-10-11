@@ -81,7 +81,7 @@ data class StepEdit(val key: Int, val id: String?, val title: String, val resetD
 
 data class TaskEdit(val input: TaskInput, val steps: List<StepInput>)
 
-/** Parsed reset cadence: null when blank, 0 when invalid (1–365 like the web). */
+/** Parsed reset cadence: null when blank, 0 when invalid (1-365 like the web). */
 internal fun StepEdit.resetIntervalDays(): Int? =
     resetDays.trim().takeIf { it.isNotEmpty() }?.let { s -> s.toIntOrNull()?.takeIf { it in 1..365 } ?: 0 }
 

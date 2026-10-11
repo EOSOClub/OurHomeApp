@@ -10,7 +10,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
  * Holds the signed-in user's screen ViewModels. Screens use `viewModel {}`,
- * which would otherwise be scoped to the activity and survive a sign-out — the
+ * which would otherwise be scoped to the activity and survive a sign-out - the
  * next account on a shared phone would start from the last one's data and
  * permission grid. Kept in an activity ViewModel so a rotation still keeps it.
  */

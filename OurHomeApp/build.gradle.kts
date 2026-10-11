@@ -1,5 +1,5 @@
 // AGP 9 compiles Kotlin itself ("built-in Kotlin"), so there is no
-// org.jetbrains.kotlin.android plugin here — only the compiler plugins.
+// org.jetbrains.kotlin.android plugin here - only the compiler plugins.
 import java.net.URI
 import org.yaml.snakeyaml.Yaml
 
@@ -45,7 +45,7 @@ require(Regex("""[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+""").matches(appId)) {
 }
 
 // Plain http:// is blocked by Android unless allowed per host. Only the built-in
-// server (settings.yml server.url) is allowed, and only when it is http:// —
+// server (settings.yml server.url) is allowed, and only when it is http:// -
 // e.g. a home-network-only install at http://192.168.1.10:3000. Written into a
 // generated res/xml/network_security_config.xml, which the manifest points at.
 val httpHost = setting("server", "url").let { url ->

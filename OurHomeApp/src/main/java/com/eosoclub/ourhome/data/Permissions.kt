@@ -3,7 +3,7 @@ package com.eosoclub.ourhome.data
 import kotlinx.serialization.Serializable
 
 /**
- * Fixed role abilities — mirror of the web app's role matrix (the OurHome web
+ * Fixed role abilities - mirror of the web app's role matrix (the OurHome web
  * repo, src/lib/permissions.ts `PERMISSIONS`). Used only to hide controls; the
  * server enforces the real rules. See that repo's docs/permissions.md.
  *
@@ -24,7 +24,7 @@ enum class Permission {
     RequestsWrite,
     // File a bug report (everyone).
     BugsReport,
-    // Receive bug reports — bell + phone notification (head-only).
+    // Receive bug reports - bell + phone notification (head-only).
     BugsManage,
 }
 
@@ -69,7 +69,7 @@ data class PageAccess(
     fun canDelete(ownerId: String?, userId: String): Boolean =
         if (ownerId != null && ownerId == userId) deleteOwn else deleteOthers
 
-    /** Any switch on — enough for everyday actions (tick bought, ± stock, scans). */
+    /** Any switch on - enough for everyday actions (tick bought, ± stock, scans). */
     val any: Boolean get() = create || editOwn || deleteOwn || editOthers || deleteOthers || approve
 
     /** Clearing bought items removes only those you may delete. */
@@ -121,7 +121,7 @@ data class MyAccess(
 /**
  * The web's built-in role defaults (BUILTIN_ROLE_ACCESS). Shown until the real
  * grid loads, and used as-is against a server too old to have
- * /api/permissions/me — there they match what that server enforces.
+ * /api/permissions/me - there they match what that server enforces.
  */
 fun defaultAccess(role: String?): AccessMatrix = when (role) {
     "head" -> AccessMatrix(

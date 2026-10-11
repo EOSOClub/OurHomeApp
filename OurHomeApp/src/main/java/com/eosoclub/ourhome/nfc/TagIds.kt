@@ -3,7 +3,7 @@ package com.eosoclub.ourhome.nfc
 // How a physical tag maps to the website's `tagId` (pure, so it's unit-tested).
 //
 // - Tags written by this app hold "ourhome://tag/<id>" (+ an Android
-//   Application Record), so scanning one always opens Our Home — no chooser.
+//   Application Record), so scanning one always opens Our Home - no chooser.
 // - Tags written by the Home Assistant companion app hold
 //   "https://www.home-assistant.io/tag/<id>". Reading that <id> keeps every
 //   tag already mapped for HA working; rewriting keeps the same id.
@@ -12,7 +12,7 @@ package com.eosoclub.ourhome.nfc
 
 const val OUR_TAG_SCHEME = "ourhome"
 
-/** Where a scanned tag's id came from — decides whether to offer rewriting. */
+/** Where a scanned tag's id came from - decides whether to offer rewriting. */
 enum class TagFormat { OurHome, HomeAssistant, Uid }
 
 data class TagRef(val tagId: String, val format: TagFormat)

@@ -103,55 +103,55 @@ Web paths are under `OurHomeWeb/src/`; app paths are under
 - **Where:** `lib/format.ts` `isOverdue` compares with `Date.now()`, but picked dates are stored at 12:00.
 - **What:** from noon, a bill moves to the Overdue section with a red badge while its text still says "Due today". Requests do this correctly with `startOfToday()`.
 
-### W8. Web dashboard dates use the server's timezone (UTC) — reported
-- **Where:** `app/(app)/dashboard/page.tsx` (~lines 190, 312–333). This is a server component calling `toLocaleString` without `timeZone`, and the container has no `TZ` set.
+### W8. Web dashboard dates use the server's timezone (UTC) - reported
+- **Where:** `app/(app)/dashboard/page.tsx` (~lines 190, 312-333). This is a server component calling `toLocaleString` without `timeZone`, and the container has no `TZ` set.
 - **What:**
   - A 7 pm Central event shows as 12:00 AM the next day.
   - After 7 pm, "Due today" and "Overdue" labels are off by a day.
 - **Fix:** `data.timezone` is already available there.
 - **Related:** client components that call `formatDueDate` during server rendering can hit hydration mismatches in the evening (medium confidence).
 
-### W9. An editor can reopen a completed task and get paid twice — reported
+### W9. An editor can reopen a completed task and get paid twice - reported
 - **Where:** `updateTask` accepts `status` freely.
 - **What:** complete a task (paid), set it back to pending, then complete it again. All steps are still ticked, so it pays again.
 
-### W10. Turning cycles off on a "done this cycle" task leaves it completed forever — reported (consistent with what I read)
+### W10. Turning cycles off on a "done this cycle" task leaves it completed forever - reported (consistent with what I read)
 - **Where:** `updateTask` clears the cycle fields but not `status: 'completed'`, so the task never reopens.
 
-### W11. Undo can overwrite edits made after the completion — reported
+### W11. Undo can overwrite edits made after the completion - reported
 - **What:** if the head changes the due date or recurrence within 10 minutes of someone completing, and that person then presses Undo, the snapshot puts the old values back.
 - **Note:** this also covers the new rotation assignee, which is restored the same way.
 
-### W12. Weekday recurrence uses UTC days and ignores the rule's timezone — reported
+### W12. Weekday recurrence uses UTC days and ignores the rule's timezone - reported
 - **Where:** `recurrenceService.ts` `nextByWeekday` uses `getUTCDay()`.
 - **What:** a Monday 19:00 Central task is Tuesday in UTC. Daily rules step a fixed 24 hours, so they drift by an hour across DST.
 
-### W13. Recurring calendar events appear before their start, and "every N weeks" acts as weekly — reported
+### W13. Recurring calendar events appear before their start, and "every N weeks" acts as weekly - reported
 - **Where:** `calendarService.ts` with `nextByWeekday` / `nextByMonthday`, which ignore `anchorDate` and `interval`.
 
-### W14. Stock adjustments can be lost under concurrency — reported
+### W14. Stock adjustments can be lost under concurrency - reported
 - **Where:** `inventoryService.ts` adjust does read-modify-write with no atomic increment.
 - **What:** two phones scanning at once, or Home Assistant plus the app, can lose one ±1.
 
-### W15. Forced password change can be skipped — reported
+### W15. Forced password change can be skipped - reported
 - **Where:** `POST /api/profile/clear-password-flag` clears the flag without proof the password changed.
 - **What:** a member given a temporary password can keep it.
 
-### W16. Editing a bill's amount doesn't recompute paid/unpaid — reported
+### W16. Editing a bill's amount doesn't recompute paid/unpaid - reported
 - **What:** a $100 bill paid in full, then edited to $120, stays "paid".
 
-### W17. Step reset race can double-pay or wipe a fresh tick — reported
+### W17. Step reset race can double-pay or wipe a fresh tick - reported
 - **Where:** `resetDueSubtasks` reads, then runs `updateMany` without re-checking `doneAt`.
 - **Fix:** add `doneAt` to the update's where clause.
 
-### W18. Unticking and re-ticking a step that was paid at once loses its points — reported
+### W18. Unticking and re-ticking a step that was paid at once loses its points - reported
 - **Where:** `setStepDone` voids the award and clears `autoResetAt`, so the re-tick pays nothing.
 
-### A3. App: a slow NFC lookup can reopen the scan sheet or show the wrong tag — reported
+### A3. App: a slow NFC lookup can reopen the scan sheet or show the wrong tag - reported
 - **Where:** `ui/ScanSheet.kt` `open()` doesn't check that the result is for the tag still being shown.
 - **What:** scanning A then B can show A's item, and ±1 then changes A.
 
-### A4. App: network calls run inside `MutableStateFlow.update {}` — reported
+### A4. App: network calls run inside `MutableStateFlow.update {}` - reported
 - **Where:** Tasks, Inventory, Requests, Shopping, Bills, Dashboard, Profile and Scan history.
 - **What:** `update` re-runs its lambda when state changes, so a refresh re-sends the GET each time you tick something during it. Cancellation is also caught as an error.
 
@@ -190,6 +190,6 @@ Web paths are under `OurHomeWeb/src/`; app paths are under
 1. Fix W1 and W2 together (same root cause, and W1 pays points twice).
 2. Then W3.
 3. Then A1 and A2 (shared phone).
-4. Then W5–W7.
+4. Then W5-W7.
 
 Most of the rest is small.

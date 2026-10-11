@@ -83,7 +83,7 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
 
     data class UiState(
         val phase: Phase = Phase.Closed,
-        /** How the scanned tag is currently written — decides the "Write tag" offer. */
+        /** How the scanned tag is currently written - decides the "Write tag" offer. */
         val format: TagFormat = TagFormat.OurHome,
         val busy: Boolean = false,
         val error: String? = null,
@@ -128,7 +128,7 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
 
     /**
      * Looks up a scanned tag. A location tag with a room goes straight to that
-     * room (no sheet) unless [showSettings] — "Change room" after it opened.
+     * room (no sheet) unless [showSettings] - "Change room" after it opened.
      */
     fun open(ref: TagRef, showSettings: Boolean = false) {
         NfcScans.cancelWrite()
@@ -452,7 +452,7 @@ private fun LocationContent(lookup: NfcLookup, canWrite: Boolean, state: ScanVie
     TextButton(onClick = { vm.startSetup() }, enabled = !state.busy) { Text("Use this tag for an item instead") }
 }
 
-/** "When this tag is scanned with the app closed" — open the app, or a quick notification. */
+/** "When this tag is scanned with the app closed" - open the app, or a quick notification. */
 @Composable
 private fun ScanActionChooser(
     action: String,
@@ -468,7 +468,7 @@ private fun ScanActionChooser(
     }
     Text(
         if (action == NOTIFY) {
-            "No app opens — you get a notification with −1, type an amount, or add to the shopping list. Each button asks you to unlock first."
+            "No app opens - you get a notification with −1, type an amount, or add to the shopping list. Each button asks you to unlock first."
         } else {
             "Opens this screen."
         },
@@ -509,7 +509,7 @@ private fun WriteTagCard(state: ScanViewModel.UiState, vm: ScanViewModel) {
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        "Write it so scanning always opens Our Home — no app chooser. It keeps the same id, so what it's linked to stays.",
+                        "Write it so scanning always opens Our Home - no app chooser. It keeps the same id, so what it's linked to stays.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     state.writeMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -543,7 +543,7 @@ private fun SetupContent(lookup: NfcLookup, state: ScanViewModel.UiState, vm: Sc
     val places = state.places?.takeUnless { it.isEmpty }
     val isSetUp = lookup.item != null || lookup.tag?.isLocation == true
     Text(
-        if (isSetUp) "Change what this tag is for" else "New tag — what is it for?",
+        if (isSetUp) "Change what this tag is for" else "New tag - what is it for?",
         style = MaterialTheme.typography.titleLarge,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

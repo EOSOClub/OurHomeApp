@@ -179,12 +179,12 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
     fun startAccept(r: HouseholdRequest) = state.update { it.copy(accepting = r) }
     fun cancelAccept() = state.update { it.copy(accepting = null) }
 
-    /** Assignee commits to a done-by date — the request's deadline. */
+    /** Assignee commits to a done-by date - the request's deadline. */
     fun accept(r: HouseholdRequest, date: LocalDate) = runBusy(r) {
         val updated = api.acceptRequest(r.id, dueInstant(date, null)!!)
         replace(updated)
         state.update { it.copy(accepting = null) }
-        _messages.send("Done by ${formatDate(updated.dueAt!!)} — got it")
+        _messages.send("Done by ${formatDate(updated.dueAt!!)} - got it")
     }
 
     /** Maintenance: the assignee marks it done. Media: an approver marks it added (one step). */

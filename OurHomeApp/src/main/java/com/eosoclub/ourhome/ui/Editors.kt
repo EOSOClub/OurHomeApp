@@ -321,7 +321,7 @@ internal fun FieldLabel(text: String) {
 
 /**
  * The instant to store for a picked [date]. Matches the web forms: noon local
- * time, or — when editing — the original instant's time of day, so changing
+ * time, or - when editing - the original instant's time of day, so changing
  * only the date never shifts a time the user set on the web.
  */
 internal fun dueInstant(date: LocalDate?, original: String?): Instant? {

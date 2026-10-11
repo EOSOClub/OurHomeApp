@@ -93,7 +93,7 @@ internal fun formatQuantity(q: Double): String =
 
 /**
  * Loads into a screen's state: fetches first, then applies the result (or the
- * error) in one update. Never fetch inside `update {}` — it re-runs its lambda
+ * error) in one update. Never fetch inside `update {}` - it re-runs its lambda
  * whenever the state changed meanwhile (a tick during a refresh), re-sending
  * the request each time. Cancellation propagates instead of showing as an error.
  */

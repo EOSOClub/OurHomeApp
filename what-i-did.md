@@ -39,7 +39,7 @@ after you deploy.
      its tab. The app doesn't scroll to the exact task within the tab yet.
 
 ### Bugs fixed (details and anything left in `bugs.md`)
-Fixed W1–W3, W5–W20, W22–W31 and A1–A8.
+Fixed W1-W3, W5-W20, W22-W31 and A1-A8.
 
 Decisions I made along the way:
 - **Overdue rule:** a due date picked without a time (stored at 12:00) is due

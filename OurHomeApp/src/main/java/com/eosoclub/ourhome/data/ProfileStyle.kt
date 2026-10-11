@@ -47,7 +47,7 @@ object ProfileStyle {
         return month in 1..12 && day in 1..MONTH_DAYS[month - 1]
     }
 
-    /** month 1–12 + day → "MM-DD", or null when not a real day. */
+    /** month 1-12 + day → "MM-DD", or null when not a real day. */
     fun birthday(month: Int?, day: Int?): String? {
         if (month == null || day == null) return null
         val v = "%02d-%02d".format(month, day)

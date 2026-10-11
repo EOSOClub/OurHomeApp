@@ -15,7 +15,7 @@ import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.Notification
 
 /**
- * Phone alerts for new bug reports, for whoever receives them (bugs:manage —
+ * Phone alerts for new bug reports, for whoever receives them (bugs:manage -
  * the head). Runs inside the request-reminder poll, so it shares its hourly
  * cadence. The server addresses each report's bell notification to the head;
  * this alerts once per report (ids are remembered), not on every poll.
@@ -72,7 +72,7 @@ object BugReportAlerts {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setContentIntent(open)
             .setAutoCancel(true)
-            // Report text can be anything — keep it off the lock screen.
+            // Report text can be anything - keep it off the lock screen.
             .lockScreenSafe(context, CHANNEL_ID, "New bug report")
             .build()
         try {
