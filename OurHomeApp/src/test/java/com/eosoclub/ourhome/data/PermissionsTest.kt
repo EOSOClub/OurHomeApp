@@ -34,15 +34,24 @@ class PermissionsTest {
     @Test
     fun defaultsMatchTheWebsiteBuiltIns() {
         assertEquals(PageAccess.ALL, defaultAccess("head").tasks)
-        assertFalse(defaultAccess("member").tasks.any)
-        assertEquals(PageAccess.ALL, defaultAccess("member").shopping)
+        assertFalse(defaultAccess("adult").tasks.any)
+        assertEquals(PageAccess.ALL, defaultAccess("adult").shopping)
         assertFalse(defaultAccess("guest").shopping.any)
-        for (role in listOf("member", "teen", "child", "guest")) {
+        for (role in listOf("adult", "teen", "child", "guest")) {
             assertEquals(PageAccess.SUBMIT_ONLY, defaultAccess(role).requests)
         }
         assertEquals(PageAccess.SUBMIT_AND_APPROVE, defaultAccess("manager").requests)
         assertTrue(defaultAccess("head").requests.approve)
         assertFalse(defaultAccess("stranger").requests.any)
+    }
+
+    @Test
+    fun theOldMemberNameStillMeansAdult() {
+        // A server from before 2026-10-11 still sends "member".
+        assertEquals(defaultAccess("adult"), defaultAccess("member"))
+        for (p in Permission.entries) assertEquals(can("adult", p), can("member", p))
+        assertTrue(can("adult", Permission.TasksComplete))
+        assertFalse(can("adult", Permission.MembersManage))
     }
 
     @Test

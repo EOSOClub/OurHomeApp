@@ -80,7 +80,9 @@ private const val MIN_PASSWORD = 8
 private val ROLE_LABELS = mapOf(
     "head" to "Head of household",
     "manager" to "Manager",
-    "member" to "Member",
+    "adult" to "Adult",
+    // The adult role's name on servers from before 2026-10-11.
+    "member" to "Adult",
     "teen" to "Teen",
     "child" to "Child",
     "guest" to "Guest",

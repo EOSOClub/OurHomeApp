@@ -37,6 +37,8 @@ private val EVERYDAY = setOf(
 private val ROLE_PERMISSIONS: Map<String, Set<Permission>> = mapOf(
     "head" to Permission.entries.toSet(),
     "manager" to EVERYDAY + Permission.MembersManage + Permission.SettingsManage,
+    "adult" to EVERYDAY,
+    // The adult role's name on servers from before 2026-10-11.
     "member" to EVERYDAY,
     "teen" to EVERYDAY,
     "child" to EVERYDAY,
@@ -128,7 +130,8 @@ fun defaultAccess(role: String?): AccessMatrix = when (role) {
         PageAccess.ALL, PageAccess.ALL, PageAccess.ALL, PageAccess.ALL, PageAccess.ALL, PageAccess.ALL,
         PageAccess.ALL,
     )
-    "manager", "member" -> AccessMatrix(
+    // "member" is the adult role's name on servers from before 2026-10-11.
+    "manager", "adult", "member" -> AccessMatrix(
         tasks = PageAccess.NONE,
         calendar = PageAccess.ALL,
         shopping = PageAccess.ALL,
