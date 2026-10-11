@@ -105,4 +105,44 @@ class PermissionsTest {
         // Pages the server didn't send default to no access.
         assertFalse(me.access.bills.any)
     }
+
+    @Test
+    fun theHeadManagesEveryoneButNeverAssignsHead() {
+        USER_ROLES.forEach { assertTrue(it, canManageMember("head", it)) }
+        assertEquals(listOf("manager", "adult", "teen", "child", "guest"), assignableRoles("head"))
+        assertFalse(canAssignRole("head", "head"))
+    }
+
+    @Test
+    fun aManagerManagesOnlyTheRanksBelow() {
+        assertFalse(canManageMember("manager", "head"))
+        assertFalse(canManageMember("manager", "manager"))
+        assertTrue(canManageMember("manager", "adult"))
+        assertTrue(canManageMember("manager", "guest"))
+        assertEquals(listOf("adult", "teen", "child", "guest"), assignableRoles("manager"))
+    }
+
+    @Test
+    fun everyoneElseManagesNobody() {
+        listOf("adult", "member", "teen", "child", "guest", null, "unknown").forEach { actor ->
+            assertFalse("$actor", canManageMember(actor, "guest"))
+            assertTrue("$actor", assignableRoles(actor).isEmpty())
+        }
+        // Unknown roles are never manageable, even by the head.
+        assertFalse(canManageMember("head", "unknown"))
+    }
+
+    @Test
+    fun anOldMemberRoleRanksAsAdult() {
+        assertTrue(canManageMember("manager", "member"))
+        assertFalse(canAssignRole("head", "member"))
+    }
+
+    @Test
+    fun onlyTheHeadManagesTheHousehold() {
+        assertTrue(can("head", Permission.HouseholdManage))
+        listOf("manager", "adult", "teen", "child", "guest").forEach { assertFalse(it, can(it, Permission.HouseholdManage)) }
+        assertTrue(can("manager", Permission.MembersManage))
+        assertFalse(can("adult", Permission.MembersManage))
+    }
 }

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
@@ -330,6 +331,13 @@ fun HomeScreen(
                                     leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
                                     onClick = { menuOpen = false; overlay = Overlay.Activity },
                                 )
+                                if (can(user.role, Permission.MembersManage)) {
+                                    DropdownMenuItem(
+                                        text = { Text("Household") },
+                                        leadingIcon = { Icon(Icons.Filled.Face, contentDescription = null) },
+                                        onClick = { menuOpen = false; overlay = Overlay.Members },
+                                    )
+                                }
                                 if (can(user.role, Permission.SettingsManage)) {
                                     DropdownMenuItem(
                                         text = { Text("Settings") },
@@ -420,6 +428,7 @@ fun HomeScreen(
             Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)
             Overlay.Activity -> ActivityScreen(session.api, user.id, modifier)
             Overlay.Settings -> SettingsScreen(session.api, session.baseUrl, isHead = user.role == "head", features, showMessage, modifier)
+            Overlay.Members -> MembersScreen(session, user, showMessage, modifier)
             null -> TabContent(
                 tab,
                 session,
@@ -470,6 +479,7 @@ private enum class Overlay(val label: String) {
     Points("Points"),
     Activity("Activity"),
     Settings("Settings"),
+    Members("Household"),
 }
 
 @Composable

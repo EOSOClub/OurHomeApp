@@ -72,6 +72,28 @@ data class Member(
     val birthday: String? = null,
 )
 
+/**
+ * A member as the Members page sees them (GET /api/members, HouseholdMemberDTO):
+ * sign-in details included, so only for those who may manage members. Head
+ * first, then by rank and name. A member added without an email has a
+ * "<username>@household.local" placeholder.
+ */
+@Serializable
+data class MemberAccount(
+    val id: String,
+    val name: String,
+    val email: String,
+    val username: String? = null,
+    val role: String,
+    /** Still on the temporary password set when added or reset. */
+    val mustChangePassword: Boolean = false,
+    val createdAt: String? = null,
+)
+
+/** POST /api/household/rename's answer. */
+@Serializable
+data class HouseholdRef(val id: String, val name: String)
+
 /** The user's own about-me fields (PublicProfile in the web's lib/profile.ts). */
 @Serializable
 data class PublicProfile(

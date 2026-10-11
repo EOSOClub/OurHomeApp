@@ -671,6 +671,63 @@ class ApiClient(
     suspend fun deleteRequest(id: String) =
         callUnit(post("/api/requests/delete", buildJsonObject { put("id", id) }))
 
+    // --- Members (members:manage; rename and head transfer are head-only) ------
+
+    suspend fun memberAccounts(): List<MemberAccount> =
+        call(get("/api/members"), ListSerializer(MemberAccount.serializer()))
+
+    /** Adds someone with a temporary password they must change; a blank [email] gets a placeholder. */
+    suspend fun createMember(name: String, username: String, email: String?, role: String, password: String): MemberAccount =
+        call(
+            post(
+                "/api/members",
+                buildJsonObject {
+                    put("name", name)
+                    put("username", username)
+                    email?.let { put("email", it) }
+                    put("role", role)
+                    put("password", password)
+                },
+            ),
+            MemberAccount.serializer(),
+        )
+
+    /** Changes only the fields passed (non-null); the server checks username/email are free. */
+    suspend fun updateMember(id: String, name: String?, username: String?, email: String?): MemberAccount =
+        call(
+            post(
+                "/api/members/update",
+                buildJsonObject {
+                    put("id", id)
+                    name?.let { put("name", it) }
+                    username?.let { put("username", it) }
+                    email?.let { put("email", it) }
+                },
+            ),
+            MemberAccount.serializer(),
+        )
+
+    suspend fun setMemberRole(id: String, role: String): MemberAccount =
+        call(post("/api/members/role", buildJsonObject { put("id", id); put("role", role) }), MemberAccount.serializer())
+
+    /** Sets a new temporary password and signs them out everywhere. */
+    suspend fun resetMemberPassword(id: String, password: String): MemberAccount =
+        call(
+            post("/api/members/password", buildJsonObject { put("id", id); put("password", password) }),
+            MemberAccount.serializer(),
+        )
+
+    /** Head only: [id] becomes Head of House and the caller a Manager. */
+    suspend fun transferHead(id: String): MemberAccount =
+        call(post("/api/members/transfer-head", buildJsonObject { put("id", id) }), MemberAccount.serializer())
+
+    suspend fun removeMember(id: String) =
+        callUnit(post("/api/members/delete", buildJsonObject { put("id", id) }))
+
+    /** Head only. */
+    suspend fun renameHousehold(name: String): HouseholdRef =
+        call(post("/api/household/rename", buildJsonObject { put("name", name) }), HouseholdRef.serializer())
+
     // --- Notifications -------------------------------------------------------
 
     suspend fun notifications(unreadOnly: Boolean = false): NotificationList =

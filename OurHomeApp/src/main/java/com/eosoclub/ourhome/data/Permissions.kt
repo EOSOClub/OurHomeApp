@@ -13,6 +13,9 @@ import kotlinx.serialization.Serializable
  */
 enum class Permission {
     TasksComplete,
+    // Rename the household, transfer Head of House (head-only).
+    HouseholdManage,
+    // Add/edit/remove members, change roles, reset passwords.
     MembersManage,
     // The Settings page: categories, rooms, Home Assistant tokens, NFC tags,
     // Paperless status. Its head-only parts (points rate, Paperless connection,
@@ -48,6 +51,34 @@ private val ROLE_PERMISSIONS: Map<String, Set<Permission>> = mapOf(
 /** True when [role] grants [permission]; unknown roles get nothing. */
 fun can(role: String?, permission: Permission): Boolean =
     ROLE_PERMISSIONS[role]?.contains(permission) == true
+
+// --- Who may manage whom (the web's canManageMember / canAssignRole) --------
+
+/** The roles in the web's order (USER_ROLES); higher in the list outranks lower. */
+val USER_ROLES = listOf("head", "manager", "adult", "teen", "child", "guest")
+
+private fun rank(role: String?): Int? = when (role) {
+    // The adult role's name on servers from before 2026-10-11.
+    "member" -> rank("adult")
+    else -> USER_ROLES.indexOf(role).takeIf { it >= 0 }?.let { USER_ROLES.size - it }
+}
+
+/** The head manages everyone; a manager only the ranks below their own. */
+fun canManageMember(actorRole: String?, targetRole: String?): Boolean {
+    val target = rank(targetRole) ?: return false
+    return when (actorRole) {
+        "head" -> true
+        "manager" -> target < rank("manager")!!
+        else -> false
+    }
+}
+
+/** Never "head": headship only moves by transfer, so there is always one. */
+fun canAssignRole(actorRole: String?, targetRole: String): Boolean =
+    targetRole != "head" && targetRole in USER_ROLES && canManageMember(actorRole, targetRole)
+
+/** The roles [actorRole] may give someone, in rank order. */
+fun assignableRoles(actorRole: String?): List<String> = USER_ROLES.filter { canAssignRole(actorRole, it) }
 
 // --- Page access ------------------------------------------------------------
 

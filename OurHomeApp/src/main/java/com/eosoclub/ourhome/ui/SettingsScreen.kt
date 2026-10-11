@@ -872,16 +872,22 @@ private fun HomeAssistantCard(
 }
 
 /**
- * Copies [text]. A [sensitive] clip (a token) is hidden from Android's
- * clipboard preview, so it isn't shown on screen or to keyboard suggestions.
+ * Copies [text]. A [sensitive] clip (a token, a password) is hidden from
+ * Android's clipboard preview, so it isn't shown on screen or to keyboard
+ * suggestions.
  */
 @Composable
-private fun CopyButton(text: String, sensitive: Boolean) {
+internal fun CopyButton(
+    text: String,
+    sensitive: Boolean,
+    clipLabel: String = if (sensitive) "Token" else "Address",
+    enabled: Boolean = true,
+) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var copied by remember(text) { mutableStateOf(false) }
-    TextButton(onClick = {
-        val clip = ClipData.newPlainText(if (sensitive) "Token" else "Address", text)
+    TextButton(enabled = enabled, onClick = {
+        val clip = ClipData.newPlainText(clipLabel, text)
         if (sensitive) {
             clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
         }

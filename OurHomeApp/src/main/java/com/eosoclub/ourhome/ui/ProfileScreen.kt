@@ -73,11 +73,11 @@ import kotlinx.coroutines.launch
 
 // Mirror the web's validation (src/lib/validation/user.ts) so errors show
 // before a round trip; the server stays the authority.
-private val USERNAME_RE = Regex("^[a-zA-Z0-9._-]{3,30}$")
-private val EMAIL_RE = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
-private const val MIN_PASSWORD = 8
+internal val USERNAME_RE = Regex("^[a-zA-Z0-9._-]{3,30}$")
+internal val EMAIL_RE =Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+internal const val MIN_PASSWORD = 8
 
-private val ROLE_LABELS = mapOf(
+internal val ROLE_LABELS = mapOf(
     "head" to "Head of household",
     "manager" to "Manager",
     "adult" to "Adult",
