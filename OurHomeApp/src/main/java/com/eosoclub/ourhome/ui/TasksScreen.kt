@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import com.eosoclub.ourhome.data.PlaceGroups
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
@@ -41,6 +43,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +59,7 @@ import com.eosoclub.ourhome.data.CategoryRef
 import com.eosoclub.ourhome.data.Member
 import com.eosoclub.ourhome.data.PageAccess
 import com.eosoclub.ourhome.data.DEFAULT_MINUTES_PER_POINT
+import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.Subtask
 import com.eosoclub.ourhome.data.Task
 import com.eosoclub.ourhome.data.TaskCompletion
@@ -96,9 +100,12 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
 
     private suspend fun say(text: String) = _messages.send(Message(text))
 
+    /** False when the server admin turned Points off: messages leave points out. */
+    var showPoints = true
+
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
-        // Rooms change rarely and only on the website; a failure (older server) keeps the last.
+        // Rooms change rarely; a failure (older server) keeps the last.
         launch { runCatching { api.places() }.onSuccess { p -> state.update { it.copy(places = p) } } }
         state.load({ api.tasks() }, { s, v -> s.copy(tasks = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
     }
@@ -110,6 +117,16 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
     val collapsed = MutableStateFlow(emptySet<String>())
 
     fun toggleCollapsed(key: String) = collapsed.update { if (key in it) it - key else it + key }
+
+    /** A room a scanned location tag asked for; the list shows it once, then clears this. */
+    val focusRoom = MutableStateFlow<String?>(null)
+
+    /** Switches to "By room" and asks the list to show [roomId] (refreshed first). */
+    fun openRoom(roomId: String) {
+        byRoom.value = true
+        focusRoom.value = roomId
+        refresh()
+    }
 
     // In-flight reorders: while any are pending, a reply must not undo a later move.
     private var pendingReorders = 0
@@ -140,7 +157,7 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
             // Recurring tasks come back pending with the next due date (or done
             // for this cycle); one-time tasks come back completed.
             replaceTask(updated)
-            val pts = if (task.points > 0) " · ${formatPoints(task.points.centi())} pts" else ""
+            val pts = if (showPoints && task.points > 0) " ·${formatPoints(task.points.centi())} pts" else ""
             val text = when {
                 updated.doneThisCycle -> "Done for this cycle$pts"
                 task.recurrence != null && updated.status != "completed" -> "Done — next one scheduled$pts"
@@ -160,7 +177,7 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
         try {
             replaceTask(api.undoCompletion(completionId))
             state.update { it.copy(history = emptyMap()) }
-            say("Undone; the points were taken back")
+            say(if (showPoints) "Undone; the points were taken back" else "Completion undone")
         } catch (e: Exception) {
             say(e.message ?: "Couldn't undo")
         }
@@ -286,6 +303,8 @@ fun TasksScreen(
     api: ApiClient,
     access: PageAccess,
     userId: String,
+    /** With Points off, points are hidden (the server still records them). */
+    features: Features,
     showMessage: (String) -> Unit,
     /** A snackbar with one action (Undo). */
     showAction: (String, String, () -> Unit) -> Unit,
@@ -300,6 +319,10 @@ fun TasksScreen(
     val collapsed by vm.collapsed.collectAsStateWithLifecycle()
     val places = state.places?.takeUnless { it.isEmpty }
     val byRoom = byRoomChosen && places != null
+    val focusRoom by vm.focusRoom.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
+    val showPoints = features.points
+    SideEffect { vm.showPoints = showPoints }
 
     LaunchedEffect(Unit) { vm.refresh() }
     LaunchedEffect(Unit) {
@@ -313,12 +336,28 @@ fun TasksScreen(
         .sortedWith(compareBy(nullsLast()) { it.dueDate?.let(Instant::parse) })
     // Cycle tasks finished early wait here until their next cycle starts.
     val doneThisCycle = state.tasks.filter { it.doneThisCycle }.sortedBy { it.cycleEndsAt }
+
+    // A scanned location tag: unfold its room (and floor) and scroll to it once
+    // the tasks and rooms are in.
+    LaunchedEffect(focusRoom, state.loading, places) {
+        val roomId = focusRoom ?: return@LaunchedEffect
+        if (state.loading || places == null) return@LaunchedEffect
+        val floorId = places.rooms.firstOrNull { it.id == roomId }?.floorId?.takeIf { f -> places.floors.any { it.id == f } }
+        val unfolded = collapsed - "room:$roomId" - "floor:${floorId ?: "none"}"
+        vm.collapsed.value = unfolded
+        // Rows above the groups: the Points / sort row (always there with rooms).
+        val index = roomRowIndex(groupByPlace(open, places), unfolded, roomId, leading = 1)
+        val name = places.roomLabel(roomId) ?: "that room"
+        if (index != null) listState.animateScrollToItem(index) else showMessage("Nothing to do in $name right now.")
+        vm.focusRoom.value = null
+    }
     // [group] = the place's tasks in order, for Move up/down (By room only).
     val cardFor: @Composable (Task, List<Task>?) -> Unit = { task, group ->
         val i = group?.indexOfFirst { it.id == task.id } ?: -1
         TaskCard(
             task,
             showPlace = !byRoom,
+            showPoints = showPoints,
             // Ordering is the household's list: "Edit others'" on Tasks, as on the web.
             onMove = if (group != null && group.size > 1 && access.editOthers) {
                 { direction -> vm.reorder(moveId(group.map { it.id }, task.id, direction)) }
@@ -355,6 +394,7 @@ fun TasksScreen(
                     TextButton(onClick = { vm.refresh() }) { Text("Retry") }
                 }
                 else -> LazyColumn(
+                    state = listState,
                     contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 88.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize(),
@@ -369,7 +409,7 @@ fun TasksScreen(
                                     }
                                 }
                                 Spacer(Modifier.weight(1f))
-                                // Rooms are set up on the website (Settings → Rooms & floors).
+                                // Rooms are set up in Settings → Rooms & floors.
                                 if (places != null) {
                                     FilterChip(selected = !byRoom, onClick = { vm.byRoom.value = false }, label = { Text("Due date") })
                                     Spacer(Modifier.size(8.dp))
@@ -444,6 +484,7 @@ fun TasksScreen(
             saving = state.saving,
             onDismiss = vm::cancelEdit,
             canSave = access.canEdit(task.createdById, userId),
+            showPoints = showPoints,
             onSave = { edit -> vm.save(task, edit) },
             onDelete = if (access.canDelete(task.createdById, userId)) ({ vm.delete(task) }) else null,
         )
@@ -458,12 +499,37 @@ fun TasksScreen(
             saving = state.saving,
             onDismiss = vm::cancelEdit,
             canSave = true,
+            showPoints = showPoints,
             // The household rate comes with every task; the default before any load.
             minutesPerPoint = state.tasks.firstOrNull()?.minutesPerPoint ?: DEFAULT_MINUTES_PER_POINT,
             onSave = vm::create,
             onDelete = null,
         )
     }
+}
+
+/**
+ * The LazyColumn index of [roomId]'s heading in the "By room" list, or null
+ * when the room has nothing open. Mirrors the list below: [leading] rows, then
+ * per floor its heading, whole-floor tasks and rooms (heading + tasks), each
+ * folded one contributing only its heading.
+ */
+internal fun roomRowIndex(groups: PlaceGroups<Task>, collapsed: Set<String>, roomId: String, leading: Int): Int? {
+    var index = leading
+    for (g in groups.floors) {
+        index++ // floor heading
+        if ("floor:${g.floor?.id ?: "none"}" in collapsed) {
+            if (g.rooms.any { it.room.id == roomId }) return null
+            continue
+        }
+        index += g.tasks.size
+        for (r in g.rooms) {
+            if (r.room.id == roomId) return index
+            index++ // room heading
+            if ("room:${r.room.id}" !in collapsed) index += r.tasks.size
+        }
+    }
+    return null
 }
 
 /** A floor or room heading in the "By room" list; tap to fold it away. */
@@ -496,6 +562,8 @@ private fun TaskCard(
     task: Task,
     /** Off under a room heading, which already says where. */
     showPlace: Boolean,
+    /** Off when the server admin turned Points off. */
+    showPoints: Boolean,
     /** Up (-1) / down (+1) within its place; null when it can't be reordered. */
     onMove: ((Int) -> Unit)?,
     canMoveUp: Boolean,
@@ -522,7 +590,7 @@ private fun TaskCard(
                 val due = task.dueDate?.let { dueLabel(it) }.takeUnless { task.doneThisCycle }
                 val meta = listOfNotNull(
                     if (task.doneThisCycle) "Reopens ${task.cycleEndsAt?.let { shortDate(it) }}" else due?.first,
-                    task.points.takeIf { it > 0 }?.let { "${formatPoints(it.centi())} pts" },
+                    task.points.takeIf { showPoints && it > 0 }?.let { "${formatPoints(it.centi())} pts" },
                     task.priority.takeIf { it == "high" || it == "urgent" }?.replaceFirstChar(Char::uppercase),
                     task.recurrence?.let { if (it.rollover) "Cycles ${it.kind}" else "Repeats ${it.kind}" },
                     task.assignee?.name?.let { if (task.rotation.isNotEmpty()) "$it's turn" else it },
@@ -578,13 +646,14 @@ private fun TaskCard(
                                 else MaterialTheme.colorScheme.onSurface,
                             )
                             // Who did it, and whether its points wait for the task.
-                            val who = step.queuedFor?.let { "Queued for ${it.name ?: "someone"}" }
+                            // With Points off, just the name.
+                            val who = step.queuedFor?.let { if (showPoints) "Queued for ${it.name ?: "someone"}" else it.name ?: "someone" }
                                 ?: step.doneBy?.name?.takeIf { step.done }
                             if (who != null) {
                                 Text(who, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
-                        if (step.points > 0) {
+                        if (showPoints && step.points > 0) {
                             Text(
                                 "${formatPoints(step.points.centi())} pts",
                                 style = MaterialTheme.typography.bodySmall,
@@ -594,7 +663,7 @@ private fun TaskCard(
                         }
                     }
                 }
-                HistoryList(history, onUndo)
+                HistoryList(history, showPoints, onUndo)
                 Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
                     if (onMove != null) {
                         IconButton(onClick = { onMove(-1) }, enabled = canMoveUp) {
@@ -618,7 +687,7 @@ private fun TaskCard(
 
 /** Recent completions (and missed cycles), with Undo where the server allows it. */
 @Composable
-private fun HistoryList(history: List<TaskCompletion>?, onUndo: (String) -> Unit) {
+private fun HistoryList(history: List<TaskCompletion>?, showPoints: Boolean, onUndo: (String) -> Unit) {
     if (history.isNullOrEmpty()) return
     Column(Modifier.padding(start = 12.dp, top = 8.dp)) {
         Text("History", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -626,7 +695,7 @@ private fun HistoryList(history: List<TaskCompletion>?, onUndo: (String) -> Unit
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val what = when {
                     c.outcome == "missed" -> "Missed (cycle ran out)"
-                    else -> listOfNotNull(c.user?.name, c.points.takeIf { it > 0 }?.let { "${formatPoints(it.centi())} pts" })
+                    else -> listOfNotNull(c.user?.name, c.points.takeIf { showPoints && it > 0 }?.let { "${formatPoints(it.centi())} pts" })
                         .joinToString(" · ")
                 }
                 Text(

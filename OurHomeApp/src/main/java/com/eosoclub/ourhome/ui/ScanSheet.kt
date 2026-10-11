@@ -44,7 +44,10 @@ import androidx.lifecycle.viewModelScope
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.InventoryItem
 import com.eosoclub.ourhome.data.NfcLookup
+import com.eosoclub.ourhome.data.Places
 import com.eosoclub.ourhome.data.ShoppingList
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
 import com.eosoclub.ourhome.nfc.NfcScans
 import com.eosoclub.ourhome.nfc.TagFormat
 import com.eosoclub.ourhome.nfc.TagRef
@@ -93,9 +96,16 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
         val items: List<InventoryItem>? = null,
         /** For the quick-notification "Add to list" target; null until loaded. */
         val lists: List<ShoppingList>? = null,
+        /** Floors and rooms, for location tags and a new item's place; null until loaded. */
+        val places: Places? = null,
     )
 
+    /** A location tag was scanned: HomeScreen opens [roomId] (Tasks, or Stock without Tasks). */
+    data class OpenRoom(val ref: TagRef, val roomId: String, val roomName: String)
+
     val state = MutableStateFlow(UiState())
+    private val _rooms = Channel<OpenRoom>(Channel.BUFFERED)
+    val roomRequests = _rooms.receiveAsFlow()
 
     init {
         // Writes happen in MainActivity's reader-mode callback; pick up the result.
@@ -116,7 +126,11 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
 
     private var lookupJob: Job? = null
 
-    fun open(ref: TagRef) {
+    /**
+     * Looks up a scanned tag. A location tag with a room goes straight to that
+     * room (no sheet) unless [showSettings] — "Change room" after it opened.
+     */
+    fun open(ref: TagRef, showSettings: Boolean = false) {
         NfcScans.cancelWrite()
         // A newer scan (or closing) supersedes a slow lookup: its answer must
         // not reopen the sheet or show the wrong tag.
@@ -127,10 +141,20 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
             try {
                 val lookup = api.nfcLookup(ref.tagId)
                 if (state.value.phase != loading) return@launch
-                val needsSetup = lookup.item == null
+                val tag = lookup.tag
+                val room = tag?.room
+                if (tag != null && tag.isLocation && room != null && !showSettings) {
+                    state.value = UiState()
+                    _rooms.send(OpenRoom(ref, room.id, room.name))
+                    return@launch
+                }
+                val isLocation = tag?.isLocation == true
+                val needsSetup = lookup.item == null && !isLocation
                 state.update { it.copy(phase = Phase.Ready(lookup), settingUp = needsSetup) }
                 loadLists()
                 if (needsSetup) loadItems()
+                // Rooms: a location tag's picker, or a new tag that may become one.
+                if (isLocation || needsSetup) loadPlaces()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -149,6 +173,14 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
     fun startSetup() {
         state.update { it.copy(settingUp = true, error = null) }
         loadItems()
+        loadPlaces()
+    }
+
+    private fun loadPlaces() {
+        if (state.value.places != null) return
+        viewModelScope.launch {
+            runCatching { api.places() }.onSuccess { p -> state.update { it.copy(places = p) } }
+        }
     }
 
     fun cancelSetup() = state.update { it.copy(settingUp = false, error = null) }
@@ -199,15 +231,38 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
+    /** The room a location tag opens. */
+    fun saveRoom(roomId: String) {
+        val tagId = (state.value.phase as? Phase.Ready)?.lookup?.tagId ?: return
+        runBusy {
+            val lookup = api.nfcTagRoom(tagId, roomId)
+            state.update { it.copy(phase = Phase.Ready(lookup)) }
+        }
+    }
+
+    /** "Open room" from the sheet: closes it and asks HomeScreen to show the room. */
+    fun openRoomNow() {
+        val lookup = (state.value.phase as? Phase.Ready)?.lookup ?: return
+        val room = lookup.tag?.room ?: return
+        val ref = TagRef(lookup.tagId, state.value.format)
+        state.value = UiState()
+        viewModelScope.launch { _rooms.send(OpenRoom(ref, room.id, room.name)) }
+    }
+
     fun setupExisting(itemId: String, scanAction: String, shoppingListId: String?) = setup { tagId ->
         api.nfcSetup(tagId, itemId = itemId, scanAction = scanAction, shoppingListId = shoppingListId)
     }
+
+    /** Makes the tag a location tag: scanning it opens [roomId]. */
+    fun setupRoom(roomId: String) = setup { tagId -> api.nfcSetup(tagId, roomId = roomId) }
 
     fun setupNew(
         name: String,
         unit: String?,
         quantity: Double,
         lowThreshold: Double,
+        /** Where it's kept, as a picker value ("" = not set). */
+        place: String,
         scanAction: String,
         shoppingListId: String?,
     ) = setup { tagId ->
@@ -217,6 +272,7 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
             newItemUnit = unit,
             newItemQuantity = quantity,
             newItemLowThreshold = lowThreshold,
+            newItemPlace = place,
             scanAction = scanAction,
             shoppingListId = shoppingListId,
         )
@@ -274,13 +330,15 @@ fun ScanSheet(vm: ScanViewModel, canWrite: Boolean, onFinished: () -> Unit) {
                 }
                 is ScanViewModel.Phase.Applied -> AppliedContent(phase, onDone = close)
                 is ScanViewModel.Phase.Ready -> {
+                    val isLocation = phase.lookup.tag?.isLocation == true
                     when {
+                        state.settingUp && canWrite -> SetupContent(phase.lookup, state, vm)
+                        isLocation -> LocationContent(phase.lookup, canWrite, state, vm)
                         !canWrite && phase.lookup.item == null ->
                             Text("This tag isn't set up yet. Ask someone who manages inventory to set it up.")
-                        state.settingUp && canWrite -> SetupContent(phase.lookup, state, vm)
                         else -> BoundContent(phase.lookup, canWrite, state, vm)
                     }
-                    if (canWrite && !state.settingUp && phase.lookup.item != null) WriteTagCard(state, vm)
+                    if (canWrite && !state.settingUp && (phase.lookup.item != null || isLocation)) WriteTagCard(state, vm)
                 }
                 ScanViewModel.Phase.Closed -> Unit
             }
@@ -356,6 +414,44 @@ private fun BoundContent(lookup: NfcLookup, canWrite: Boolean, state: ScanViewMo
     TextButton(onClick = { vm.startSetup() }, enabled = !busy) { Text("Change item for this tag") }
 }
 
+/**
+ * A location tag: the room it opens, a picker to change it, and "Open room".
+ * Shown when its room is gone, or from "Change room" after a scan opened it.
+ */
+@Composable
+private fun LocationContent(lookup: NfcLookup, canWrite: Boolean, state: ScanViewModel.UiState, vm: ScanViewModel) {
+    val tag = lookup.tag!!
+    val room = tag.room
+    val places = state.places
+    Text(tag.label, style = MaterialTheme.typography.headlineSmall)
+    Text(
+        room?.let { "Room tag · opens ${places?.roomLabel(it.id) ?: it.name}" } ?: "Room tag · its room was removed",
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (room != null) {
+        Button(onClick = { vm.openRoomNow() }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text("Open room") }
+    }
+    if (!canWrite) {
+        if (room == null) Text("Ask someone who manages inventory to pick its room.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+    when {
+        places == null -> Text("Loading rooms…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        places.rooms.isEmpty() -> Text("No rooms yet. Add them in Settings → Rooms & floors.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        else -> androidx.compose.runtime.key(room?.id) {
+            var choice by remember { mutableStateOf(room?.let { "room:${it.id}" }.orEmpty()) }
+            DropdownField("Opens room", places.choices(roomsOnly = true), choice, { choice = it }, placeholder = "Choose a room…")
+            if (choice.isNotEmpty() && choice != room?.let { "room:${it.id}" }) {
+                Button(onClick = { vm.saveRoom(choice.removePrefix("room:")) }, enabled = !state.busy) {
+                    Text(if (state.busy) "Saving…" else "Save")
+                }
+            }
+        }
+    }
+    TextButton(onClick = { vm.startSetup() }, enabled = !state.busy) { Text("Use this tag for an item instead") }
+}
+
 /** "When this tag is scanned with the app closed" — open the app, or a quick notification. */
 @Composable
 private fun ScanActionChooser(
@@ -413,7 +509,7 @@ private fun WriteTagCard(state: ScanViewModel.UiState, vm: ScanViewModel) {
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        "Write it so scanning always opens Our Home — no app chooser. It keeps the same id, so the item link stays.",
+                        "Write it so scanning always opens Our Home — no app chooser. It keeps the same id, so what it's linked to stays.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     state.writeMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -440,18 +536,38 @@ private fun AppliedContent(phase: ScanViewModel.Phase.Applied, onDone: () -> Uni
 
 @Composable
 private fun SetupContent(lookup: NfcLookup, state: ScanViewModel.UiState, vm: ScanViewModel) {
-    var createNew by remember { mutableStateOf(true) }
+    // What the tag will be: a new item, an existing item, or a room (location tag).
+    var mode by remember { mutableStateOf(SetupMode.NewItem) }
     var action by remember { mutableStateOf(lookup.tag?.scanAction ?: OPEN) }
     var listId by remember { mutableStateOf(lookup.tag?.shoppingListId.orEmpty()) }
+    val places = state.places?.takeUnless { it.isEmpty }
+    val isSetUp = lookup.item != null || lookup.tag?.isLocation == true
     Text(
-        if (lookup.item == null) "New tag — what does it track?" else "Change what this tag tracks",
+        if (isSetUp) "Change what this tag is for" else "New tag — what is it for?",
         style = MaterialTheme.typography.titleLarge,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(selected = createNew, onClick = { createNew = true }, label = { Text("New item") })
-        FilterChip(selected = !createNew, onClick = { createNew = false }, label = { Text("Existing item") })
+        FilterChip(selected = mode == SetupMode.NewItem, onClick = { mode = SetupMode.NewItem }, label = { Text("New item") })
+        FilterChip(selected = mode == SetupMode.ExistingItem, onClick = { mode = SetupMode.ExistingItem }, label = { Text("Existing item") })
+        // Rooms are set up in Settings → Rooms & floors.
+        if (places != null && places.rooms.isNotEmpty()) {
+            FilterChip(selected = mode == SetupMode.Room, onClick = { mode = SetupMode.Room }, label = { Text("Room") })
+        }
     }
-    if (createNew) {
+    if (mode == SetupMode.Room && places != null) {
+        var choice by remember { mutableStateOf(lookup.tag?.room?.let { "room:${it.id}" }.orEmpty()) }
+        Text(
+            "Scanning it opens that room's tasks (or its stock when Tasks is off).",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        DropdownField("Room", places.choices(roomsOnly = true), choice, { choice = it }, placeholder = "Choose a room…")
+        Button(
+            onClick = { vm.setupRoom(choice.removePrefix("room:")) },
+            enabled = !state.busy && choice.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (state.busy) "Saving…" else "Link tag to room") }
+    } else if (mode == SetupMode.NewItem) {
         var name by remember { mutableStateOf("") }
         var unit by remember { mutableStateOf("") }
         var quantity by remember { mutableStateOf("") }
@@ -497,9 +613,11 @@ private fun SetupContent(lookup: NfcLookup, state: ScanViewModel.UiState, vm: Sc
                 modifier = Modifier.weight(1f),
             )
         }
+        var place by remember { mutableStateOf("") }
+        if (places != null) DropdownField("Kept in", places.choices(none = "Not set"), place, { place = it })
         ScanActionChooser(action, { action = it }, listId, { listId = it }, state.lists)
         Button(
-            onClick = { vm.setupNew(name.trim(), unit.trim().ifEmpty { null }, qty!!, lowValue!!, action, listId.ifEmpty { null }) },
+            onClick = { vm.setupNew(name.trim(), unit.trim().ifEmpty { null }, qty!!, lowValue!!, place, action, listId.ifEmpty { null }) },
             enabled = !state.busy && name.isNotBlank() && qty != null && lowValue != null,
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (state.busy) "Saving…" else "Create item & link tag") }
@@ -524,7 +642,9 @@ private fun SetupContent(lookup: NfcLookup, state: ScanViewModel.UiState, vm: Sc
             ) { Text(if (state.busy) "Saving…" else "Link tag") }
         }
     }
-    if (lookup.item != null) {
+    if (isSetUp) {
         TextButton(onClick = { vm.cancelSetup() }, enabled = !state.busy) { Text("Cancel") }
     }
 }
+
+private enum class SetupMode { NewItem, ExistingItem, Room }

@@ -2,13 +2,23 @@ package com.eosoclub.ourhome.data
 
 import kotlinx.serialization.Serializable
 
-// Floors and rooms: where tasks are done, and the order they're shown in.
-// Mirror of the web's lib/places.ts (+ PlacesTest, same cases as
-// places.test.ts) — change both together. Set up on the website (Settings →
-// Rooms & floors); the app only reads them.
+// Floors and rooms: where tasks are done and stock is kept, and the order
+// they're shown in. Mirror of the web's lib/places.ts (+ PlacesTest, same
+// cases as places.test.ts) — change both together. Set up in Settings → Rooms
+// & floors (here or on the website), shown while Tasks or Inventory is on.
 
 @Serializable
 data class PlaceRef(val id: String, val name: String)
+
+/** Something kept in a place: a task, or an inventory item (no hand-set position). */
+interface Placed {
+    /** One room, or null. */
+    val room: PlaceRef?
+    /** The whole floor, or its room's floor. */
+    val floor: PlaceRef?
+    /** Hand-set order within its place; null = after the ordered ones, as given. */
+    val position: Int?
+}
 
 @Serializable
 data class Floor(val id: String, val name: String, val position: Int = 0)
@@ -22,38 +32,50 @@ data class Places(val floors: List<Floor> = emptyList(), val rooms: List<Room> =
     val isEmpty: Boolean get() = floors.isEmpty() && rooms.isEmpty()
 
     /**
-     * Location picker options as (value, label): "" = whole house,
-     * "floor:<id>" = a whole floor, "room:<id>" = a room (labelled with its floor).
+     * Location picker options as (value, label): "" = [none] (whole house for
+     * tasks), "floor:<id>" = a whole floor, "room:<id>" = a room (labelled with
+     * its floor). [roomsOnly] leaves out floors and the "" option (NFC location
+     * tags open a room).
      */
-    fun choices(): List<Pair<String, String>> {
+    fun choices(none: String = "Whole house", roomsOnly: Boolean = false): List<Pair<String, String>> {
         val floorIds = floors.map { it.id }.toSet()
         val byFloor = floors.sortedWith(floorOrder).flatMap { f ->
-            listOf("floor:${f.id}" to "All of ${f.name}") +
+            (if (roomsOnly) emptyList() else listOf("floor:${f.id}" to "All of ${f.name}")) +
                 rooms.filter { it.floorId == f.id }.sortedWith(roomOrder).map { "room:${it.id}" to "${f.name} · ${it.name}" }
         }
         val loose = rooms.filter { it.floorId == null || it.floorId !in floorIds }
             .sortedWith(roomOrder).map { "room:${it.id}" to it.name }
-        return listOf("" to "Whole house") + byFloor + loose
+        return (if (roomsOnly) emptyList() else listOf("" to none)) + byFloor + loose
+    }
+
+    /** "Upstairs · Bedroom" or "Garage" for a room id; null when it's gone. */
+    fun roomLabel(roomId: String): String? {
+        val room = rooms.firstOrNull { it.id == roomId } ?: return null
+        val floor = floors.firstOrNull { it.id == room.floorId }
+        return floor?.let { "${it.name} · ${room.name}" } ?: room.name
     }
 }
 
 private val floorOrder = compareBy<Floor>({ it.position }, { it.name })
 private val roomOrder = compareBy<Room>({ it.position }, { it.name })
 
-/** A task's place as the picker's value ("room:<id>", "floor:<id>", ""). */
-fun Task.placeChoice(): String = room?.let { "room:${it.id}" } ?: floor?.let { "floor:${it.id}" } ?: ""
+/** A task's or item's place as the picker's value ("room:<id>", "floor:<id>", ""). */
+fun Placed.placeChoice(): String = room?.let { "room:${it.id}" } ?: floor?.let { "floor:${it.id}" } ?: ""
 
-/** "Upstairs · Bedroom", "Upstairs", "Garage", or null for the whole house. */
-fun Task.placeLabel(): String? = when {
-    room != null -> floor?.let { "${it.name} · ${room.name}" } ?: room.name
-    else -> floor?.name
+/** "Upstairs · Bedroom", "Upstairs", "Garage", or null for none (the whole house). */
+fun Placed.placeLabel(): String? {
+    val room = room
+    return when {
+        room != null -> floor?.let { "${it.name} · ${room.name}" } ?: room.name
+        else -> floor?.name
+    }
 }
 
 /**
- * Tasks in their hand-set order: positioned ones first (by position), then the
- * rest in the order given (the server's due-date order).
+ * In hand-set order: positioned ones first (by position), then the rest in
+ * the order given (the server's due-date order for tasks).
  */
-fun orderTasks(tasks: List<Task>): List<Task> =
+fun <T : Placed> orderTasks(tasks: List<T>): List<T> =
     tasks.withIndex().sortedWith { a, b ->
         val pa = a.value.position
         val pb = b.value.position
@@ -65,24 +87,24 @@ fun orderTasks(tasks: List<Task>): List<Task> =
         }
     }.map { it.value }
 
-data class RoomGroup(val room: Room, val tasks: List<Task>)
+data class RoomGroup<T>(val room: Room, val tasks: List<T>)
 
-/** [floor] null = rooms on no floor; [tasks] = its whole-floor tasks. */
-data class FloorGroup(val floor: Floor?, val tasks: List<Task>, val rooms: List<RoomGroup>)
+/** [floor] null = rooms on no floor; [tasks] = its whole-floor tasks (or items). */
+data class FloorGroup<T>(val floor: Floor?, val tasks: List<T>, val rooms: List<RoomGroup<T>>)
 
-data class PlaceGroups(val floors: List<FloorGroup>, val house: List<Task>)
+data class PlaceGroups<T>(val floors: List<FloorGroup<T>>, val house: List<T>)
 
 /**
- * Tasks grouped Floor → Room in the household's order: floors first, then
- * rooms on no floor, then whole-house tasks. Empty places are left out;
- * tasks pointing at a deleted place count as whole-house.
+ * Tasks (or items) grouped Floor → Room in the household's order: floors
+ * first, then rooms on no floor, then whole-house ones. Empty places are left
+ * out; ones pointing at a deleted place count as whole-house.
  */
-fun groupByPlace(tasks: List<Task>, places: Places): PlaceGroups {
+fun <T : Placed> groupByPlace(tasks: List<T>, places: Places): PlaceGroups<T> {
     val roomIds = places.rooms.map { it.id }.toSet()
     val floorIds = places.floors.map { it.id }.toSet()
-    val inRoom = mutableMapOf<String, MutableList<Task>>()
-    val onFloor = mutableMapOf<String, MutableList<Task>>()
-    val house = mutableListOf<Task>()
+    val inRoom = mutableMapOf<String, MutableList<T>>()
+    val onFloor = mutableMapOf<String, MutableList<T>>()
+    val house = mutableListOf<T>()
     for (t in orderTasks(tasks)) {
         val room = t.room
         val floor = t.floor

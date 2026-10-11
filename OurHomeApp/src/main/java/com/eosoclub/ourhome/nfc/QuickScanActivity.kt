@@ -15,7 +15,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * Invisible handler for tags scanned while the app isn't open (Our Home tags,
  * HA tags, and blank tags offered to the app). It looks the tag up, then either
  * posts the quick-scan notification (tag set to "notify") or opens the app on
- * the scan sheet — and finishes immediately. No UI of its own.
+ * the scan sheet — and finishes immediately. No UI of its own. Location tags
+ * have no item, so they always open the app, which shows their room.
  *
  * Lock screen: like every activity here it never shows over the keyguard, so a
  * locked phone always asks for the PIN first. Don't add showWhenLocked etc.

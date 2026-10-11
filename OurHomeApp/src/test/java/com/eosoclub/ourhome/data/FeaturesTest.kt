@@ -34,6 +34,14 @@ class FeaturesTest {
     }
 
     @Test
+    fun placesShowWhileTasksOrInventoryIsOn() {
+        assertTrue(Features.ALL.places)
+        assertTrue(Features.from(listOf("tasks")).places)
+        assertTrue(Features.from(listOf("inventory")).places)
+        assertFalse(Features.from(listOf("calendar", "bills")).places)
+    }
+
+    @Test
     fun cachedNamesRoundTrip() {
         val f = Features.from(listOf("tasks", "bills"))
         assertEquals(f, Features.from(f.names()))

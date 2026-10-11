@@ -51,6 +51,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.InventoryItem
+import com.eosoclub.ourhome.data.PlaceGroups
+import com.eosoclub.ourhome.data.Places
+import com.eosoclub.ourhome.data.groupByPlace
+import com.eosoclub.ourhome.data.placeChoice
+import com.eosoclub.ourhome.data.placeLabel
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.lazy.rememberLazyListState
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -64,11 +71,25 @@ class InventoryViewModel(private val api: ApiClient) : ViewModel() {
         val error: String? = null,
         val editing: InventoryItem? = null,
         val saving: Boolean = false,
+        /** Floors and rooms; null until loaded (or from an older server). */
+        val places: Places? = null,
     )
 
     val state = MutableStateFlow(UiState())
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages = _messages.receiveAsFlow()
+
+    /** "By room" instead of one list; kept here so it survives switching tabs. */
+    val byRoom = MutableStateFlow(false)
+
+    /** A room a scanned location tag asked for (Tasks off); the list shows it once, then clears this. */
+    val focusRoom = MutableStateFlow<String?>(null)
+
+    fun openRoom(roomId: String) {
+        byRoom.value = true
+        focusRoom.value = roomId
+        refresh()
+    }
 
     // In-flight adjustments per item. While any are pending, the optimistic
     // quantity wins over a (possibly stale) server response.
@@ -76,6 +97,8 @@ class InventoryViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
+        // Rooms change rarely; a failure (older server) keeps the last.
+        launch { runCatching { api.places() }.onSuccess { p -> state.update { it.copy(places = p) } } }
         state.load(
             { api.inventory() },
             { s, fresh ->
@@ -112,11 +135,12 @@ class InventoryViewModel(private val api: ApiClient) : ViewModel() {
 
     fun cancelEdit() = state.update { it.copy(editing = null) }
 
-    fun save(item: InventoryItem, name: String, unit: String?, quantity: Double, lowThreshold: Double, reorderDays: Int?) =
+    /** [place]: a picker value, or null to leave it (no rooms to pick from). */
+    fun save(item: InventoryItem, name: String, unit: String?, quantity: Double, lowThreshold: Double, reorderDays: Int?, place: String?) =
         viewModelScope.launch {
             state.update { it.copy(saving = true) }
             try {
-                val updated = api.updateInventoryItem(item.id, name, unit, quantity, lowThreshold, reorderDays)
+                val updated = api.updateInventoryItem(item.id, name, unit, quantity, lowThreshold, reorderDays, place)
                 replace(item.id) { updated }
                 state.update { it.copy(editing = null) }
             } catch (e: Exception) {
@@ -155,14 +179,20 @@ fun InventoryScreen(
 ) {
     val vm = viewModel { InventoryViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val places = state.places?.takeUnless { it.isEmpty }
+    val byRoomChosen by vm.byRoom.collectAsStateWithLifecycle()
+    val byRoom = byRoomChosen && places != null
+    val focusRoom by vm.focusRoom.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
 
     state.editing?.let { item ->
         InventoryItemEditor(
             item = item,
+            places = places,
             saving = state.saving,
             canSave = access.canEdit(item.createdById, userId),
             onDismiss = vm::cancelEdit,
-            onSave = { name, unit, qty, low, days -> vm.save(item, name, unit, qty, low, days) },
+            onSave = { name, unit, qty, low, days, place -> vm.save(item, name, unit, qty, low, days, place) },
             onDelete = if (access.canDelete(item.createdById, userId)) ({ vm.delete(item) }) else null,
         )
     }
@@ -175,6 +205,23 @@ fun InventoryScreen(
     val visible = state.items
         .filter { !lowOnly || it.isLow }
         .sortedWith(compareByDescending<InventoryItem> { it.isLow }.thenBy { it.name.lowercase() })
+    val groups = if (byRoom && places != null) groupByPlace(visible, places) else null
+
+    // A scanned location tag (Tasks off): scroll to its room once items and rooms are in.
+    LaunchedEffect(focusRoom, state.loading, places) {
+        val roomId = focusRoom ?: return@LaunchedEffect
+        if (state.loading || places == null) return@LaunchedEffect
+        lowOnly = false
+        val all = groupByPlace(
+            state.items.sortedWith(compareByDescending<InventoryItem> { it.isLow }.thenBy { it.name.lowercase() }),
+            places,
+        )
+        // Rows above the groups: the scan card and the filter row.
+        val index = stockRoomRowIndex(all, roomId, leading = 2)
+        if (index != null) listState.animateScrollToItem(index)
+        else showMessage("Nothing is kept in ${places.roomLabel(roomId) ?: "that room"} yet.")
+        vm.focusRoom.value = null
+    }
 
     PullToRefreshBox(
         isRefreshing = state.loading && state.items.isNotEmpty(),
@@ -184,37 +231,90 @@ fun InventoryScreen(
         if (LoadState(state.loading, state.error, state.items.isEmpty(), "No inventory items yet.", vm::refresh)) {
             return@PullToRefreshBox
         }
+        val row: @Composable (InventoryItem) -> Unit = { item ->
+            InventoryRow(
+                item,
+                showPlace = !byRoom,
+                // ± stock isn't an edit: any Inventory access will do (as on the server).
+                onAdjust = if (access.any) ({ delta -> vm.adjust(item, delta) }) else null,
+                // The editor also holds Delete, so either opens it.
+                onEdit = if (access.canEdit(item.createdById, userId) || access.canDelete(item.createdById, userId)) {
+                    { vm.startEdit(item) }
+                } else {
+                    null
+                },
+            )
+        }
         LazyColumn(
+            state = listState,
             contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
             item(key = "scan") { ScanCard(onOpenScanHistory) }
             item(key = "filter") {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     FilterChip(selected = !lowOnly, onClick = { lowOnly = false }, label = { Text("All (${state.items.size})") })
                     FilterChip(selected = lowOnly, onClick = { lowOnly = true }, label = { Text("Low ($lowCount)") })
+                    // Rooms are set up in Settings → Rooms & floors.
+                    if (places != null) {
+                        Spacer(Modifier.weight(1f))
+                        FilterChip(selected = byRoom, onClick = { vm.byRoom.value = !byRoom }, label = { Text("By room") })
+                    }
                 }
             }
-            items(visible, key = { it.id }) { item ->
-                InventoryRow(
-                    item,
-                    // ± stock isn't an edit: any Inventory access will do (as on the server).
-                    onAdjust = if (access.any) ({ delta -> vm.adjust(item, delta) }) else null,
-                    // The editor also holds Delete, so either opens it.
-                    onEdit = if (access.canEdit(item.createdById, userId) || access.canDelete(item.createdById, userId)) {
-                        { vm.startEdit(item) }
-                    } else {
-                        null
-                    },
-                )
+            if (groups != null) {
+                groups.floors.forEach { g ->
+                    item(key = "floor:${g.floor?.id ?: "none"}") {
+                        RoomHeading(g.floor?.name ?: "Other rooms", g.tasks.size + g.rooms.sumOf { it.tasks.size }, floor = true)
+                    }
+                    items(g.tasks, key = { it.id }) { row(it) }
+                    g.rooms.forEach { r ->
+                        item(key = "room:${r.room.id}") { RoomHeading(r.room.name, r.tasks.size, floor = false) }
+                        items(r.tasks, key = { it.id }) { row(it) }
+                    }
+                }
+                if (groups.house.isNotEmpty()) {
+                    item(key = "house") { RoomHeading("No room set", groups.house.size, floor = true) }
+                    items(groups.house, key = { it.id }) { row(it) }
+                }
+            } else {
+                items(visible, key = { it.id }) { row(it) }
             }
         }
     }
 }
 
+/**
+ * The LazyColumn index of [roomId]'s heading in the "By room" list, or null
+ * when nothing is kept there. Mirrors the list: [leading] rows, then per
+ * floor its heading, whole-floor items and rooms (heading + items).
+ */
+private fun stockRoomRowIndex(groups: PlaceGroups<InventoryItem>, roomId: String, leading: Int): Int? {
+    var index = leading
+    for (g in groups.floors) {
+        index += 1 + g.tasks.size
+        for (r in g.rooms) {
+            if (r.room.id == roomId) return index
+            index += 1 + r.tasks.size
+        }
+    }
+    return null
+}
+
+/** A floor or room heading in the "By room" list. */
 @Composable
-private fun InventoryRow(item: InventoryItem, onAdjust: ((Double) -> Unit)?, onEdit: (() -> Unit)?) {
+private fun RoomHeading(title: String, count: Int, floor: Boolean) {
+    Text(
+        "$title ($count)",
+        style = if (floor) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelLarge,
+        color = if (floor) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.padding(start = if (floor) 4.dp else 16.dp, top = if (floor) 12.dp else 4.dp, bottom = 2.dp),
+    )
+}
+
+@Composable
+private fun InventoryRow(item: InventoryItem, showPlace: Boolean, onAdjust: ((Double) -> Unit)?, onEdit: (() -> Unit)?) {
     val colors = if (item.isLow) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
     else CardDefaults.cardColors()
     Card(colors = colors, modifier = Modifier.fillMaxWidth().clickable(enabled = onEdit != null) { onEdit?.invoke() }) {
@@ -225,6 +325,8 @@ private fun InventoryRow(item: InventoryItem, onAdjust: ((Double) -> Unit)?, onE
                     "Low".takeIf { item.isLow },
                     item.predictedDepletionAt?.let { "Runs out ~${formatDate(it)}" },
                     item.category?.name,
+                    // Under its room's heading already in "By room".
+                    item.placeLabel().takeIf { showPlace },
                 )
                 if (meta.isNotEmpty()) {
                     Text(
@@ -291,13 +393,17 @@ private fun ScanCard(onOpenScanHistory: () -> Unit) {
 @Composable
 private fun InventoryItemEditor(
     item: InventoryItem,
+    /** Null (none set up, or not loaded) hides the "Kept in" picker. */
+    places: Places?,
     saving: Boolean,
     /** False when the user may only delete this item, not change it. */
     canSave: Boolean,
     onDismiss: () -> Unit,
-    onSave: (name: String, unit: String?, quantity: Double, lowThreshold: Double, reorderDays: Int?) -> Unit,
+    /** [place] is null when there was no picker (the item's place is left alone). */
+    onSave: (name: String, unit: String?, quantity: Double, lowThreshold: Double, reorderDays: Int?, place: String?) -> Unit,
     onDelete: (() -> Unit)?,
 ) {
+    var place by remember { mutableStateOf(item.placeChoice()) }
     var name by remember { mutableStateOf(item.name) }
     var unit by remember { mutableStateOf(item.unit.orEmpty()) }
     var quantity by remember { mutableStateOf(formatQuantity(item.quantity)) }
@@ -314,7 +420,7 @@ private fun InventoryItemEditor(
         saving = saving,
         saveEnabled = canSave && name.isNotBlank() && qty != null && lowValue != null && daysValid,
         onDismiss = onDismiss,
-        onSave = { onSave(name.trim(), unit.trim().ifEmpty { null }, qty!!, lowValue!!, daysValue) },
+        onSave = { onSave(name.trim(), unit.trim().ifEmpty { null }, qty!!, lowValue!!, daysValue, place.takeIf { places != null }) },
         deleteLabel = "Delete item",
         onDelete = onDelete,
     ) {
@@ -362,5 +468,6 @@ private fun InventoryItemEditor(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
         )
+        if (places != null) DropdownField("Kept in", places.choices(none = "Not set"), place, { place = it })
     }
 }

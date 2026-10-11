@@ -271,11 +271,11 @@ data class Task(
     val cycleEndsAt: String? = null,
     val category: CategoryRef? = null,
     /** Where it's done (Places.kt); both null = the whole house. */
-    val room: PlaceRef? = null,
+    override val room: PlaceRef? = null,
     /** The whole floor it covers, or its room's floor. */
-    val floor: PlaceRef? = null,
+    override val floor: PlaceRef? = null,
     /** Hand-set order within its place; null = by due date, after the ordered ones. */
-    val position: Int? = null,
+    override val position: Int? = null,
     val assignee: UserRef? = null,
     /** Rotating assignees in turn order (empty = no rotation; web lib/taskRotation.ts). */
     val rotation: List<UserRef> = emptyList(),
@@ -285,7 +285,7 @@ data class Task(
     val subtasks: List<Subtask> = emptyList(),
     /** Only on POST /api/tasks/complete: the completion, for Undo. */
     val completionId: String? = null,
-) {
+) : Placed {
     /** Completed inside its cycle: waits for the next cycle start. */
     val doneThisCycle: Boolean get() = status == "completed" && cycleEndsAt != null
 
@@ -328,7 +328,14 @@ data class InventoryItem(
     val lastRestockedAt: String? = null,
     val predictedDepletionAt: String? = null,
     val category: CategoryRef? = null,
-)
+    /** Where it's kept (Places.kt); both null = not set. */
+    override val room: PlaceRef? = null,
+    /** The whole floor it's kept on, or its room's floor. */
+    override val floor: PlaceRef? = null,
+) : Placed {
+    /** Items have no hand-set order: within a room they keep the server's (low first, then name). */
+    override val position: Int? get() = null
+}
 
 @Serializable
 data class Bill(
@@ -501,10 +508,18 @@ data class NfcTag(
     val label: String,
     val represents: String = "consumable",
     val item: UserRef? = null, // { id, name } of the bound item
+    /** Location tags: the room a scan opens (they have no item). */
+    val room: PlaceRef? = null,
     /** "open" (scan sheet) | "notify" (quick notification, app stays closed). */
     val scanAction: String = "open",
     val shoppingListId: String? = null,
-)
+) {
+    val isLocation: Boolean get() = represents == LOCATION
+
+    companion object {
+        const val LOCATION = "location"
+    }
+}
 
 /** Result of "Add to shopping list" from a tag. */
 @Serializable

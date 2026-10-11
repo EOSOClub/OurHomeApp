@@ -215,6 +215,12 @@ class ApiClient(
      * The fields the create and update endpoints share. Update takes null
      * `notes`/`recurrence` to clear them; create only accepts them absent.
      */
+    /** A picker value ("room:<id>", "floor:<id>", "") as roomId / floorId (Places.kt). */
+    private fun JsonObjectBuilder.putPlace(place: String) {
+        put("roomId", place.removePrefix("room:").takeIf { place.startsWith("room:") })
+        put("floorId", place.removePrefix("floor:").takeIf { place.startsWith("floor:") })
+    }
+
     private fun JsonObjectBuilder.putTaskFields(input: TaskInput, forUpdate: Boolean) {
         put("title", input.title)
         if (input.notes != null || forUpdate) put("notes", input.notes)
@@ -226,10 +232,7 @@ class ApiClient(
         put("pointsFollowTime", input.pointsFollowTime)
         put("categoryId", input.categoryId)
         // Only when the editor knew the rooms; absent = the place is unchanged.
-        input.place?.let { place ->
-            put("roomId", place.removePrefix("room:").takeIf { place.startsWith("room:") })
-            put("floorId", place.removePrefix("floor:").takeIf { place.startsWith("floor:") })
-        }
+        input.place?.let { putPlace(it) }
         put("assigneeId", input.assigneeId)
         // Always sent: [] clears a rotation (an older server ignores the key).
         putJsonArray("rotationUserIds") { input.rotationUserIds.forEach { add(it) } }
@@ -472,6 +475,8 @@ class ApiClient(
         quantity: Double,
         lowThreshold: Double,
         reorderIntervalDays: Int?,
+        /** Where it's kept, as a picker value; null = unchanged (no rooms to pick from). */
+        place: String? = null,
     ): InventoryItem =
         call(
             post(
@@ -483,6 +488,7 @@ class ApiClient(
                     put("quantity", quantity)
                     put("lowThreshold", lowThreshold)
                     put("reorderIntervalDays", reorderIntervalDays)
+                    place?.let { putPlace(it) }
                 },
             ),
             InventoryItem.serializer(),
@@ -503,7 +509,10 @@ class ApiClient(
             InventoryItem.serializer(),
         )
 
-    /** Binds [tagId] to an existing item, or (with [newItemName]) creates the item first. */
+    /**
+     * Binds [tagId] to an existing item, (with [newItemName]) creates the item
+     * first, or (with [roomId]) makes it a location tag that opens that room.
+     */
     suspend fun nfcSetup(
         tagId: String,
         itemId: String? = null,
@@ -511,6 +520,9 @@ class ApiClient(
         newItemUnit: String? = null,
         newItemQuantity: Double = 0.0,
         newItemLowThreshold: Double = 0.0,
+        /** Where a new item is kept, as a picker value ("" / null = not set). */
+        newItemPlace: String? = null,
+        roomId: String? = null,
         scanAction: String = "open",
         shoppingListId: String? = null,
     ): NfcLookup =
@@ -522,6 +534,7 @@ class ApiClient(
                     put("scanAction", scanAction)
                     put("shoppingListId", shoppingListId)
                     itemId?.let { put("itemId", it) }
+                    roomId?.let { put("roomId", it) }
                     newItemName?.let { name ->
                         put(
                             "newItem",
@@ -530,6 +543,7 @@ class ApiClient(
                                 put("unit", newItemUnit)
                                 put("quantity", newItemQuantity)
                                 put("lowThreshold", newItemLowThreshold)
+                                newItemPlace?.takeIf { it.isNotEmpty() }?.let { putPlace(it) }
                             },
                         )
                     }
@@ -549,6 +563,13 @@ class ApiClient(
                     put("shoppingListId", shoppingListId)
                 },
             ),
+            NfcLookup.serializer(),
+        )
+
+    /** The room a location tag opens. */
+    suspend fun nfcTagRoom(tagId: String, roomId: String): NfcLookup =
+        call(
+            post("/api/nfc/tags/settings", buildJsonObject { put("tagId", tagId); put("roomId", roomId) }),
             NfcLookup.serializer(),
         )
 
@@ -817,15 +838,19 @@ class ApiClient(
 
     suspend fun nfcTags(): List<NfcTag> = call(get("/api/nfc/tags"), ListSerializer(NfcTag.serializer()))
 
-    /** Maps a tag id typed by hand (e.g. a Home Assistant tag) to an item. */
-    suspend fun registerNfcTag(tagId: String, label: String, itemId: String, represents: String) =
+    /**
+     * Maps a tag id typed by hand (e.g. a Home Assistant tag) to an item, or
+     * (represents "location") to the room it opens.
+     */
+    suspend fun registerNfcTag(tagId: String, label: String, itemId: String?, roomId: String?, represents: String) =
         callUnit(
             post(
                 "/api/nfc/tags",
                 buildJsonObject {
                     put("tagId", tagId)
                     put("label", label)
-                    put("itemId", itemId)
+                    itemId?.let { put("itemId", it) }
+                    roomId?.let { put("roomId", it) }
                     put("represents", represents)
                 },
             ),

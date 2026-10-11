@@ -122,6 +122,8 @@ internal fun TaskEditor(
     saving: Boolean,
     /** False when the user may only delete this task, not change it. */
     canSave: Boolean,
+    /** False when the server admin turned Points off: only time shows (points still follow it). */
+    showPoints: Boolean,
     /** Household rate (from any loaded task; the default before that). */
     minutesPerPoint: Double = task?.minutesPerPoint ?: DEFAULT_MINUTES_PER_POINT,
     onDismiss: () -> Unit,
@@ -353,6 +355,7 @@ internal fun TaskEditor(
         PointsSection(
             points = points,
             minutesPerPoint = minutesPerPoint,
+            showPoints = showPoints,
             onChange = { points = it },
             onTotalEdit = { what, run ->
                 val r = run(false)
@@ -370,6 +373,7 @@ internal fun TaskEditor(
                     index = index,
                     isFirst = index == 0,
                     isLast = index == steps.lastIndex,
+                    showPoints = showPoints,
                     onChange = { steps[index] = it },
                     onMinutes = { m -> points = setStepMinutes(points, index, m, minutesPerPoint) },
                     onPoints = { c -> points = setStepPoints(points, index, c) },
@@ -426,6 +430,7 @@ internal fun TaskEditor(
 private fun PointsSection(
     points: PointsState,
     minutesPerPoint: Double,
+    showPoints: Boolean,
     onChange: (PointsState) -> Unit,
     onTotalEdit: (String, (Boolean) -> EditResult) -> Unit,
 ) {
@@ -460,7 +465,7 @@ private fun PointsSection(
                         }
                     },
                 )
-                NumberBox(
+                if (showPoints) NumberBox(
                     label = "Points",
                     value = if (hasPoints) live.pointsCenti / 100.0 else null,
                     decimals = true,
@@ -480,7 +485,7 @@ private fun PointsSection(
                     },
                 )
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (showPoints) Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Points follow time", style = MaterialTheme.typography.bodyMedium)
                     Text(
@@ -497,7 +502,8 @@ private fun PointsSection(
             if (custom > 0) {
                 Text(
                     "Totals influenced by $custom customised step${if (custom == 1) "" else "s"}" +
-                        " (task set to ${points.task.baseMinutes ?: 0} min · ${formatPoints(points.task.basePointsCenti ?: 0)} pts)." +
+                        " (task set to ${points.task.baseMinutes ?: 0} min" +
+                        (if (showPoints) " · ${formatPoints(points.task.basePointsCenti ?: 0)} pts" else "") + ")." +
                         " Changing a total rescales every step.",
                     style = MaterialTheme.typography.bodySmall,
                     color = CustomColor,
@@ -658,6 +664,7 @@ private fun ChecklistStepRow(
     index: Int,
     isFirst: Boolean,
     isLast: Boolean,
+    showPoints: Boolean,
     onChange: (StepEdit) -> Unit,
     onMinutes: (Int) -> Unit,
     onPoints: (Int) -> Unit,
@@ -690,7 +697,7 @@ private fun ChecklistStepRow(
                     modifier = Modifier.weight(1f),
                     onValue = { v -> v?.let { onMinutes(it.toInt()) } },
                 )
-                NumberBox(
+                if (showPoints) NumberBox(
                     label = if (values.pointsFollowTime) "Pts" else "Pts (set)",
                     value = values.pointsCenti / 100.0,
                     decimals = true,
@@ -699,7 +706,7 @@ private fun ChecklistStepRow(
                     onValue = { v -> v?.let { onPoints(toCenti(it)) } },
                 )
             }
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 4.dp)) {
+            if (showPoints) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 4.dp)) {
                 Text("Points follow time", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                 Switch(checked = values.pointsFollowTime, onCheckedChange = onFollow)
             }

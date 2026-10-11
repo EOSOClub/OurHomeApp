@@ -47,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -238,6 +239,26 @@ fun HomeScreen(
             // Tags drive Inventory: with it turned off a scan does nothing.
             if (features.inventory) scan.open(it.ref)
             NfcScans.consume()
+        }
+    }
+    // A location tag opens its room: on Tasks ("By room"), or on Stock when
+    // the server admin turned Tasks off. "Change room" reopens the tag's sheet.
+    val tasks = viewModel { TasksViewModel(session.api) }
+    val currentFeatures by rememberUpdatedState(features)
+    val canChangeTags by rememberUpdatedState(access.inventory.any)
+    LaunchedEffect(Unit) {
+        scan.roomRequests.collect { req ->
+            overlay = null
+            if (currentFeatures.tasks) {
+                tab = Tab.Tasks
+                tasks.openRoom(req.roomId)
+            } else {
+                tab = Tab.Inventory
+                inventory.openRoom(req.roomId)
+            }
+            val text = "Opened ${req.roomName}"
+            if (canChangeTags) showAction(text, "Change room") { scan.open(req.ref, showSettings = true) }
+            else showMessage(text)
         }
     }
 
@@ -479,7 +500,7 @@ private fun TabContent(
             onOpenPoints = openPoints,
             modifier = modifier,
         )
-        Tab.Tasks -> TasksScreen(session.api, access.tasks, user.id, showMessage, showAction, openPoints, modifier)
+        Tab.Tasks -> TasksScreen(session.api, access.tasks, user.id, features, showMessage, showAction, openPoints, modifier)
         Tab.Shopping -> ShoppingScreen(session.api, access.shopping, access.lists, user.id, showMessage, modifier)
         Tab.Inventory -> InventoryScreen(session.api, access.inventory, user.id, showMessage, onOpenScanHistory, modifier)
         Tab.Bills -> BillsScreen(session.api, access.bills, user.id, showMessage, modifier)

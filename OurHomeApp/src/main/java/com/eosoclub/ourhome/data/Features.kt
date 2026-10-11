@@ -16,6 +16,10 @@ data class Features(private val on: Set<String>) {
     val bills get() = BILLS in on
     val requests get() = REQUESTS in on
 
+    /** Floors and rooms: tasks are done there and stock is kept there, so
+     *  Settings → Rooms & floors shows while either is on (web `placesEnabled`). */
+    val places get() = tasks || inventory
+
     /** For caching between launches. */
     fun names(): Set<String> = on
 

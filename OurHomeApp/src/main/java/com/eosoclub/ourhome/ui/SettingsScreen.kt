@@ -126,7 +126,8 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
         val failed: (UiState, String?) -> UiState = { s, e -> if (s.error == null) s.copy(error = e ?: "Couldn't load") else s }
         coroutineScope {
             if (isHead) launch { state.load({ api.pointsSettings() }, { s, v -> s.copy(points = v) }, failed) }
-            if (features.tasks) launch { state.load({ api.places() }, { s, v -> s.copy(places = v) }, failed) }
+            // Rooms serve Tasks and Inventory (and its location tags).
+            if (features.places) launch { state.load({ api.places() }, { s, v -> s.copy(places = v) }, failed) }
             launch { state.load({ api.allCategories() }, { s, v -> s.copy(categories = v) }, failed) }
             if (features.bills) launch { state.load({ api.paperlessStatus() }, { s, v -> s.copy(paperless = v) }, failed) }
             launch { state.load({ api.integrations() }, { s, v -> s.copy(integrations = v) }, failed) }
@@ -163,10 +164,12 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
         state.update { it.copy(points = saved) }
     }
 
-    // Every places call answers with the whole new list.
+    // Every places call answers with the whole new list. Tags shown here name
+    // their room, so they're re-read (a removed room leaves its tags with none).
     private fun places(success: String?, onDone: () -> Unit = {}, call: suspend () -> Places) = act(success, onDone) {
         val next = call()
         state.update { it.copy(places = next) }
+        if (state.value.tags != null) runCatching { api.nfcTags() }.onSuccess { t -> state.update { it.copy(tags = t) } }
     }
 
     fun saveFloor(id: String?, name: String, onDone: () -> Unit) = places(null, onDone) { api.saveFloor(id, name) }
@@ -230,9 +233,10 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
         state.update { s -> s.copy(integrations = s.integrations?.filterNot { it.id == id }) }
     }
 
-    fun mapTag(tagId: String, label: String, itemId: String, represents: String, onDone: () -> Unit) =
+    /** A location tag gets [roomId]; any other kind [itemId]. */
+    fun mapTag(tagId: String, label: String, itemId: String?, roomId: String?, represents: String, onDone: () -> Unit) =
         act(null, onDone) {
-            api.registerNfcTag(tagId, label, itemId, represents)
+            api.registerNfcTag(tagId, label, itemId, roomId, represents)
             val next = api.nfcTags()
             state.update { it.copy(tags = next) }
         }
@@ -306,12 +310,12 @@ fun SettingsScreen(
             // Keyed on the saved values so the form resets to them after a save.
             state.points?.let { p -> key(p) { PointsCard(p, state.busy, vm::savePoints) } }
             // Rooms are where tasks are done: hidden with Tasks.
-            if (features.tasks) state.places?.let { PlacesCard(it, state.busy, vm) }
+            if (features.places) state.places?.let { PlacesCard(it, state.busy, vm) }
             state.categories?.let { CategoriesCard(it, state.busy, vm) }
             // Paperless feeds Bills and NFC tags drive Inventory: hidden with them.
             if (features.bills) state.paperless?.let { PaperlessCard(it, state.busy, state.syncing, vm) }
             state.integrations?.let { HomeAssistantCard(it, state.newToken, "$baseUrl/api/webhooks/nfc", state.busy, vm) }
-            if (features.inventory) state.tags?.let { NfcTagsCard(it, state.items, state.busy, vm) }
+            if (features.inventory) state.tags?.let { NfcTagsCard(it, state.items, state.places, state.busy, vm) }
             if (isHead) ExportCard(state.busy, vm)
         }
     }
@@ -385,7 +389,7 @@ private fun PlacesCard(places: Places, busy: Boolean, vm: SettingsViewModel) {
 
     SectionCard(
         "Rooms & floors",
-        "Where tasks are done. Tasks can belong to a room or a whole floor; the Tasks tab groups them in this order. Tap one to rename or remove it.",
+        "Where tasks are done and stock is kept. Tasks and items can belong to a room or a whole floor; the Tasks and Stock tabs group them in this order. Tap one to rename or remove it.",
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { editing = PlaceEdit.FloorEdit(null) }) { Text("Add floor") }
@@ -891,20 +895,25 @@ private fun CopyButton(text: String, sensitive: Boolean) {
 // --- NFC tags ------------------------------------------------------------------------
 
 @Composable
-private fun NfcTagsCard(tags: List<NfcTag>, items: List<InventoryItem>, busy: Boolean, vm: SettingsViewModel) {
+private fun NfcTagsCard(tags: List<NfcTag>, items: List<InventoryItem>, places: Places?, busy: Boolean, vm: SettingsViewModel) {
     var tagId by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
     var itemId by remember(items) { mutableStateOf(items.firstOrNull()?.id ?: "") }
+    // "room:<id>" — the room a location tag opens.
+    var room by remember { mutableStateOf("") }
     var represents by remember { mutableStateOf("consumable") }
     var deleting by remember { mutableStateOf<NfcTag?>(null) }
+    // Location tags open a room; every other kind is bound to an item.
+    val isLocation = represents == NfcTag.LOCATION
+    val rooms = places?.rooms.orEmpty()
 
     SectionCard(
         "NFC tags",
-        "Bind a tag id (e.g. one Home Assistant scans) to an inventory item. To set up a physical tag, scan it with this phone instead.",
+        "Bind a tag id (e.g. one Home Assistant scans) to an inventory item, or make it a location tag that opens a room's tasks. To set up a physical tag, scan it with this phone instead.",
     ) {
-        if (items.isEmpty()) {
+        if (items.isEmpty() && rooms.isEmpty()) {
             Text(
-                "Add inventory items first, then map tags to them here.",
+                "Add inventory items (or rooms, above) first, then map tags to them here.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -925,16 +934,29 @@ private fun NfcTagsCard(tags: List<NfcTag>, items: List<InventoryItem>, busy: Bo
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            DropdownField("Inventory item", items.map { it.id to it.name }, itemId, { itemId = it })
             DropdownField("Represents", NFC_REPRESENTS, represents, { represents = it })
+            when {
+                isLocation && places != null && rooms.isNotEmpty() ->
+                    DropdownField("Opens room", places.choices(roomsOnly = true), room, { room = it }, placeholder = "Choose a room…")
+                isLocation -> Text("Add a room in Rooms & floors first.", style = MaterialTheme.typography.bodySmall)
+                items.isNotEmpty() -> DropdownField("Inventory item", items.map { it.id to it.name }, itemId, { itemId = it })
+                else -> Text("Add an inventory item first.", style = MaterialTheme.typography.bodySmall)
+            }
             Button(
                 onClick = {
-                    vm.mapTag(tagId.trim(), label.trim(), itemId, represents) {
+                    vm.mapTag(
+                        tagId.trim(),
+                        label.trim(),
+                        itemId.takeUnless { isLocation },
+                        room.removePrefix("room:").takeIf { isLocation },
+                        represents,
+                    ) {
                         tagId = ""
                         label = ""
                     }
                 },
-                enabled = tagId.isNotBlank() && label.isNotBlank() && itemId.isNotEmpty() && !busy,
+                enabled = tagId.isNotBlank() && label.isNotBlank() && !busy &&
+                    (if (isLocation) room.isNotEmpty() else itemId.isNotEmpty()),
                 modifier = Modifier.align(Alignment.End),
             ) { Text("Map tag") }
         }
@@ -946,7 +968,8 @@ private fun NfcTagsCard(tags: List<NfcTag>, items: List<InventoryItem>, busy: Bo
                     if (i > 0) HorizontalDivider()
                     ListRow(
                         title = tag.label,
-                        subtitle = "${tag.tagId} → ${tag.item?.name ?: "unbound"} · " +
+                        subtitle = "${tag.tagId} → " +
+                            (if (tag.isLocation) tag.room?.let { "opens ${it.name}" } ?: "no room" else tag.item?.name ?: "unbound") + " · " +
                             (NFC_REPRESENTS.firstOrNull { it.first == tag.represents }?.second ?: tag.represents),
                     ) {
                         IconButton(onClick = { deleting = tag }, enabled = !busy) {

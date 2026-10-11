@@ -28,7 +28,7 @@ class PlacesTest {
         position = position,
     )
 
-    private fun ids(list: List<Task>) = list.map { it.id }
+    private fun ids(list: List<Task>): List<String> = list.map { it.id }
 
     @Test
     fun handOrderedTasksComeFirst() {
@@ -93,5 +93,27 @@ class PlacesTest {
             listOf("", "floor:main", "room:kit", "floor:up", "room:bed", "room:bath", "room:gar"),
             places.choices().map { it.first },
         )
+    }
+
+    @Test
+    fun roomOnlyPickerForLocationTags() {
+        assertEquals(
+            listOf("room:kit", "room:bed", "room:bath", "room:gar"),
+            places.choices(roomsOnly = true).map { it.first },
+        )
+        assertEquals("Not set", places.choices(none = "Not set").first().second)
+        assertEquals("Upstairs · Bedroom", places.roomLabel("bed"))
+        assertEquals("Garage", places.roomLabel("gar"))
+        assertNull(places.roomLabel("gone"))
+    }
+
+    @Test
+    fun itemsGroupByRoomInTheOrderGiven() {
+        fun item(id: String, room: String? = null) =
+            InventoryItem(id = id, name = id, room = room?.let { PlaceRef(it, it) })
+        val g = groupByPlace(listOf(item("ice", "gar"), item("beans", "kit"), item("salt", "kit"), item("misc")), places)
+        assertEquals(listOf("main", null), g.floors.map { it.floor?.id })
+        assertEquals(listOf("beans", "salt"), g.floors[0].rooms[0].tasks.map { it.id })
+        assertEquals(listOf("misc"), g.house.map { it.id })
     }
 }
