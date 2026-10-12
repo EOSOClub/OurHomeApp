@@ -15,6 +15,9 @@ data class Features(private val on: Set<String>) {
     val inventory get() = INVENTORY in on
     val bills get() = BILLS in on
     val requests get() = REQUESTS in on
+    /** Map places, presence and store reminders. Not in [ALL]: a server from
+     *  before features existed has no location API either. */
+    val location get() = LOCATION in on
 
     /** Floors and rooms: tasks are done there and stock is kept there, so
      *  Settings → Rooms & floors shows while either is on (web `placesEnabled`). */
@@ -31,6 +34,7 @@ data class Features(private val on: Set<String>) {
         const val INVENTORY = "inventory"
         const val BILLS = "bills"
         const val REQUESTS = "requests"
+        const val LOCATION = "location"
 
         val ALL = Features(setOf(TASKS, POINTS, CALENDAR, SHOPPING, INVENTORY, BILLS, REQUESTS))
 

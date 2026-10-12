@@ -25,7 +25,8 @@ import java.io.File
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
-class ApiException(message: String) : Exception(message)
+/** [status]: the HTTP status when the server answered with an error, for callers that tell them apart. */
+class ApiException(message: String, val status: Int? = null) : Exception(message)
 class UnauthorizedException : Exception("Your session has expired. Please sign in again.")
 
 /**
@@ -808,6 +809,49 @@ class ApiClient(
         }
     }
 
+    // --- Location (web lib/location.ts; Location feature) --------------------
+
+    /** Home, stores and other spots; the phone watches each one (geofences). */
+    suspend fun mapPlaces(): List<MapPlace> = call(get("/api/map-places"), ListSerializer(MapPlace.serializer()))
+
+    /** The signed-in member's own sharing choice. */
+    suspend fun locationConsent(): LocationConsent =
+        call(get("/api/location/consent"), LocationConsent.serializer())
+
+    /** Turns the member's own sharing on or off; off also deletes where they were. */
+    suspend fun setLocationSharing(on: Boolean): LocationConsent =
+        call(
+            Request.Builder()
+                .url(baseUrl() + "/api/location/consent")
+                .patch(buildJsonObject { put("sharing", if (on) "on" else "off") }.toString().toRequestBody(jsonType))
+                .build(),
+            LocationConsent.serializer(),
+        )
+
+    /**
+     * This phone arrived at or left a map place. 409 = sharing is off for this
+     * member; 404 = the place is gone (see [ApiException.status]).
+     */
+    suspend fun reportPresence(report: PresenceReport): PresenceResult =
+        call(
+            post(
+                "/api/location/presence",
+                buildJsonObject {
+                    put("placeId", report.placeId)
+                    put("transition", report.transition)
+                    put("at", Instant.ofEpochMilli(report.atMillis).toString())
+                    report.lat?.let { put("lat", it) }
+                    report.lng?.let { put("lng", it) }
+                    report.accuracyM?.let { put("accuracyM", it) }
+                },
+            ),
+            PresenceResult.serializer(),
+        )
+
+    /** Where the members who share their location are. */
+    suspend fun presence(): List<MemberPresence> =
+        call(get("/api/location/presence"), ListSerializer(MemberPresence.serializer()))
+
     // --- Permissions -------------------------------------------------------
 
     /** The signed-in user's page access (what they may add/edit/delete). */
@@ -999,7 +1043,7 @@ class ApiClient(
                         onUnauthorized(envelope.error?.message)
                         throw UnauthorizedException()
                     }
-                    throw ApiException(envelope.error?.message ?: "Request failed (${res.code})")
+                    throw ApiException(envelope.error?.message ?: "Request failed (${res.code})", res.code)
                 }
                 envelope
             }

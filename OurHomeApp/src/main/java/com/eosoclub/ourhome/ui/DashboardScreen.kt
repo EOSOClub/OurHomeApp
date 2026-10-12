@@ -47,6 +47,7 @@ import com.eosoclub.ourhome.data.DashboardPoints
 import com.eosoclub.ourhome.data.DashboardTask
 import com.eosoclub.ourhome.data.DoneToday
 import com.eosoclub.ourhome.data.HouseholdRequest
+import com.eosoclub.ourhome.data.MemberPresence
 import com.eosoclub.ourhome.data.centi
 import com.eosoclub.ourhome.data.formatPoints
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,13 +59,22 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 class DashboardViewModel(private val api: ApiClient) : ViewModel() {
-    data class UiState(val data: Dashboard? = null, val loading: Boolean = true, val error: String? = null)
+    data class UiState(
+        val data: Dashboard? = null,
+        val loading: Boolean = true,
+        val error: String? = null,
+        /** Members who share their location (empty when Location is off or nobody shares). */
+        val presence: List<MemberPresence> = emptyList(),
+    )
 
     val state = MutableStateFlow(UiState())
 
-    fun refresh() = viewModelScope.launch {
+    fun refresh(location: Boolean) = viewModelScope.launch {
         state.update { it.copy(loading = true) }
         state.load({ api.dashboard() }, { s, v -> s.copy(data = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
+        // Separate, so a hiccup here never hides the rest of the dashboard.
+        val presence = if (location) runCatching { api.presence() }.getOrNull() else emptyList()
+        if (presence != null) state.update { it.copy(presence = presence) }
     }
 }
 
@@ -91,15 +101,17 @@ internal fun DashboardScreen(
 ) {
     val vm = viewModel { DashboardViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { vm.refresh() }
+    LaunchedEffect(features.location) { vm.refresh(features.location) }
 
     val data = state.data
     PullToRefreshBox(
         isRefreshing = state.loading && data != null,
-        onRefresh = { vm.refresh() },
+        onRefresh = { vm.refresh(features.location) },
         modifier = modifier.fillMaxSize(),
     ) {
-        if (LoadState(state.loading, state.error, data == null, "", vm::refresh) || data == null) return@PullToRefreshBox
+        if (LoadState(state.loading, state.error, data == null, "", { vm.refresh(features.location) }) || data == null) {
+            return@PullToRefreshBox
+        }
         // A server from before the redesign has no "me": show its household lists instead.
         val me = data.me
         val today = me?.today ?: data.overdue
@@ -125,6 +137,7 @@ internal fun DashboardScreen(
                     )
                 }
             }
+            if (features.location && state.presence.isNotEmpty()) item { WhoIsWhereCard(state.presence) }
             if (onOpenPoints != null) me?.points?.let { points -> item { PointsCard(points, onOpenPoints) } }
             if (features.tasks || features.inventory || features.shopping || features.bills) {
                 item { HouseholdGlance(data, features, onOpenTab) }
@@ -303,6 +316,28 @@ private fun PointsCard(points: DashboardPoints, onOpenPoints: () -> Unit) {
             }
         }
     }
+}
+
+/** Members who share their location: at home, at a map place, or away (web: WhoIsWhereCard). */
+@Composable
+private fun WhoIsWhereCard(presence: List<MemberPresence>) {
+    DashCard("Who's where") {
+        presence.forEach { p ->
+            Row2(
+                title = p.name,
+                subtitle = "since ${sinceLabel(p.since)}",
+                trailing = p.label,
+                trailingColor = if (p.isHome) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** "3:10 PM" today, else "Mon 3:10 PM". */
+private fun sinceLabel(iso: String): String {
+    val at = runCatching { Instant.parse(iso).atZone(ZoneId.systemDefault()) }.getOrNull() ?: return iso
+    val time = at.format(DateTimeFormatter.ofPattern("h:mm a"))
+    return if (at.toLocalDate() == java.time.LocalDate.now()) time else "${at.format(DateTimeFormatter.ofPattern("EEE"))} $time"
 }
 
 @Composable

@@ -46,6 +46,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
@@ -198,6 +199,8 @@ fun ProfileScreen(
     mustChangePassword: Boolean,
     showMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** The Location feature is on for the household. */
+    showLocation: Boolean = false,
 ) {
     val vm = viewModel { ProfileViewModel(session) }
     val state by vm.state.collectAsStateWithLifecycle()
@@ -239,6 +242,7 @@ fun ProfileScreen(
                 }
             }
             state.members?.takeIf { it.size > 1 }?.let { HouseholdCard(it, profile.id) }
+            if (showLocation) LocationCard(session, showMessage)
             state.release?.let { release ->
                 val context = LocalContext.current
                 AppUpdateCard(release, state.downloadProgress) { vm.downloadAndInstall(context.applicationContext) }
@@ -412,10 +416,12 @@ private fun AboutMeCard(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
+                // The phone's language as Compose sees it, so month names follow a change.
+                val locale: Locale = LocalConfiguration.current.locales[0]
                 DropdownField(
                     "Birthday month",
                     listOf("" to "-") + Month.entries.map {
-                        it.value.toString() to it.getDisplayName(TextStyle.FULL, Locale.getDefault())
+                        it.value.toString() to it.getDisplayName(TextStyle.FULL, locale)
                     },
                     month?.toString().orEmpty(),
                     onSelect = { month = it.toIntOrNull() },

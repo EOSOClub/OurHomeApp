@@ -33,6 +33,7 @@ import com.eosoclub.ourhome.nfc.NfcScans
 import com.eosoclub.ourhome.nfc.ScanHandoff
 import com.eosoclub.ourhome.nfc.TagFormat
 import com.eosoclub.ourhome.nfc.TagRef
+import com.eosoclub.ourhome.location.Geofences
 import com.eosoclub.ourhome.notifications.Push
 import com.eosoclub.ourhome.notifications.RequestReminders
 import com.eosoclub.ourhome.ui.ClearUserScope
@@ -147,6 +148,8 @@ private fun Root(
             is AuthState.SignedIn -> {
                 RequestReminders.schedule(context)
                 Push.register(context)
+                // Picks up map place or sharing changes since the last run.
+                Geofences.syncNow(context)
             }
             is AuthState.SignedOut -> RequestReminders.cancel(context)
             AuthState.Checking -> Unit

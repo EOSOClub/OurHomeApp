@@ -81,6 +81,7 @@ import com.eosoclub.ourhome.data.awaitingAcceptanceBy
 import com.eosoclub.ourhome.data.canApproveMedia
 import com.eosoclub.ourhome.data.deadlineAlerts
 import com.eosoclub.ourhome.data.isOpen
+import com.eosoclub.ourhome.location.Geofences
 import com.eosoclub.ourhome.notifications.AppUpdateAlerts
 import com.eosoclub.ourhome.notifications.HouseholdReminderAlerts
 import com.eosoclub.ourhome.notifications.RequestReminders
@@ -199,6 +200,7 @@ fun HomeScreen(
             HouseholdReminderAlerts.TAB_TASKS -> Tab.Tasks
             HouseholdReminderAlerts.TAB_INVENTORY -> Tab.Inventory
             HouseholdReminderAlerts.TAB_BILLS -> Tab.Bills
+            Geofences.TAB_SHOPPING -> Tab.Shopping
             else -> null
         }
         when {
@@ -423,7 +425,13 @@ fun HomeScreen(
                 },
                 modifier,
             )
-            Overlay.Profile -> ProfileScreen(session, user.mustChangePassword == true, showMessage, modifier)
+            Overlay.Profile -> ProfileScreen(
+                session,
+                user.mustChangePassword == true,
+                showMessage,
+                modifier,
+                showLocation = features.location,
+            )
             Overlay.ScanHistory -> ScanHistoryScreen(session.api, modifier)
             Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)
             Overlay.Activity -> ActivityScreen(session.api, user.id, modifier)

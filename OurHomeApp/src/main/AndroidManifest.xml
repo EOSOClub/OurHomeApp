@@ -10,6 +10,15 @@
     <!-- Install the server's app updates (Profile → Android app). Android still
          asks the user once ("Install unknown apps") and confirms each install. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Presence and store reminders (location/Geofences): asked from Profile →
+         Location only after the member turns sharing on. Geofences need precise
+         location "all the time"; nothing is tracked in between, Android only
+         reports arriving at and leaving the household's map places. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Android drops geofences on reboot; this registers them again. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".OurHomeApp"
@@ -67,6 +76,24 @@
         <receiver
             android:name=".notifications.QuickScanReceiver"
             android:exported="false" />
+
+        <!-- Geofence events from Play services, through our own mutable
+             PendingIntent. Not exported. -->
+        <receiver
+            android:name=".location.GeofenceReceiver"
+            android:exported="false" />
+
+        <!-- Re-registers geofences after a reboot or an app update. Exported
+             only because the system sends BOOT_COMPLETED; it just schedules a
+             sync and reads nothing from the intent but its action. -->
+        <receiver
+            android:name=".location.GeofenceRestoreReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Hands a downloaded app update to Android's installer (AppUpdate).
              Shares only cache/updates/, and only by a one-time read grant. -->

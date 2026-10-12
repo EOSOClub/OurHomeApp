@@ -36,6 +36,7 @@ import com.eosoclub.ourhome.data.canApproveMedia
 import com.eosoclub.ourhome.data.defaultAccess
 import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.summary
+import com.eosoclub.ourhome.location.Geofences
 import java.util.concurrent.TimeUnit
 
 /**
@@ -103,6 +104,7 @@ object RequestReminders {
         BugReportAlerts.clear(context)
         DeadlineReminders.clear(context)
         AppUpdateAlerts.clear(context)
+        Geofences.clear(context)
     }
 
     fun ensureChannel(context: Context) {
@@ -209,6 +211,11 @@ object RequestReminders {
                     .onFailure { Log.w(TAG, "app update check failed", it) }
                 runCatching { HouseholdReminderAlerts.check(applicationContext, api) }
                     .onFailure { Log.w(TAG, "household reminder check failed", it) }
+                // Map places changed on the website (a "map_places" push lands
+                // here too), sharing turned off there, or a permission revoked.
+                // Re-registers only when something changed.
+                runCatching { Geofences.sync(applicationContext, api, known = me?.let { Features.from(it.features) }) }
+                    .onFailure { Log.w(TAG, "geofence sync failed", it) }
                 Result.success()
             } catch (e: UnauthorizedException) {
                 clear(applicationContext)
