@@ -45,7 +45,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.eosoclub.ourhome.data.CategoryRef
 import com.eosoclub.ourhome.data.Places
-import com.eosoclub.ourhome.data.placeChoice
+import com.eosoclub.ourhome.data.placeChoices
 import com.eosoclub.ourhome.data.DEFAULT_MINUTES_PER_POINT
 import com.eosoclub.ourhome.data.EditResult
 import com.eosoclub.ourhome.data.Member
@@ -141,7 +141,8 @@ internal fun TaskEditor(
     var dueDate by remember { mutableStateOf(originalDue?.toLocalDate()) }
     var dueTime by remember { mutableStateOf(originalDue?.toLocalTime()) }
     var categoryId by remember { mutableStateOf(task?.category?.id.orEmpty()) }
-    var place by remember { mutableStateOf(task?.placeChoice().orEmpty()) }
+    // "room:<id>" / "floor:<id>" for each place; empty = the whole house.
+    var placeValues by remember { mutableStateOf(task?.placeChoices().orEmpty()) }
     var assigneeId by remember { mutableStateOf(task?.assignee?.id.orEmpty()) }
     // Rotating assignees in turn order (web lib/taskRotation.ts).
     var rotation by remember { mutableStateOf(task?.rotation?.map { it.id }.orEmpty()) }
@@ -204,8 +205,8 @@ internal fun TaskEditor(
                         points = if (base.pointsFollowTime) null else base.basePointsCenti?.asPoints(),
                         pointsFollowTime = base.pointsFollowTime,
                         categoryId = categoryId.ifEmpty { null },
-                        // Without the rooms loaded the picker wasn't shown: keep the place.
-                        place = place.takeIf { places?.isEmpty == false },
+                        // Without the rooms loaded the picker wasn't shown: keep the places.
+                        places = placeValues.takeIf { places?.isEmpty == false },
                         assigneeId = currentTurn.ifEmpty { null },
                         rotationUserIds = if (rotating) rotation else emptyList(),
                         recurrence = if (recurring) {
@@ -282,9 +283,11 @@ internal fun TaskEditor(
             categoryId,
             onSelect = { categoryId = it },
         )
-        // Rooms are set up on the website (Settings → Rooms & floors).
+        // Rooms are set up in Settings → Rooms & floors (here or on the website).
         if (places?.isEmpty == false) {
-            DropdownField("Location", places.choices(), place, onSelect = { place = it })
+            LocationChips(places, placeValues) { value ->
+                placeValues = if (value in placeValues) placeValues - value else placeValues + value
+            }
         }
 
         if (recurring) {
@@ -603,6 +606,30 @@ private fun RotationSection(
         )
     }
     if (rotation.isNotEmpty()) TextButton(onClick = onClear) { Text("Clear turns") }
+}
+
+/**
+ * The task Location picker (the web's LocationMultiSelect): chips per floor
+ * (the whole floor, then its rooms), then rooms on no floor. Several can be
+ * picked; none = the whole house. [onToggle] gets the tapped value.
+ */
+@Composable
+private fun LocationChips(places: Places, picked: List<String>, onToggle: (String) -> Unit) {
+    FieldLabel("Location")
+    Text(
+        if (picked.isEmpty()) "Whole house. Pick one or more places to narrow it down."
+        else "Tap a place again to take it off.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    places.choiceGroups().forEach { (title, options) ->
+        Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            options.forEach { (value, label) ->
+                FilterChip(selected = value in picked, onClick = { onToggle(value) }, label = { Text(label) })
+            }
+        }
+    }
 }
 
 @Composable

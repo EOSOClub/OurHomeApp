@@ -23,7 +23,7 @@ import androidx.compose.material3.IconButton
 import com.eosoclub.ourhome.data.Places
 import com.eosoclub.ourhome.data.groupByPlace
 import com.eosoclub.ourhome.data.moveId
-import com.eosoclub.ourhome.data.placeLabel
+import com.eosoclub.ourhome.data.placesLabel
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -356,7 +356,8 @@ fun TasksScreen(
         val i = group?.indexOfFirst { it.id == task.id } ?: -1
         TaskCard(
             task,
-            showPlace = !byRoom,
+            // By room the heading says where; a task in several places still lists them all.
+            showPlace = !byRoom || (task.places?.size ?: 0) > 1,
             showPoints = showPoints,
             // Ordering is the household's list: "Edit others'" on Tasks, as on the web.
             onMove = if (group != null && group.size > 1 && access.editOthers) {
@@ -423,23 +424,27 @@ fun TasksScreen(
                     }
                     if (byRoom && places != null) {
                         val groups = groupByPlace(open, places)
-                        fun LazyListScope.placeTasks(list: List<Task>) =
-                            items(list, key = { it.id }) { cardFor(it, list) }
+                        // A task in several places shows under each, so a row's key
+                        // includes its group (LazyColumn keys must be unique).
+                        fun LazyListScope.placeTasks(group: String, list: List<Task>) =
+                            items(list, key = { "$group/${it.id}" }) { cardFor(it, list) }
                         groups.floors.forEach { g ->
                             val key = "floor:${g.floor?.id ?: "none"}"
+                            // Each task once, even when it's in several rooms on this floor.
+                            val count = (g.tasks + g.rooms.flatMap { it.tasks }).distinctBy { it.id }.size
                             item(key = key) {
-                                PlaceHeading(g.floor?.name ?: "Other rooms", g.tasks.size + g.rooms.sumOf { it.tasks.size }, floor = true,
+                                PlaceHeading(g.floor?.name ?: "Other rooms", count, floor = true,
                                     open = key !in collapsed, onToggle = { vm.toggleCollapsed(key) })
                             }
                             if (key !in collapsed) {
-                                placeTasks(g.tasks)
+                                placeTasks(key, g.tasks)
                                 g.rooms.forEach { r ->
                                     val roomKey = "room:${r.room.id}"
                                     item(key = roomKey) {
                                         PlaceHeading(r.room.name, r.tasks.size, floor = false,
                                             open = roomKey !in collapsed, onToggle = { vm.toggleCollapsed(roomKey) })
                                     }
-                                    if (roomKey !in collapsed) placeTasks(r.tasks)
+                                    if (roomKey !in collapsed) placeTasks(roomKey, r.tasks)
                                 }
                             }
                         }
@@ -448,7 +453,7 @@ fun TasksScreen(
                                 PlaceHeading("Whole house", groups.house.size, floor = true,
                                     open = "house" !in collapsed, onToggle = { vm.toggleCollapsed("house") })
                             }
-                            if ("house" !in collapsed) placeTasks(groups.house)
+                            if ("house" !in collapsed) placeTasks("house", groups.house)
                         }
                     } else {
                         items(open, key = { it.id }) { cardFor(it, null) }
@@ -596,7 +601,7 @@ private fun TaskCard(
                     task.assignee?.name?.let { if (task.rotation.isNotEmpty()) "$it's turn" else it },
                     task.nextAssignee?.name?.let { "next $it" },
                     task.subtasks.takeIf { it.isNotEmpty() }?.let { s -> "${s.count { it.done }}/${s.size} steps" },
-                    task.placeLabel()?.takeIf { showPlace },
+                    task.placesLabel()?.takeIf { showPlace },
                     task.category?.name,
                 )
                 if (meta.isNotEmpty()) {

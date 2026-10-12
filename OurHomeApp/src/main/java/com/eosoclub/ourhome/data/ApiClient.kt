@@ -231,8 +231,13 @@ class ApiClient(
         put("points", input.points)
         put("pointsFollowTime", input.pointsFollowTime)
         put("categoryId", input.categoryId)
-        // Only when the editor knew the rooms; absent = the place is unchanged.
-        input.place?.let { putPlace(it) }
+        // Only when the editor knew the rooms; absent = the places are unchanged.
+        input.places?.let { values ->
+            putJsonArray("roomIds") { values.filter { it.startsWith("room:") }.forEach { add(it.removePrefix("room:")) } }
+            putJsonArray("floorIds") { values.filter { it.startsWith("floor:") }.forEach { add(it.removePrefix("floor:")) } }
+            // A server from before several places reads only these: the first place.
+            putPlace(values.firstOrNull().orEmpty())
+        }
         put("assigneeId", input.assigneeId)
         // Always sent: [] clears a rotation (an older server ignores the key).
         putJsonArray("rotationUserIds") { input.rotationUserIds.forEach { add(it) } }

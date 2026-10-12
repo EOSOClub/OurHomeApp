@@ -193,10 +193,10 @@ data class TaskInput(
     val pointsFollowTime: Boolean = true,
     val categoryId: String?,
     /**
-     * "room:<id>", "floor:<id>" or "" (whole house); null = leave the place
-     * as it is (rooms couldn't be loaded, or an older server).
+     * Every place as "room:<id>" / "floor:<id>" ([] = the whole house); null
+     * = leave the places as they are (rooms couldn't be loaded).
      */
-    val place: String? = null,
+    val places: List<String>? = null,
     val assigneeId: String?,
     /** People taking turns, in order; empty clears the rotation. */
     val rotationUserIds: List<String> = emptyList(),
@@ -292,11 +292,13 @@ data class Task(
     val cycleStartedAt: String? = null,
     val cycleEndsAt: String? = null,
     val category: CategoryRef? = null,
-    /** Where it's done (Places.kt); both null = the whole house. */
+    /** Its first place (Places.kt); both null = the whole house. */
     override val room: PlaceRef? = null,
     /** The whole floor it covers, or its room's floor. */
     override val floor: PlaceRef? = null,
-    /** Hand-set order within its place; null = by due date, after the ordered ones. */
+    /** Every place it's done in ([] = the whole house); null = a server from before several places. */
+    override val places: List<TaskPlace>? = null,
+    /** Hand-set order within its places; null = by due date, after the ordered ones. */
     override val position: Int? = null,
     val assignee: UserRef? = null,
     /** Rotating assignees in turn order (empty = no rotation; web lib/taskRotation.ts). */

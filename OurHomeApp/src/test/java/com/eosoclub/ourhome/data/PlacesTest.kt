@@ -74,6 +74,72 @@ class PlacesTest {
     }
 
     @Test
+    fun aTaskInSeveralPlacesIsListedUnderEach() {
+        val mop = task("mop", room = "kit", floor = "main").copy(
+            places = listOf(
+                TaskPlace(PlaceRef("kit", "Kitchen"), PlaceRef("main", "Main")),
+                TaskPlace(PlaceRef("bath", "Bathroom"), PlaceRef("up", "Upstairs")),
+                TaskPlace(null, PlaceRef("up", "Upstairs")),
+                TaskPlace(PlaceRef("deleted-room", "Gone"), null),
+            ),
+        )
+        val g = groupByPlace(listOf(mop, task("dishes", room = "kit")), places)
+        val (main, up) = g.floors
+        assertEquals(listOf("mop", "dishes"), ids(main.rooms[0].tasks))
+        assertEquals(listOf("mop"), ids(up.tasks))
+        assertEquals(listOf("mop"), ids(up.rooms[0].tasks))
+        assertEquals(emptyList<String>(), ids(g.house))
+    }
+
+    @Test
+    fun aTaskNoneOfWhosePlacesExistGoesToTheWholeHouse() {
+        val lost = task("lost").copy(places = listOf(TaskPlace(PlaceRef("gone", "Gone"), null)))
+        assertEquals(listOf("lost"), ids(groupByPlace(listOf(lost), places).house))
+    }
+
+    @Test
+    fun severalPlacesShareTheirFloorInTheLabel() {
+        val main = PlaceRef("main", "Ground floor")
+        val up = PlaceRef("up", "Upstairs")
+        val t = task("t").copy(
+            places = listOf(
+                TaskPlace(PlaceRef("k", "Kitchen"), main),
+                TaskPlace(PlaceRef("l", "Laundry"), main),
+                TaskPlace(null, up),
+                TaskPlace(PlaceRef("g", "Garage"), null),
+            ),
+        )
+        assertEquals("Ground floor · Kitchen, Laundry; Upstairs; Garage", t.placesLabel())
+        // One place, none, and a server from before several places.
+        assertEquals("Garage", task("t").copy(places = listOf(TaskPlace(PlaceRef("g", "Garage")))).placesLabel())
+        assertNull(task("t").copy(places = emptyList()).placesLabel())
+        assertEquals("Upstairs · Bedroom", task("t").copy(room = PlaceRef("b", "Bedroom"), floor = up).placesLabel())
+    }
+
+    @Test
+    fun pickerValuesForEveryPlace() {
+        val t = task("t", room = "kit").copy(
+            places = listOf(TaskPlace(PlaceRef("kit", "Kitchen")), TaskPlace(null, PlaceRef("up", "Upstairs"))),
+        )
+        assertEquals(listOf("room:kit", "floor:up"), t.placeChoices())
+        // A server from before several places: just its one place.
+        assertEquals(listOf("floor:up"), task("t", floor = "up").placeChoices())
+        assertEquals(emptyList<String>(), task("t").placeChoices())
+    }
+
+    @Test
+    fun multiPickerGroupsByFloorThenLooseRooms() {
+        assertEquals(
+            listOf(
+                "Main" to listOf("floor:main", "room:kit"),
+                "Upstairs" to listOf("floor:up", "room:bed", "room:bath"),
+                "Other rooms" to listOf("room:gar"),
+            ),
+            places.choiceGroups().map { (title, options) -> title to options.map { it.first } },
+        )
+    }
+
+    @Test
     fun moveSwapsWithTheNeighbourAndStopsAtTheEnds() {
         assertEquals(listOf("b", "a", "c"), moveId(listOf("a", "b", "c"), "b", -1))
         assertEquals(listOf("a", "b", "c"), moveId(listOf("a", "b", "c"), "c", 1))
