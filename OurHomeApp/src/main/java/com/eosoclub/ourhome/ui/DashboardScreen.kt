@@ -97,6 +97,7 @@ internal fun DashboardScreen(
     onOpenTab: (Tab) -> Unit,
     /** null when Points is turned off. */
     onOpenPoints: (() -> Unit)?,
+    onOpenMap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val vm = viewModel { DashboardViewModel(api) }
@@ -137,7 +138,7 @@ internal fun DashboardScreen(
                     )
                 }
             }
-            if (features.location && state.presence.isNotEmpty()) item { WhoIsWhereCard(state.presence) }
+            if (features.location && state.presence.isNotEmpty()) item { WhoIsWhereCard(state.presence, onOpenMap) }
             if (onOpenPoints != null) me?.points?.let { points -> item { PointsCard(points, onOpenPoints) } }
             if (features.tasks || features.inventory || features.shopping || features.bills) {
                 item { HouseholdGlance(data, features, onOpenTab) }
@@ -320,8 +321,8 @@ private fun PointsCard(points: DashboardPoints, onOpenPoints: () -> Unit) {
 
 /** Members who share their location: at home, at a map place, or away (web: WhoIsWhereCard). */
 @Composable
-private fun WhoIsWhereCard(presence: List<MemberPresence>) {
-    DashCard("Who's where") {
+private fun WhoIsWhereCard(presence: List<MemberPresence>, onOpenMap: () -> Unit) {
+    DashCard("Who's where", action = "Map" to onOpenMap) {
         presence.forEach { p ->
             Row2(
                 title = p.name,

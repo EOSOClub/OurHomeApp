@@ -150,6 +150,7 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
     implementation(libs.play.services.location)
+    implementation(libs.maplibre.android)
 
     testImplementation(libs.junit)
 }

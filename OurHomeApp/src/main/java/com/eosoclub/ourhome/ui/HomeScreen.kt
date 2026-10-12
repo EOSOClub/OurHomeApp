@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ShoppingCart
@@ -173,6 +174,7 @@ fun HomeScreen(
     LaunchedEffect(features) {
         if (!tab.isOn(features)) tab = Tab.Home
         if (overlay == Overlay.Points && !features.points) overlay = null
+        if (overlay == Overlay.Map && !features.location) overlay = null
     }
     // Keep both badges and the permissions current as the user moves around.
     LaunchedEffect(tab) {
@@ -328,6 +330,13 @@ fun HomeScreen(
                                         onClick = { menuOpen = false; overlay = Overlay.Points },
                                     )
                                 }
+                                if (features.location) {
+                                    DropdownMenuItem(
+                                        text = { Text("Map") },
+                                        leadingIcon = { Icon(Icons.Filled.Place, contentDescription = null) },
+                                        onClick = { menuOpen = false; overlay = Overlay.Map },
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Activity") },
                                     leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
@@ -435,6 +444,7 @@ fun HomeScreen(
             Overlay.ScanHistory -> ScanHistoryScreen(session.api, modifier)
             Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)
             Overlay.Activity -> ActivityScreen(session.api, user.id, modifier)
+            Overlay.Map -> MapScreen(session.api, modifier)
             Overlay.Settings -> SettingsScreen(session.api, session.baseUrl, isHead = user.role == "head", features, showMessage, modifier)
             Overlay.Members -> MembersScreen(session, user, showMessage, modifier)
             null -> TabContent(
@@ -447,6 +457,7 @@ fun HomeScreen(
                 showMessage,
                 showAction,
                 onOpenPoints = { overlay = Overlay.Points },
+                onOpenMap = { overlay = Overlay.Map },
                 onOpenTab = { tab = it },
                 onOpenScanHistory = { overlay = Overlay.ScanHistory },
                 modifier = modifier,
@@ -486,6 +497,7 @@ private enum class Overlay(val label: String) {
     ScanHistory("Recent scans"),
     Points("Points"),
     Activity("Activity"),
+    Map("Map"),
     Settings("Settings"),
     Members("Household"),
 }
@@ -501,6 +513,7 @@ private fun TabContent(
     showMessage: (String) -> Unit,
     showAction: (String, String, () -> Unit) -> Unit,
     onOpenPoints: () -> Unit,
+    onOpenMap: () -> Unit,
     onOpenTab: (Tab) -> Unit,
     onOpenScanHistory: () -> Unit,
     modifier: Modifier,
@@ -516,6 +529,7 @@ private fun TabContent(
             if (features.requests) waitingRequests else emptyList(),
             onOpenTab = onOpenTab,
             onOpenPoints = openPoints,
+            onOpenMap = onOpenMap,
             modifier = modifier,
         )
         Tab.Tasks -> TasksScreen(session.api, access.tasks, user.id, features, showMessage, showAction, openPoints, modifier)

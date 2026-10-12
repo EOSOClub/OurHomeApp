@@ -59,6 +59,9 @@ data class MemberPresence(
     val state: String,
     val place: PresencePlace? = null,
     val since: String,
+    /** Away: where the phone was when they left. Never given for someone at a
+     *  place (the place is where they are); missing from servers before the map. */
+    val point: PresencePoint? = null,
 ) {
     val isHome: Boolean get() = place?.kind == "home"
 
@@ -73,6 +76,31 @@ data class MemberPresence(
 
 @Serializable
 data class PresencePlace(val id: String, val name: String, val kind: String = "other")
+
+@Serializable
+data class PresencePoint(val lat: Double, val lng: Double, val accuracyM: Double? = null)
+
+/** The names of who is at [placeId], for its label on the map. */
+fun peopleAt(placeId: String, presence: List<MemberPresence>): List<String> =
+    presence.filter { it.place?.id == placeId }.map { it.name }
+
+/** Members away with a point to show on the map (the rest are only listed). */
+fun awayOnMap(presence: List<MemberPresence>): List<MemberPresence> =
+    presence.filter { it.place == null && it.point != null }
+
+/** Where the map zooms when a member is tapped: their place, or their point. */
+sealed interface MapTarget {
+    data class Area(val lat: Double, val lng: Double, val radiusM: Double) : MapTarget
+    data class Spot(val lat: Double, val lng: Double) : MapTarget
+}
+
+fun mapTarget(member: MemberPresence, places: List<MapPlace>): MapTarget? {
+    member.place?.let { at ->
+        val place = places.firstOrNull { it.id == at.id } ?: return null
+        return MapTarget.Area(place.lat, place.lng, place.radiusM.toDouble())
+    }
+    return member.point?.let { MapTarget.Spot(it.lat, it.lng) }
+}
 
 /**
  * A fingerprint of what the geofences depend on. Unchanged places mean the

@@ -63,6 +63,30 @@ class LocationTest {
     }
 
     @Test
+    fun `the map labels each place with who is there and shows only the away with a point`() {
+        val since = "2026-10-12T17:00:00Z"
+        val sam = MemberPresence("u1", "Sam", "place", PresencePlace("c", "Costco", "store"), since)
+        val alex = MemberPresence("u2", "Alex", "away", null, since, PresencePoint(41.89, -87.65, 30.0))
+        val kim = MemberPresence("u3", "Kim", "away", null, since)
+        val everyone = listOf(sam, alex, kim)
+        assertEquals(listOf("Sam"), peopleAt("c", everyone))
+        assertEquals(emptyList<String>(), peopleAt("h", everyone))
+        assertEquals(listOf(alex), awayOnMap(everyone))
+    }
+
+    @Test
+    fun `tapping a member zooms to their place or their point`() {
+        val since = "2026-10-12T17:00:00Z"
+        val atCostco = MemberPresence("u1", "Sam", "place", PresencePlace("c", "Costco", "store"), since)
+        assertEquals(MapTarget.Area(41.9, -87.7, 500.0), mapTarget(atCostco, listOf(home, costco)))
+        val away = MemberPresence("u2", "Alex", "away", null, since, PresencePoint(41.89, -87.65))
+        assertEquals(MapTarget.Spot(41.89, -87.65), mapTarget(away, listOf(home, costco)))
+        // A place deleted since the last refresh, or no point: nowhere to go.
+        assertEquals(null, mapTarget(atCostco, listOf(home)))
+        assertEquals(null, mapTarget(MemberPresence("u3", "Kim", "away", null, since), listOf(home)))
+    }
+
+    @Test
     fun `location is off on servers from before features`() {
         assertFalse(Features.from(null).location)
         assertTrue(Features.from(listOf("tasks", "location")).location)
