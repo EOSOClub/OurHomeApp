@@ -28,6 +28,7 @@ import com.eosoclub.ourhome.OurHomeApp
 import com.eosoclub.ourhome.R
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.ApiException
+import com.eosoclub.ourhome.data.BatteryLevel
 import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.HomeReminder
 import com.eosoclub.ourhome.data.PresenceReport
@@ -115,6 +116,12 @@ object Geofences {
         ) {
             removeAll(context)
             return 0
+        }
+        // The hourly battery reading rides on the same check; a failure here
+        // mustn't stop the geofences being kept right.
+        readBattery(context)?.let { battery ->
+            runCatching { api.reportBattery(battery, System.currentTimeMillis()) }
+                .onFailure { Log.w(TAG, "battery not sent", it) }
         }
         val places = api.mapPlaces()
         val signature = geofenceSignature(places)
@@ -258,6 +265,8 @@ object Geofences {
                     "lat" to report.lat,
                     "lng" to report.lng,
                     "accuracy" to report.accuracyM,
+                    "batteryPct" to report.battery?.pct,
+                    "batteryCharging" to report.battery?.charging,
                 ),
             )
             .build()
@@ -296,6 +305,9 @@ object Geofences {
                 lat = inputData.keyValueMap["lat"] as? Double,
                 lng = inputData.keyValueMap["lng"] as? Double,
                 accuracyM = inputData.keyValueMap["accuracy"] as? Double,
+                battery = (inputData.keyValueMap["batteryPct"] as? Int)?.let { pct ->
+                    BatteryLevel(pct, inputData.keyValueMap["batteryCharging"] as? Boolean ?: false)
+                },
             )
             return try {
                 val result = api.reportPresence(report)
@@ -355,6 +367,8 @@ class GeofenceReceiver : BroadcastReceiver() {
         }
         val location = event.triggeringLocation
         val at = location?.time?.takeIf { it > 0 } ?: System.currentTimeMillis()
+        // Read now: the report may only be sent later, once there's a network.
+        val battery = readBattery(context)
         event.triggeringGeofences.orEmpty().forEach { fence ->
             Geofences.enqueueReport(
                 context,
@@ -365,6 +379,7 @@ class GeofenceReceiver : BroadcastReceiver() {
                     lat = location?.latitude,
                     lng = location?.longitude,
                     accuracyM = location?.accuracy?.toDouble(),
+                    battery = battery,
                 ),
             )
         }

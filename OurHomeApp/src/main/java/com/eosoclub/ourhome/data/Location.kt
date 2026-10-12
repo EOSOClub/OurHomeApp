@@ -27,7 +27,7 @@ data class LocationConsent(val sharing: String = "off", val liveChecks: Boolean 
     val canChange: Boolean get() = sharing != "required"
 }
 
-/** What the phone tells the server; [transition] "enter" | "exit". */
+/** What the phone tells the server; [transition] "enter" | "exit". [battery]: the phone's at that moment. */
 data class PresenceReport(
     val placeId: String,
     val transition: String,
@@ -35,7 +35,11 @@ data class PresenceReport(
     val lat: Double? = null,
     val lng: Double? = null,
     val accuracyM: Double? = null,
+    val battery: BatteryLevel? = null,
 )
+
+/** This phone's battery, as sent with reports and hourly (location/Battery). */
+data class BatteryLevel(val pct: Int, val charging: Boolean)
 
 /** The server's answer (PresenceReportDTO): a store or home reminder to show, if any. */
 @Serializable
@@ -81,6 +85,8 @@ data class MemberPresence(
     /** Away: where the phone was when they left. Never given for someone at a
      *  place (the place is where they are); missing from servers before the map. */
     val point: PresencePoint? = null,
+    /** Their phone's last battery reading; missing before it sent one, and from older servers. */
+    val battery: PresenceBattery? = null,
 ) {
     val isHome: Boolean get() = place?.kind == "home"
 
@@ -99,6 +105,35 @@ data class PresencePlace(val id: String, val name: String, val kind: String = "o
 /** [at]: when it was taken; later than `since` when a live check left it. Missing on older servers. */
 @Serializable
 data class PresencePoint(val lat: Double, val lng: Double, val accuracyM: Double? = null, val at: String? = null)
+
+/** [at]: when the phone read it (ISO). */
+@Serializable
+data class PresenceBattery(val pct: Int, val charging: Boolean = false, val at: String)
+
+/** At or below this the level is shown as low (web: BATTERY_LOW_PCT). */
+const val BATTERY_LOW_PCT = 20
+
+/** A reading older than this shows its age (web: BATTERY_STALE_MS). */
+const val BATTERY_STALE_MS = 2 * 60 * 60_000L
+
+/**
+ * "Battery 85%", "Battery 85%, charging", "Battery 12%, 3 h ago" (web:
+ * batteryLabel). [low]: a flat-ish battery that isn't charging.
+ */
+data class BatteryLabel(val text: String, val low: Boolean)
+
+fun batteryLabel(battery: PresenceBattery, nowMillis: Long): BatteryLabel {
+    val atMillis = runCatching { java.time.Instant.parse(battery.at).toEpochMilli() }.getOrDefault(nowMillis)
+    val ageMs = nowMillis - atMillis
+    val parts = mutableListOf("Battery ${battery.pct}%")
+    if (ageMs >= BATTERY_STALE_MS) {
+        val hours = ageMs / 3_600_000
+        parts += if (hours < 48) "$hours h ago" else "${hours / 24} days ago"
+    } else if (battery.charging) {
+        parts += "charging"
+    }
+    return BatteryLabel(parts.joinToString(", "), battery.pct <= BATTERY_LOW_PCT && !battery.charging)
+}
 
 // --- Live checks (web liveCheckService) --------------------------------------------------
 // An adult watches where someone is for a few minutes. The checked person's
@@ -157,6 +192,13 @@ data class LiveChecksOverview(
     val choices: LiveCheckChoices = LiveCheckChoices(),
     val available: Boolean = false,
 )
+
+/**
+ * GET /api/supervision/ring: the children whose phone this member may ring
+ * (the ones they supervise). [available]: false when the server can't push.
+ */
+@Serializable
+data class RingOverview(val available: Boolean = false, val ringable: List<CheckableMember> = emptyList())
 
 /** "5 minutes", "1 hour", "2 hours". */
 fun minutesLabel(minutes: Int): String = when {

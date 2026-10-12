@@ -843,10 +843,31 @@ class ApiClient(
                     report.lat?.let { put("lat", it) }
                     report.lng?.let { put("lng", it) }
                     report.accuracyM?.let { put("accuracyM", it) }
+                    report.battery?.let { putBattery(it) }
                 },
             ),
             PresenceResult.serializer(),
         )
+
+    /** This phone's battery, hourly while its member shares. 409 = sharing is off. */
+    suspend fun reportBattery(battery: BatteryLevel, atMillis: Long) =
+        callUnit(
+            post(
+                "/api/location/battery",
+                buildJsonObject {
+                    put("pct", battery.pct)
+                    put("charging", battery.charging)
+                    put("at", Instant.ofEpochMilli(atMillis).toString())
+                },
+            ),
+        )
+
+    private fun JsonObjectBuilder.putBattery(battery: BatteryLevel) {
+        put("battery", buildJsonObject {
+            put("pct", battery.pct)
+            put("charging", battery.charging)
+        })
+    }
 
     /** Where the members who share their location are. */
     suspend fun presence(): List<MemberPresence> =
@@ -882,7 +903,14 @@ class ApiClient(
         )
 
     /** This phone's position during a check on its member. 409 = the check is over. */
-    suspend fun sendLiveCheckFix(id: String, lat: Double, lng: Double, accuracyM: Double?, atMillis: Long): LiveCheck =
+    suspend fun sendLiveCheckFix(
+        id: String,
+        lat: Double,
+        lng: Double,
+        accuracyM: Double?,
+        atMillis: Long,
+        battery: BatteryLevel? = null,
+    ): LiveCheck =
         call(
             post(
                 "/api/location/checks/fix",
@@ -892,6 +920,7 @@ class ApiClient(
                     put("lng", lng)
                     accuracyM?.let { put("accuracyM", it) }
                     put("at", Instant.ofEpochMilli(atMillis).toString())
+                    battery?.let { putBattery(it) }
                 },
             ),
             LiveCheck.serializer(),
@@ -899,6 +928,13 @@ class ApiClient(
 
     suspend fun stopLiveCheck(id: String): LiveCheck =
         call(post("/api/location/checks/stop", buildJsonObject { put("id", id) }), LiveCheck.serializer())
+
+    /** The children whose phone I may ring (the ones I supervise). */
+    suspend fun ringOverview(): RingOverview = call(get("/api/supervision/ring"), RingOverview.serializer())
+
+    /** Rings a supervised child's phone loudly, even on silent. 409 = still ringing, or no phone reached. */
+    suspend fun ringPhone(targetId: String) =
+        callUnit(post("/api/supervision/ring", buildJsonObject { put("targetId", targetId) }))
 
     // --- Permissions -------------------------------------------------------
 

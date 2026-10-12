@@ -58,6 +58,8 @@ import com.eosoclub.ourhome.data.LiveChecksOverview
 import com.eosoclub.ourhome.data.MapPlace
 import com.eosoclub.ourhome.data.MapTarget
 import com.eosoclub.ourhome.data.MemberPresence
+import com.eosoclub.ourhome.data.RingOverview
+import com.eosoclub.ourhome.data.batteryLabel
 import com.eosoclub.ourhome.data.awayOnMap
 import com.eosoclub.ourhome.data.fixAge
 import com.eosoclub.ourhome.data.intervalLabel
@@ -108,6 +110,8 @@ class MapViewModel(private val api: ApiClient) : ViewModel() {
         val sharing: Boolean = true,
         /** Live checks: who I may check, the ones I have running (null on servers without them). */
         val checks: LiveChecksOverview? = null,
+        /** The children I may ring (null on servers without ringing). */
+        val ring: RingOverview? = null,
         val loaded: Boolean = false,
         val loading: Boolean = true,
         val error: String? = null,
@@ -119,7 +123,13 @@ class MapViewModel(private val api: ApiClient) : ViewModel() {
         state.update { it.copy(loading = true) }
         state.load(
             fetch = {
-                MapData(api.mapPlaces(), api.presence(), api.locationConsent().isSharing, runCatching { api.liveChecks() }.getOrNull())
+                MapData(
+                    api.mapPlaces(),
+                    api.presence(),
+                    api.locationConsent().isSharing,
+                    runCatching { api.liveChecks() }.getOrNull(),
+                    runCatching { api.ringOverview() }.getOrNull(),
+                )
             },
             onOk = { s, data ->
                 s.copy(
@@ -127,6 +137,7 @@ class MapViewModel(private val api: ApiClient) : ViewModel() {
                     presence = data.presence,
                     sharing = data.sharing,
                     checks = data.checks,
+                    ring = data.ring,
                     loaded = true,
                     loading = false,
                     error = null,
@@ -155,11 +166,22 @@ class MapViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
+    /** Rings [member]'s phone; [onDone] gets the message to show. */
+    fun ring(member: CheckableMember, onDone: (String) -> Unit) = viewModelScope.launch {
+        try {
+            api.ringPhone(member.id)
+            onDone("Ringing ${member.name}'s phone")
+        } catch (e: Exception) {
+            onDone(e.message ?: "Couldn't ring their phone")
+        }
+    }
+
     private class MapData(
         val places: List<MapPlace>,
         val presence: List<MemberPresence>,
         val sharing: Boolean,
         val checks: LiveChecksOverview?,
+        val ring: RingOverview?,
     )
 }
 
@@ -239,16 +261,37 @@ internal fun MapScreen(api: ApiClient, showMessage: (String) -> Unit, modifier: 
                         }
                     }
                 }
+                val ring = state.ring
+                if (ring != null && ring.ringable.isNotEmpty()) {
+                    item { MapHeading("Ring phone") }
+                    if (!ring.available) {
+                        item { MapNote("Ringing a phone needs instant phone alerts (Firebase), which this server doesn't have set up.") }
+                    } else {
+                        item { MapNote("Rings loudly for up to 30 seconds, even on silent. They can tap Stop on their phone.") }
+                        items(ring.ringable, key = { "r-" + it.id }) { member ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
+                            ) {
+                                Text(member.name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { vm.ring(member, showMessage) }) { Text("Ring") }
+                            }
+                        }
+                    }
+                }
                 item { MapHeading("Who's where") }
                 if (state.presence.isEmpty()) {
                     item { MapNote("Nobody yet. Members show up here once they share their location and their phone has reported in.") }
                 }
                 items(state.presence, key = { "m-" + it.userId }) { member ->
                     val target = mapTarget(member, state.places)
+                    val battery = member.battery?.let { batteryLabel(it, System.currentTimeMillis()) }
                     MapRow(
                         title = member.name,
                         trailing = "${member.label} · ${relativeTime(member.since)}",
                         onClick = target?.let { { focusOn(it) } },
+                        subtitle = battery?.text,
+                        subtitleIsError = battery?.low == true,
                     )
                 }
                 item { MapHeading("Places") }
@@ -374,7 +417,13 @@ private fun MapNote(text: String) {
 }
 
 @Composable
-private fun MapRow(title: String, trailing: String, onClick: (() -> Unit)?) {
+private fun MapRow(
+    title: String,
+    trailing: String,
+    onClick: (() -> Unit)?,
+    subtitle: String? = null,
+    subtitleIsError: Boolean = false,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -383,7 +432,16 @@ private fun MapRow(title: String, trailing: String, onClick: (() -> Unit)?) {
             .clickable(enabled = onClick != null) { onClick?.invoke() }
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
-        Text(title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            subtitle?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (subtitleIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Text(trailing, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

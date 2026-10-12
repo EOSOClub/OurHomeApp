@@ -11,6 +11,29 @@ class LocationTest {
     private val home = MapPlace("h", "Home", "home", 41.88, -87.63, 150)
     private val costco = MapPlace("c", "Costco", "store", 41.9, -87.7, 500, listOf("groceries"))
 
+    private val now = java.time.Instant.parse("2026-10-12T18:00:00Z").toEpochMilli()
+    private fun minutesAgo(m: Long) = java.time.Instant.ofEpochMilli(now - m * 60_000).toString()
+
+    @Test
+    fun `the battery shows its level, and charging while fresh`() {
+        assertEquals(BatteryLabel("Battery 85%", false), batteryLabel(PresenceBattery(85, false, minutesAgo(10)), now))
+        assertEquals("Battery 85%, charging", batteryLabel(PresenceBattery(85, true, minutesAgo(10)), now).text)
+    }
+
+    @Test
+    fun `a low battery is flagged unless it is charging`() {
+        assertTrue(batteryLabel(PresenceBattery(20, false, minutesAgo(10)), now).low)
+        assertFalse(batteryLabel(PresenceBattery(21, false, minutesAgo(10)), now).low)
+        assertFalse(batteryLabel(PresenceBattery(5, true, minutesAgo(10)), now).low)
+    }
+
+    @Test
+    fun `a stale battery reading says how old it is`() {
+        assertEquals("Battery 40%, charging", batteryLabel(PresenceBattery(40, true, minutesAgo(119)), now).text)
+        assertEquals("Battery 40%, 3 h ago", batteryLabel(PresenceBattery(40, true, minutesAgo(180)), now).text)
+        assertEquals("Battery 40%, 3 days ago", batteryLabel(PresenceBattery(40, false, minutesAgo(3 * 24 * 60)), now).text)
+    }
+
     @Test
     fun `the geofence signature ignores order and names`() {
         assertEquals(geofenceSignature(listOf(home, costco)), geofenceSignature(listOf(costco, home)))

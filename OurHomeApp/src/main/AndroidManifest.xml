@@ -24,6 +24,11 @@
          who allowed live checks on their Profile. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- Ringing this phone (notifications/Ring): a supervising adult's ring plays
+         the alarm sound for half a minute in a short media foreground service,
+         and vibrates. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:name=".OurHomeApp"
@@ -107,6 +112,14 @@
             android:name=".location.LiveCheckService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- A supervising adult ringing this phone, started by the server's push.
+             Not exported: only our own push handler and the notification's Stop
+             reach it. -->
+        <service
+            android:name=".notifications.RingService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- Hands a downloaded app update to Android's installer (AppUpdate).
              Shares only cache/updates/, and only by a one-time read grant. -->

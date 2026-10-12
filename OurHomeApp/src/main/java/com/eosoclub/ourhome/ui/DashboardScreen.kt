@@ -48,6 +48,7 @@ import com.eosoclub.ourhome.data.DashboardTask
 import com.eosoclub.ourhome.data.DoneToday
 import com.eosoclub.ourhome.data.HouseholdRequest
 import com.eosoclub.ourhome.data.MemberPresence
+import com.eosoclub.ourhome.data.batteryLabel
 import com.eosoclub.ourhome.data.centi
 import com.eosoclub.ourhome.data.formatPoints
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -324,9 +325,11 @@ private fun PointsCard(points: DashboardPoints, onOpenPoints: () -> Unit) {
 private fun WhoIsWhereCard(presence: List<MemberPresence>, onOpenMap: () -> Unit) {
     DashCard("Who's where", action = "Map" to onOpenMap) {
         presence.forEach { p ->
+            val battery = p.battery?.let { batteryLabel(it, System.currentTimeMillis()) }
             Row2(
                 title = p.name,
-                subtitle = "since ${sinceLabel(p.since)}",
+                subtitle = listOfNotNull("since ${sinceLabel(p.since)}", battery?.text).joinToString(" · "),
+                subtitleIsError = battery?.low == true,
                 trailing = p.label,
                 trailingColor = if (p.isHome) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )

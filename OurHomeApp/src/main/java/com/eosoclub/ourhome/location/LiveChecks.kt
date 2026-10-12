@@ -170,6 +170,7 @@ class LiveCheckService : Service() {
                             location.longitude,
                             location.accuracy.toDouble(),
                             location.time.takeIf { it > 0 } ?: System.currentTimeMillis(),
+                            readBattery(this),
                         )
                     } catch (e: ApiException) {
                         // 409: over, or live checks turned off; 404/403: gone or Location off.
