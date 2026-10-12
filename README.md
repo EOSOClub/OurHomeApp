@@ -107,6 +107,14 @@ Sign in with an account created on the web app. 🎉
 > [!WARNING]
 > The role matrix in `data/Permissions.kt` mirrors `src/lib/permissions.ts` in the [web repo](https://github.com/EOSOClub/OurHome). **Keep the two in sync.**
 
+## 🐛 Found a bug?
+
+In the app, use **Report a bug** in the menu. It goes to your Head of House. Problems with OurHome itself, for the app, the website and the server alike, are tracked in one place: [OurHome issues](https://github.com/EOSOClub/OurHome/issues). Security problems are reported privately instead; see the [security policy](https://github.com/EOSOClub/OurHome/blob/main/SECURITY.md).
+
+## 📜 License
+
+OurHomeApp is free software under the [GNU Affero General Public License v3.0](LICENSE). You can run it, change it and share it. If you share a changed version, you must share your changed source code under the same license.
+
 ---
 
 <div align="center">
