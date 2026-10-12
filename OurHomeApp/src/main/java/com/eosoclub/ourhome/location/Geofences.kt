@@ -29,10 +29,12 @@ import com.eosoclub.ourhome.R
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.ApiException
 import com.eosoclub.ourhome.data.Features
+import com.eosoclub.ourhome.data.HomeReminder
 import com.eosoclub.ourhome.data.PresenceReport
 import com.eosoclub.ourhome.data.StoreReminder
 import com.eosoclub.ourhome.data.UnauthorizedException
 import com.eosoclub.ourhome.data.geofenceSignature
+import com.eosoclub.ourhome.notifications.HouseholdReminderAlerts
 import com.eosoclub.ourhome.notifications.RequestReminders
 import com.eosoclub.ourhome.notifications.lockScreenSafe
 import com.google.android.gms.location.Geofence
@@ -71,6 +73,8 @@ object Geofences {
     private const val KEY_FORCE = "force"
     private const val CHANNEL_ID = "store_reminders"
     private const val NOTIFICATION_ID = 1006
+    private const val HOME_CHANNEL_ID = "home_reminders"
+    private const val HOME_NOTIFICATION_ID = 1008
     private const val LOITER_MS = 2 * 60_000
 
     /** Intent extra value asking MainActivity for the Shopping tab. */
@@ -160,6 +164,7 @@ object Geofences {
     fun clear(context: Context) {
         removeAll(context)
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        NotificationManagerCompat.from(context).cancel(HOME_NOTIFICATION_ID)
     }
 
     // Mutable: Play services fills in which geofence fired and how.
@@ -198,6 +203,43 @@ object Geofences {
             .build()
         try {
             NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "notification permission revoked", e)
+        }
+    }
+
+    /**
+     * "You're home: 3 chores due". Its own channel, so anyone who doesn't want
+     * it can turn just this off in Android's settings. Opens Tasks.
+     */
+    fun showHomeReminder(context: Context, reminder: HomeReminder) {
+        if (!RequestReminders.canNotify(context)) return
+        context.getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel(HOME_CHANNEL_ID, "Home reminders", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Your chores due today, when you get home"
+            },
+        )
+        val open = PendingIntent.getActivity(
+            context,
+            9,
+            Intent(context, MainActivity::class.java)
+                .putExtra(RequestReminders.EXTRA_OPEN_TAB, HouseholdReminderAlerts.TAB_TASKS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = NotificationCompat.Builder(context, HOME_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_location)
+            .setContentTitle(reminder.title)
+            .setContentText(reminder.text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(reminder.text))
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            // The chores stay off the lock screen.
+            .lockScreenSafe(context, HOME_CHANNEL_ID, "Chores reminder")
+            .build()
+        try {
+            NotificationManagerCompat.from(context).notify(HOME_NOTIFICATION_ID, notification)
         } catch (e: SecurityException) {
             Log.w(TAG, "notification permission revoked", e)
         }
@@ -259,6 +301,7 @@ object Geofences {
                 val result = api.reportPresence(report)
                 Log.i(TAG, "reported ${report.transition} ${report.placeId}")
                 result.reminder?.let { showReminder(applicationContext, it) }
+                result.home?.let { showHomeReminder(applicationContext, it) }
                 Result.success()
             } catch (e: UnauthorizedException) {
                 removeAll(applicationContext)

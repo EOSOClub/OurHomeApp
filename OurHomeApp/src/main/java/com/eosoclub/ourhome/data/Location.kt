@@ -37,9 +37,28 @@ data class PresenceReport(
     val accuracyM: Double? = null,
 )
 
-/** The server's answer (PresenceReportDTO): a store reminder to show, if any. */
+/** The server's answer (PresenceReportDTO): a store or home reminder to show, if any. */
 @Serializable
-data class PresenceResult(val reminder: StoreReminder? = null)
+data class PresenceResult(val reminder: StoreReminder? = null, val home: HomeReminder? = null)
+
+/** Arrived home with chores of theirs due today or overdue. [titles]: the first few. */
+@Serializable
+data class HomeReminder(val count: Int, val titles: List<String> = emptyList()) {
+    /** "You're home: 3 chores due" / "You're home: 1 chore due". */
+    val title: String get() = "You're home: $count ${if (count == 1) "chore" else "chores"} due"
+
+    /** "Dishes, Take out the bins and 1 more". */
+    val text: String
+        get() {
+            val more = count - titles.size
+            return when {
+                titles.isEmpty() -> "Open Tasks to see them."
+                more > 0 -> "${titles.joinToString(", ")} and $more more"
+                titles.size == 1 -> titles[0]
+                else -> titles.dropLast(1).joinToString(", ") + " and " + titles.last()
+            }
+        }
+}
 
 @Serializable
 data class StoreReminder(val placeId: String, val placeName: String, val lists: List<ReminderList> = emptyList()) {

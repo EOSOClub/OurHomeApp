@@ -87,6 +87,16 @@ class LocationTest {
     }
 
     @Test
+    fun `the home reminder names the chores due`() {
+        assertEquals("You're home: 1 chore due", HomeReminder(1, listOf("Dishes")).title)
+        assertEquals("Dishes", HomeReminder(1, listOf("Dishes")).text)
+        assertEquals("Dishes and Bins", HomeReminder(2, listOf("Dishes", "Bins")).text)
+        val five = HomeReminder(5, listOf("Dishes", "Bins", "Cat"))
+        assertEquals("You're home: 5 chores due", five.title)
+        assertEquals("Dishes, Bins, Cat and 2 more", five.text)
+    }
+
+    @Test
     fun `live check labels`() {
         assertEquals("5 minutes", minutesLabel(5))
         assertEquals("1 hour", minutesLabel(60))
