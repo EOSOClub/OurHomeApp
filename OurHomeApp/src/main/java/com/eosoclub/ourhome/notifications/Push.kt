@@ -11,6 +11,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.eosoclub.ourhome.OurHomeApp
 import com.eosoclub.ourhome.data.UnauthorizedException
+import com.eosoclub.ourhome.location.LiveChecks
 import com.google.android.gms.tasks.Task
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
@@ -81,8 +82,21 @@ class PushMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        if (message.data["type"] != "sync") return
-        Log.i("Push", "sync push (${message.data["reason"] ?: "unknown"}); checking now")
-        RequestReminders.checkNow(applicationContext)
+        when (message.data["type"]) {
+            "sync" -> {
+                Log.i("Push", "sync push (${message.data["reason"] ?: "unknown"}); checking now")
+                RequestReminders.checkNow(applicationContext)
+            }
+            // A live location check on this member: Android lets only a
+            // high-priority push start it from the background (LiveChecks).
+            "live_check" -> {
+                val id = message.data["checkId"] ?: return
+                if (message.priority != RemoteMessage.PRIORITY_HIGH) {
+                    Log.w("Push", "live check push arrived at normal priority; Android may refuse to start it")
+                }
+                LiveChecks.start(applicationContext, id)
+            }
+            "live_check_stop" -> LiveChecks.stop(applicationContext)
+        }
     }
 }

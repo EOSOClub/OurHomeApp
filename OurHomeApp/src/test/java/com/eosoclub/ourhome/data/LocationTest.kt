@@ -87,6 +87,38 @@ class LocationTest {
     }
 
     @Test
+    fun `live check labels`() {
+        assertEquals("5 minutes", minutesLabel(5))
+        assertEquals("1 hour", minutesLabel(60))
+        assertEquals("2 hours", minutesLabel(120))
+        assertEquals("15 seconds", intervalLabel(15))
+        assertEquals("1 minute", intervalLabel(60))
+        assertEquals("2 minutes", intervalLabel(120))
+        assertEquals("updated 20s ago", fixAge(1_000_000, 1_020_000))
+        assertEquals("updated 3 min ago", fixAge(1_000_000, 1_180_000))
+        // A phone clock slightly ahead never reads as negative.
+        assertEquals("updated 0s ago", fixAge(1_005_000, 1_000_000))
+    }
+
+    @Test
+    fun `the checked person's log says how each check went`() {
+        val start = 1_000_000L
+        val entry = LiveCheckLogEntry("c", "Alex", "2026-10-12T15:00:00Z", answered = true)
+        assertEquals("running now", liveCheckLogDetail(entry, start, null))
+        assertEquals("5 min", liveCheckLogDetail(entry, start, start + 5 * 60_000))
+        assertEquals("stopped by you after 2 min", liveCheckLogDetail(entry.copy(stoppedBy = "me"), start, start + 2 * 60_000))
+        assertEquals("1 min, stopped early", liveCheckLogDetail(entry.copy(stoppedBy = "requester"), start, start + 20_000))
+        assertEquals("your phone didn't answer", liveCheckLogDetail(entry.copy(answered = false), start, start + 60_000))
+    }
+
+    @Test
+    fun `the map fetches as often as the busiest check, else once a minute`() {
+        fun check(interval: Int) = LiveCheck("c$interval", "a", "Alex", "s", "Sam", "", "", interval, "live")
+        assertEquals(60_000L, mapRefreshMs(emptyList()))
+        assertEquals(15_000L, mapRefreshMs(listOf(check(30), check(15))))
+    }
+
+    @Test
     fun `location is off on servers from before features`() {
         assertFalse(Features.from(null).location)
         assertTrue(Features.from(listOf("tasks", "location")).location)

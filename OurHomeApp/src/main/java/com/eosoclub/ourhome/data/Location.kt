@@ -77,8 +77,103 @@ data class MemberPresence(
 @Serializable
 data class PresencePlace(val id: String, val name: String, val kind: String = "other")
 
+/** [at]: when it was taken; later than `since` when a live check left it. Missing on older servers. */
 @Serializable
-data class PresencePoint(val lat: Double, val lng: Double, val accuracyM: Double? = null)
+data class PresencePoint(val lat: Double, val lng: Double, val accuracyM: Double? = null, val at: String? = null)
+
+// --- Live checks (web liveCheckService) --------------------------------------------------
+// An adult watches where someone is for a few minutes. The checked person's
+// phone shows a notification the whole time (location/LiveChecks) and sends a
+// fix every interval; only the latest is kept on the server.
+
+/** One check. [state]: "waiting" | "live" | "no_answer" | "ended". */
+@Serializable
+data class LiveCheck(
+    val id: String,
+    val requesterId: String,
+    val requesterName: String,
+    val targetId: String,
+    val targetName: String,
+    val startedAt: String,
+    val endsAt: String,
+    val intervalSec: Int,
+    val state: String,
+    val fix: LiveCheckFix? = null,
+) {
+    val isOver: Boolean get() = state == "ended"
+}
+
+@Serializable
+data class LiveCheckFix(val lat: Double, val lng: Double, val accuracyM: Double? = null, val at: String)
+
+/** One check in the checked person's log. [stoppedBy]: "me" | "requester" | null (ran its time). */
+@Serializable
+data class LiveCheckLogEntry(
+    val id: String,
+    val requesterName: String,
+    val startedAt: String,
+    val endedAt: String? = null,
+    val stoppedBy: String? = null,
+    val answered: Boolean = false,
+)
+
+@Serializable
+data class LiveCheckChoices(
+    val minutes: List<Int> = emptyList(),
+    val intervals: List<Int> = emptyList(),
+    val defaultMinutes: Int = 5,
+    val defaultIntervalSec: Int = 30,
+)
+
+@Serializable
+data class CheckableMember(val id: String, val name: String)
+
+/** GET /api/location/checks. [available]: false when the server can't push (no Firebase). */
+@Serializable
+data class LiveChecksOverview(
+    val onMe: LiveCheck? = null,
+    val started: List<LiveCheck> = emptyList(),
+    val log: List<LiveCheckLogEntry> = emptyList(),
+    val checkable: List<CheckableMember> = emptyList(),
+    val choices: LiveCheckChoices = LiveCheckChoices(),
+    val available: Boolean = false,
+)
+
+/** "5 minutes", "1 hour", "2 hours". */
+fun minutesLabel(minutes: Int): String = when {
+    minutes % 60 == 0 && minutes == 60 -> "1 hour"
+    minutes % 60 == 0 -> "${minutes / 60} hours"
+    else -> "$minutes minutes"
+}
+
+/** "15 seconds", "1 minute", "2 minutes". */
+fun intervalLabel(seconds: Int): String = when {
+    seconds % 60 == 0 && seconds == 60 -> "1 minute"
+    seconds % 60 == 0 -> "${seconds / 60} minutes"
+    else -> "$seconds seconds"
+}
+
+/** "updated 20s ago" / "updated 3 min ago" (web: fixAge). */
+fun fixAge(atMillis: Long, nowMillis: Long): String {
+    val seconds = ((nowMillis - atMillis) / 1000.0).let { kotlin.math.round(it).toLong() }.coerceAtLeast(0)
+    return if (seconds < 90) "updated ${seconds}s ago" else "updated ${kotlin.math.round(seconds / 60.0).toLong()} min ago"
+}
+
+/** A log entry's detail (web: logDetail): "5 min", "stopped by you after 2 min", ... */
+fun liveCheckLogDetail(entry: LiveCheckLogEntry, startedMillis: Long, endedMillis: Long?): String {
+    if (endedMillis == null) return "running now"
+    if (!entry.answered) return "your phone didn't answer"
+    val minutes = kotlin.math.round((endedMillis - startedMillis) / 60_000.0).toLong().coerceAtLeast(1)
+    return when (entry.stoppedBy) {
+        "me" -> "stopped by you after $minutes min"
+        "requester" -> "$minutes min, stopped early"
+        else -> "$minutes min"
+    }
+}
+
+/** How soon the Map screen fetches again: as often as the most frequent running check, else a minute. */
+fun mapRefreshMs(started: List<LiveCheck>): Long =
+    started.minOfOrNull { it.intervalSec }?.let { it * 1000L } ?: 60_000L
 
 /** The names of who is at [placeId], for its label on the map. */
 fun peopleAt(placeId: String, presence: List<MemberPresence>): List<String> =

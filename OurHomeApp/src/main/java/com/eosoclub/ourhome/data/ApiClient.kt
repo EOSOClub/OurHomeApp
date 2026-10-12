@@ -852,6 +852,54 @@ class ApiClient(
     suspend fun presence(): List<MemberPresence> =
         call(get("/api/location/presence"), ListSerializer(MemberPresence.serializer()))
 
+    /** Allows (or stops allowing) adults to start a live check; off also ends one running now. */
+    suspend fun setLiveChecks(on: Boolean): LocationConsent =
+        call(
+            Request.Builder()
+                .url(baseUrl() + "/api/location/consent")
+                .patch(buildJsonObject { put("liveChecks", on) }.toString().toRequestBody(jsonType))
+                .build(),
+            LocationConsent.serializer(),
+        )
+
+    /** A check on me, checks I started, my log, who I may check, the household's limits. */
+    suspend fun liveChecks(): LiveChecksOverview = call(get("/api/location/checks"), LiveChecksOverview.serializer())
+
+    /** One check (the person checking, or the person checked). */
+    suspend fun liveCheck(id: String): LiveCheck = call(get("/api/location/checks/status?id=$id"), LiveCheck.serializer())
+
+    suspend fun startLiveCheck(targetId: String, minutes: Int, intervalSec: Int): LiveCheck =
+        call(
+            post(
+                "/api/location/checks",
+                buildJsonObject {
+                    put("targetId", targetId)
+                    put("minutes", minutes)
+                    put("intervalSec", intervalSec)
+                },
+            ),
+            LiveCheck.serializer(),
+        )
+
+    /** This phone's position during a check on its member. 409 = the check is over. */
+    suspend fun sendLiveCheckFix(id: String, lat: Double, lng: Double, accuracyM: Double?, atMillis: Long): LiveCheck =
+        call(
+            post(
+                "/api/location/checks/fix",
+                buildJsonObject {
+                    put("id", id)
+                    put("lat", lat)
+                    put("lng", lng)
+                    accuracyM?.let { put("accuracyM", it) }
+                    put("at", Instant.ofEpochMilli(atMillis).toString())
+                },
+            ),
+            LiveCheck.serializer(),
+        )
+
+    suspend fun stopLiveCheck(id: String): LiveCheck =
+        call(post("/api/location/checks/stop", buildJsonObject { put("id", id) }), LiveCheck.serializer())
+
     // --- Permissions -------------------------------------------------------
 
     /** The signed-in user's page access (what they may add/edit/delete). */

@@ -32,11 +32,17 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.eosoclub.ourhome.data.LiveChecksOverview
 import com.eosoclub.ourhome.data.LocationConsent
 import com.eosoclub.ourhome.data.LocationSetup
 import com.eosoclub.ourhome.data.SessionManager
+import com.eosoclub.ourhome.data.liveCheckLogDetail
 import com.eosoclub.ourhome.data.locationSetup
 import com.eosoclub.ourhome.location.Geofences
+import com.eosoclub.ourhome.location.LiveChecks
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -49,6 +55,8 @@ class LocationViewModel(private val session: SessionManager) : ViewModel() {
         val consent: LocationConsent? = null,
         /** How many map places the household has (null = not loaded). */
         val places: Int? = null,
+        /** A check running on me and my log (null = not loaded, or a server without live checks). */
+        val checks: LiveChecksOverview? = null,
         val saving: Boolean = false,
         val error: String? = null,
     )
@@ -62,7 +70,8 @@ class LocationViewModel(private val session: SessionManager) : ViewModel() {
         try {
             val consent = api.locationConsent()
             val places = runCatching { api.mapPlaces().size }.getOrNull()
-            state.update { it.copy(consent = consent, places = places, error = null) }
+            val checks = runCatching { api.liveChecks() }.getOrNull()
+            state.update { it.copy(consent = consent, places = places, checks = checks, error = null) }
         } catch (e: Exception) {
             state.update { it.copy(error = e.message ?: "Couldn't load your location settings") }
         }
@@ -80,6 +89,32 @@ class LocationViewModel(private val session: SessionManager) : ViewModel() {
             _messages.send(e.message ?: "Couldn't change location sharing")
         } finally {
             state.update { it.copy(saving = false) }
+        }
+    }
+
+    fun setLiveChecks(on: Boolean) = viewModelScope.launch {
+        state.update { it.copy(saving = true) }
+        try {
+            val consent = api.setLiveChecks(on)
+            state.update { it.copy(consent = consent) }
+            _messages.send(if (consent.liveChecks) "Live checks allowed" else "Live checks off")
+            refresh()
+        } catch (e: Exception) {
+            _messages.send(e.message ?: "Couldn't change live checks")
+        } finally {
+            state.update { it.copy(saving = false) }
+        }
+    }
+
+    /** Stops a check running on me (the notification's Stop does the same). */
+    fun stopCheck(context: Context, id: String) = viewModelScope.launch {
+        try {
+            api.stopLiveCheck(id)
+            LiveChecks.stop(context)
+            _messages.send("Live check stopped")
+            refresh()
+        } catch (e: Exception) {
+            _messages.send(e.message ?: "Couldn't stop the live check")
         }
     }
 }
@@ -173,8 +208,77 @@ internal fun LocationCard(session: SessionManager, showMessage: (String) -> Unit
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
+
+        val checks = state.checks
+        // Live checks: only once sharing is on, and only on servers that have them.
+        if (consent.isSharing && checks != null) {
+            checks.onMe?.let { check ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "${check.requesterName} is checking where you are until ${clockLabel(check.endsAt)}.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (consent.canChange) {
+                        TextButton(onClick = { vm.stopCheck(appContext, check.id) }) { Text("Stop") }
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text("Allow live checks", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "An adult in the household can see where you are for a few minutes, updated every " +
+                            "minute or more often. Your phone shows a notification the whole time, you can stop " +
+                            "it there, and every check is listed here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = consent.liveChecks,
+                    enabled = !state.saving,
+                    onCheckedChange = { vm.setLiveChecks(it) },
+                )
+            }
+            if (checks.log.isNotEmpty()) {
+                Text(
+                    "LIVE CHECKS ON YOU",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                checks.log.forEach { entry ->
+                    val started = runCatching { Instant.parse(entry.startedAt).toEpochMilli() }.getOrDefault(0L)
+                    val ended = entry.endedAt?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "${entry.requesterName} · ${liveCheckLogDetail(entry, started, ended)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            relativeTime(entry.startedAt),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Text(
+                    "Kept for 30 days.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
+
+/** "3:15 PM" in the phone's time zone. */
+internal fun clockLabel(iso: String): String =
+    runCatching {
+        Instant.parse(iso).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("h:mm a"))
+    }.getOrDefault(iso)
 
 @Composable
 private fun SetupStep(text: String, button: String, onClick: () -> Unit) {

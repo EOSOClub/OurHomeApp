@@ -444,7 +444,7 @@ fun HomeScreen(
             Overlay.ScanHistory -> ScanHistoryScreen(session.api, modifier)
             Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)
             Overlay.Activity -> ActivityScreen(session.api, user.id, modifier)
-            Overlay.Map -> MapScreen(session.api, modifier)
+            Overlay.Map -> MapScreen(session.api, showMessage, modifier)
             Overlay.Settings -> SettingsScreen(session.api, session.baseUrl, isHead = user.role == "head", features, showMessage, modifier)
             Overlay.Members -> MembersScreen(session, user, showMessage, modifier)
             null -> TabContent(

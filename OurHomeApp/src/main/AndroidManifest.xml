@@ -19,6 +19,11 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <!-- Android drops geofences on reboot; this registers them again. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Live location checks (location/LiveChecks): a short location foreground
+         service, with its notification showing the whole time. Only for members
+         who allowed live checks on their Profile. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <application
         android:name=".OurHomeApp"
@@ -94,6 +99,14 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- A live location check on this phone's member, started by the
+             server's push. Not exported: only our own push handler and the
+             notification's Stop (unlock required) reach it. -->
+        <service
+            android:name=".location.LiveCheckService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!-- Hands a downloaded app update to Android's installer (AppUpdate).
              Shares only cache/updates/, and only by a one-time read grant. -->

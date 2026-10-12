@@ -37,6 +37,7 @@ import com.eosoclub.ourhome.data.defaultAccess
 import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.summary
 import com.eosoclub.ourhome.location.Geofences
+import com.eosoclub.ourhome.location.LiveChecks
 import java.util.concurrent.TimeUnit
 
 /**
@@ -105,6 +106,7 @@ object RequestReminders {
         DeadlineReminders.clear(context)
         AppUpdateAlerts.clear(context)
         Geofences.clear(context)
+        LiveChecks.stop(context)
     }
 
     fun ensureChannel(context: Context) {
