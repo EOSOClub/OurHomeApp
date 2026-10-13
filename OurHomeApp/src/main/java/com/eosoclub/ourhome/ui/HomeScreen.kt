@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
@@ -174,7 +175,20 @@ fun HomeScreen(
     LaunchedEffect(features) {
         if (!tab.isOn(features)) tab = Tab.Home
         if (overlay == Overlay.Points && !features.points) overlay = null
-        if (overlay == Overlay.Map && !features.location) overlay = null
+        if ((overlay == Overlay.Map || overlay == Overlay.LookAfter) && !features.location) overlay = null
+    }
+    // Whether this adult supervises anyone, so the menu offers "People you look
+    // after". Asked again on each tab change and each time the menu opens, so a
+    // change the Head makes shows up without restarting the app.
+    var looksAfter by remember { mutableStateOf(false) }
+    LaunchedEffect(tab, menuOpen, features.location) {
+        if (!features.location) {
+            looksAfter = false
+            return@LaunchedEffect
+        }
+        runCatching { session.api.lookAfter().people.isNotEmpty() }
+            .onSuccess { looksAfter = it }
+            .onFailure { if (it is CancellationException) throw it }
     }
     // Keep both badges and the permissions current as the user moves around.
     LaunchedEffect(tab) {
@@ -337,6 +351,13 @@ fun HomeScreen(
                                         onClick = { menuOpen = false; overlay = Overlay.Map },
                                     )
                                 }
+                                if (looksAfter) {
+                                    DropdownMenuItem(
+                                        text = { Text("People you look after") },
+                                        leadingIcon = { Icon(Icons.Filled.Favorite, contentDescription = null) },
+                                        onClick = { menuOpen = false; overlay = Overlay.LookAfter },
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Activity") },
                                     leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
@@ -430,6 +451,8 @@ fun HomeScreen(
                     when {
                         target != null && target.isOn(features) -> { overlay = null; tab = target }
                         n.subjectType == "app_release" -> overlay = Overlay.Profile
+                        // A supervised child's phone (phone_alert): their status is there.
+                        n.subjectType == "phone" && features.location -> overlay = Overlay.LookAfter
                     }
                 },
                 modifier,
@@ -445,6 +468,7 @@ fun HomeScreen(
             Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)
             Overlay.Activity -> ActivityScreen(session.api, user.id, modifier)
             Overlay.Map -> MapScreen(session.api, showMessage, modifier)
+            Overlay.LookAfter -> LookAfterScreen(session.api, showMessage, modifier)
             Overlay.Settings -> SettingsScreen(session.api, session.baseUrl, isHead = user.role == "head", features, showMessage, modifier)
             Overlay.Members -> MembersScreen(session, user, showMessage, modifier)
             null -> TabContent(
@@ -498,6 +522,7 @@ private enum class Overlay(val label: String) {
     Points("Points"),
     Activity("Activity"),
     Map("Map"),
+    LookAfter("People you look after"),
     Settings("Settings"),
     Members("Household"),
 }

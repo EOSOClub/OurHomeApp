@@ -18,7 +18,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -59,8 +58,6 @@ import com.eosoclub.ourhome.data.LiveChecksOverview
 import com.eosoclub.ourhome.data.MapPlace
 import com.eosoclub.ourhome.data.MapTarget
 import com.eosoclub.ourhome.data.MemberPresence
-import com.eosoclub.ourhome.data.LookAfter
-import com.eosoclub.ourhome.data.LookedAfter
 import com.eosoclub.ourhome.data.batteryLabel
 import com.eosoclub.ourhome.data.awayOnMap
 import com.eosoclub.ourhome.data.fixAge
@@ -112,12 +109,6 @@ class MapViewModel(private val api: ApiClient) : ViewModel() {
         val sharing: Boolean = true,
         /** Live checks: who I may check, the ones I have running (null on servers without them). */
         val checks: LiveChecksOverview? = null,
-        /** The children and teens I look after (null on servers without it). */
-        val lookAfter: LookAfter? = null,
-        /** Whose "Location required" is being saved, and to what. */
-        val savingRequired: Pair<String, Boolean>? = null,
-        /** Whose "Share app usage" is being saved, and to what. */
-        val savingUsage: Pair<String, Boolean>? = null,
         val loaded: Boolean = false,
         val loading: Boolean = true,
         val error: String? = null,
@@ -125,12 +116,7 @@ class MapViewModel(private val api: ApiClient) : ViewModel() {
 
     val state = MutableStateFlow(UiState())
 
-    /** Counts changes made here to "People you look after", so a refresh that
-     *  started before one can't put the old values back (a switch flicking back). */
-    private var lookAfterEdits = 0
-
     fun load() = viewModelScope.launch {
-        val editsAtStart = lookAfterEdits
         state.update { it.copy(loading = true) }
         state.load(
             fetch = {
@@ -139,7 +125,6 @@ class MapViewModel(private val api: ApiClient) : ViewModel() {
                     api.presence(),
                     api.locationConsent().isSharing,
                     runCatching { api.liveChecks() }.getOrNull(),
-                    runCatching { api.lookAfter() }.getOrNull(),
                 )
             },
             onOk = { s, data ->
@@ -148,7 +133,6 @@ class MapViewModel(private val api: ApiClient) : ViewModel() {
                     presence = data.presence,
                     sharing = data.sharing,
                     checks = data.checks,
-                    lookAfter = if (lookAfterEdits == editsAtStart) data.lookAfter else s.lookAfter,
                     loaded = true,
                     loading = false,
                     error = null,
@@ -177,54 +161,11 @@ class MapViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
-    /** Rings [person]'s phone; [onDone] gets the message to show. */
-    fun ring(person: LookedAfter, onDone: (String) -> Unit) = viewModelScope.launch {
-        try {
-            api.ringPhone(person.id)
-            onDone("Ringing ${person.name}'s phone")
-        } catch (e: Exception) {
-            onDone(e.message ?: "Couldn't ring their phone")
-        }
-    }
-
-    /** Makes [person]'s location sharing required, or stops requiring it. */
-    fun setRequired(person: LookedAfter, required: Boolean, onDone: (String) -> Unit) = viewModelScope.launch {
-        lookAfterEdits++
-        state.update { it.copy(savingRequired = person.id to required) }
-        try {
-            val next = api.setRequiredSharing(person.id, required)
-            // Set before the saving state ends, so the box never flicks back.
-            state.update { it.copy(lookAfter = next, savingRequired = null) }
-            onDone(if (required) "${person.name}'s location sharing is now required" else "${person.name} can turn sharing off again")
-            // Who may be checked changes with it.
-            load()
-        } catch (e: Exception) {
-            state.update { it.copy(savingRequired = null) }
-            onDone(e.message ?: "Couldn't change it")
-        }
-    }
-
-    /** Turns sharing [person]'s app usage on or off. */
-    fun setUsage(person: LookedAfter, share: Boolean, onDone: (String) -> Unit) = viewModelScope.launch {
-        lookAfterEdits++
-        state.update { it.copy(savingUsage = person.id to share) }
-        try {
-            val next = api.setUsageSharing(person.id, share)
-            // Set before the saving state ends, so the switch never flicks back.
-            state.update { it.copy(lookAfter = next, savingUsage = null) }
-            onDone(if (share) "${person.name}'s app usage will be shared" else "${person.name}'s app usage is no longer shared")
-        } catch (e: Exception) {
-            state.update { it.copy(savingUsage = null) }
-            onDone(e.message ?: "Couldn't change it")
-        }
-    }
-
     private class MapData(
         val places: List<MapPlace>,
         val presence: List<MemberPresence>,
         val sharing: Boolean,
         val checks: LiveChecksOverview?,
-        val lookAfter: LookAfter?,
     )
 }
 
@@ -302,34 +243,6 @@ internal fun MapScreen(api: ApiClient, showMessage: (String) -> Unit, modifier: 
                                 TextButton(onClick = { starting = member }) { Text("Check location") }
                             }
                         }
-                    }
-                }
-                val lookAfter = state.lookAfter
-                if (lookAfter != null && lookAfter.people.isNotEmpty()) {
-                    item { MapHeading("People you look after") }
-                    items(lookAfter.people, key = { "r-" + it.id }) { person ->
-                        val saving = state.savingRequired?.takeIf { it.first == person.id }
-                        val savingUsage = state.savingUsage?.takeIf { it.first == person.id }
-                        LookedAfterRow(
-                            person,
-                            canRing = lookAfter.canRing,
-                            required = saving?.second ?: person.required,
-                            saving = saving != null,
-                            sharesUsage = savingUsage?.second ?: person.appUsage.shared,
-                            savingUsage = savingUsage != null,
-                            onRing = { vm.ring(person, showMessage) },
-                            onRequired = { vm.setRequired(person, it, showMessage) },
-                            onUsage = { vm.setUsage(person, it, showMessage) },
-                        )
-                    }
-                    item {
-                        MapNote(
-                            "Ring rings their phone loudly for up to 30 seconds, even on silent. Location required keeps " +
-                                "their location sharing on, and lets you check where they are without them allowing it. " +
-                                "They always see when you check. Share app usage shows how long they spend in each app; " +
-                                "their phone needs Usage access for it." +
-                                if (lookAfter.canRing) "" else " Ringing needs instant phone alerts, which this server doesn't have set up.",
-                        )
                     }
                 }
                 item { MapHeading("Who's where") }
@@ -467,60 +380,6 @@ private fun MapNote(text: String) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
     )
-}
-
-/** One child or teen in "People you look after": their phone, Ring, and the Location required and Share app usage switches. */
-@Composable
-private fun LookedAfterRow(
-    person: LookedAfter,
-    canRing: Boolean,
-    required: Boolean,
-    saving: Boolean,
-    sharesUsage: Boolean,
-    savingUsage: Boolean,
-    onRing: () -> Unit,
-    onRequired: (Boolean) -> Unit,
-    onUsage: (Boolean) -> Unit,
-) {
-    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(person.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                person.sharingNote?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                // Their phone: what's wrong with it (red), or when it last checked in.
-                val phone = person.phone
-                val problem = phone?.problemText
-                Text(
-                    when {
-                        phone == null -> "Their phone hasn't checked in yet"
-                        problem != null -> "$problem (last seen ${relativeTime(phone.lastSeenAt)})"
-                        else -> "Phone checked in ${relativeTime(phone.lastSeenAt)}"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (problem != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (canRing) TextButton(onClick = onRing) { Text("Ring") }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Location required", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            Switch(checked = required, enabled = !saving, onCheckedChange = onRequired)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Share app usage", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            Switch(checked = sharesUsage, enabled = !savingUsage, onCheckedChange = onUsage)
-        }
-        if (person.appUsage.shared) {
-            Text(
-                person.appUsage.latest?.line(java.time.LocalDate.now().toString())
-                    ?: "No app usage from their phone yet. It needs the latest OurHome app, and Usage access allowed.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
 }
 
 @Composable
