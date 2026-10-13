@@ -35,6 +35,12 @@ class AppUsageTest {
     }
 
     @Test
+    fun `a second screen of the same app doesn't restart its clock`() {
+        val ms = foregroundMillis(listOf(on("yt", 0), on("yt", 10), off("yt", 20)), start, end)
+        assertEquals(20 * min, ms["yt"])
+    }
+
+    @Test
     fun `events out of order are sorted first, and later ones ignored`() {
         val ms = foregroundMillis(listOf(off("yt", 30), on("yt", 20), on("x", 24 * 60 + 5)), start, end)
         assertEquals(10 * min, ms["yt"])
@@ -51,9 +57,13 @@ class AppUsageTest {
     @Test
     fun `minutes read the way people say them, and the card line marks today`() {
         assertEquals("under a minute", formatMinutes(0))
+        assertEquals("45 min", formatMinutes(45))
+        assertEquals("1 h", formatMinutes(60))
         assertEquals("2 h 5 min", formatMinutes(125))
         val latest = UsageLatest("2026-10-12", 125, listOf(UsageTopApp("YouTube", 70)), "2026-10-12T17:00:00Z")
         assertEquals("Today: 2 h 5 min · YouTube 1 h 10 min", latest.line("2026-10-12"))
-        assertEquals("2026-10-12: 2 h 5 min · YouTube 1 h 10 min", latest.line("2026-10-13"))
+        assertEquals("Yesterday: 2 h 5 min · YouTube 1 h 10 min", latest.line("2026-10-13"))
+        assertEquals("Oct 12: 2 h 5 min · YouTube 1 h 10 min", latest.line("2026-10-14"))
+        assertEquals("Yesterday", usageDayLabel("2026-09-30", "2026-10-01"))
     }
 }

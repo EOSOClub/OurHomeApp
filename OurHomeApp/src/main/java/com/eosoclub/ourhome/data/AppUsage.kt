@@ -83,9 +83,20 @@ data class UsageLatest(
 ) {
     /** "Today: 2 h 5 min · YouTube 1 h 10 min, Roblox 30 min". */
     fun line(today: String): String {
-        val head = "${if (day == today) "Today" else day}: ${formatMinutes(totalMinutes)}"
+        val head = "${usageDayLabel(day, today)}: ${formatMinutes(totalMinutes)}"
         return if (top.isEmpty()) head else head + " · " + top.joinToString(", ") { "${it.label} ${formatMinutes(it.minutes)}" }
     }
+}
+
+private val usageShortDate = java.time.format.DateTimeFormatter.ofPattern("MMM d", java.util.Locale.US)
+
+/** "Today", "Yesterday", or a short date like "Oct 10" for [day], given [today] (web: usageDayLabel). */
+fun usageDayLabel(day: String, today: String): String {
+    if (day == today) return "Today"
+    val date = runCatching { java.time.LocalDate.parse(day) }.getOrNull() ?: return day
+    val now = runCatching { java.time.LocalDate.parse(today) }.getOrNull()
+    if (now != null && date == now.minusDays(1)) return "Yesterday"
+    return date.format(usageShortDate)
 }
 
 @Serializable
