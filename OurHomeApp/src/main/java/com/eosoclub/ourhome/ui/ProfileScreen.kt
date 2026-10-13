@@ -243,6 +243,7 @@ fun ProfileScreen(
             }
             state.members?.takeIf { it.size > 1 }?.let { HouseholdCard(it, profile.id) }
             if (showLocation) LocationCard(session, showMessage)
+            AppUsageCard(session)
             state.release?.let { release ->
                 val context = LocalContext.current
                 AppUpdateCard(release, state.downloadProgress) { vm.downloadAndInstall(context.applicationContext) }

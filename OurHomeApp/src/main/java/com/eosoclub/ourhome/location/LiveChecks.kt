@@ -157,7 +157,9 @@ class LiveCheckService : Service() {
         val api = (applicationContext as OurHomeApp).session.api
         try {
             var check = api.liveCheck(id)
-            val canStop = runCatching { api.locationConsent().canChange }.getOrDefault(true)
+            // The server says per check (not a supervisor's under required sharing);
+            // older servers don't, and then sharing being required decides.
+            val canStop = check.canStopOnMe ?: runCatching { api.locationConsent().canChange }.getOrDefault(true)
             showNotification(notification(id, check, canStop))
             val client = LocationServices.getFusedLocationProviderClient(this)
             while (!check.isOver && System.currentTimeMillis() < Instant.parse(check.endsAt).toEpochMilli()) {

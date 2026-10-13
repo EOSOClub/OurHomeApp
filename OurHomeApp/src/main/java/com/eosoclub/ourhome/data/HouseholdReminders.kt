@@ -8,7 +8,9 @@ package com.eosoclub.ourhome.data
  * task/bill/item plus that page's managers) and tracks read state per person,
  * so the app alerts on exactly what the user's bell returns.
  */
-val HOUSEHOLD_REMINDER_TYPES = setOf("overdue", "low_inventory", "reminder", "bill_due", "task_ready")
+// "phone_alert": a supervised child's phone went quiet, or location or Usage
+// access was turned off while needed (web phoneStatusService); its title says it all.
+val HOUSEHOLD_REMINDER_TYPES = setOf("overdue", "low_inventory", "reminder", "bill_due", "task_ready", "phone_alert")
 
 /**
  * What the phone should do with the current unread reminders.

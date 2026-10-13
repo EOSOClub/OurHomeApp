@@ -11,6 +11,21 @@ class LocationTest {
     private val home = MapPlace("h", "Home", "home", 41.88, -87.63, 150)
     private val costco = MapPlace("c", "Costco", "store", 41.9, -87.7, 500, listOf("groceries"))
 
+    @Test
+    fun `a looked-after phone names its problems, and nothing when all is well`() {
+        assertEquals(null, LookedAfterPhone("2026-10-12T10:00:00Z").problemText)
+        assertEquals("Phone hasn't checked in", LookedAfterPhone("x", problems = listOf("quiet")).problemText)
+        assertEquals(
+            "Phone hasn't checked in · Location turned off on their phone",
+            LookedAfterPhone("x", problems = listOf("quiet", "location_off", "unknown")).problemText,
+        )
+    }
+
+    @Test
+    fun `phone alerts join the household reminder notification`() {
+        assertTrue("phone_alert" in HOUSEHOLD_REMINDER_TYPES)
+    }
+
     private val now = java.time.Instant.parse("2026-10-12T18:00:00Z").toEpochMilli()
     private fun minutesAgo(m: Long) = java.time.Instant.ofEpochMilli(now - m * 60_000).toString()
 
@@ -32,6 +47,14 @@ class LocationTest {
         assertEquals("Battery 40%, charging", batteryLabel(PresenceBattery(40, true, minutesAgo(119)), now).text)
         assertEquals("Battery 40%, 3 h ago", batteryLabel(PresenceBattery(40, true, minutesAgo(180)), now).text)
         assertEquals("Battery 40%, 3 days ago", batteryLabel(PresenceBattery(40, false, minutesAgo(3 * 24 * 60)), now).text)
+    }
+
+    @Test
+    fun `someone looked after says whether they share, unless it is required`() {
+        assertEquals(null, LookedAfter("s", "Sam", "required").sharingNote)
+        assertTrue(LookedAfter("s", "Sam", "required").required)
+        assertEquals("Shares their location", LookedAfter("s", "Sam", "on").sharingNote)
+        assertEquals("Not sharing their location", LookedAfter("s", "Sam").sharingNote)
     }
 
     @Test

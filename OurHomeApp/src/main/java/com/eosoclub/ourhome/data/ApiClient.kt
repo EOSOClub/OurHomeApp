@@ -929,8 +929,87 @@ class ApiClient(
     suspend fun stopLiveCheck(id: String): LiveCheck =
         call(post("/api/location/checks/stop", buildJsonObject { put("id", id) }), LiveCheck.serializer())
 
-    /** The children whose phone I may ring (the ones I supervise). */
-    suspend fun ringOverview(): RingOverview = call(get("/api/supervision/ring"), RingOverview.serializer())
+    /** This phone checking in (hourly): which install, and what it may still do. */
+    suspend fun checkIn(
+        installId: String,
+        appVersion: String,
+        deviceName: String,
+        locationAlways: Boolean,
+        notifications: Boolean,
+        usageAccess: Boolean,
+    ) =
+        callUnit(
+            post(
+                "/api/phone/checkin",
+                buildJsonObject {
+                    put("installId", installId)
+                    put("appVersion", appVersion)
+                    put("deviceName", deviceName)
+                    put("locationAlways", locationAlways)
+                    put("notifications", notifications)
+                    put("usageAccess", usageAccess)
+                },
+            ),
+        )
+
+    /** Whether my app usage is shared (an adult who looks after me turned it on). */
+    suspend fun myUsageSharing(): UsageSharing = call(get("/api/phone/usage"), UsageSharing.serializer())
+
+    /** This phone's app usage for today and yesterday. 409 = it isn't shared. */
+    suspend fun reportUsage(days: List<UsageDay>) =
+        callUnit(
+            post(
+                "/api/phone/usage",
+                buildJsonObject {
+                    putJsonArray("days") {
+                        days.forEach { d ->
+                            addJsonObject {
+                                put("day", d.day)
+                                put("totalMinutes", d.totalMinutes)
+                                putJsonArray("apps") {
+                                    d.apps.forEach { a ->
+                                        addJsonObject {
+                                            put("app", a.app)
+                                            put("label", a.label.take(100))
+                                            put("minutes", a.minutes)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            ),
+        )
+
+    /** Turns sharing a supervised child's app usage on or off (off deletes it). */
+    suspend fun setUsageSharing(supervisedId: String, share: Boolean): LookAfter =
+        call(
+            post(
+                "/api/supervision/usage",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    put("share", share)
+                },
+            ),
+            LookAfter.serializer(),
+        )
+
+    /** The children and teens I supervise: I may ring them and require their location sharing. */
+    suspend fun lookAfter(): LookAfter = call(get("/api/supervision/mine"), LookAfter.serializer())
+
+    /** Makes a supervised child's location sharing required, or stops requiring it. */
+    suspend fun setRequiredSharing(supervisedId: String, required: Boolean): LookAfter =
+        call(
+            post(
+                "/api/supervision/sharing",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    put("required", required)
+                },
+            ),
+            LookAfter.serializer(),
+        )
 
     /** Rings a supervised child's phone loudly, even on silent. 409 = still ringing, or no phone reached. */
     suspend fun ringPhone(targetId: String) =

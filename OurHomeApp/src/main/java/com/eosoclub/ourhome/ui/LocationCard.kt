@@ -178,7 +178,12 @@ internal fun LocationCard(session: SessionManager, showMessage: (String) -> Unit
             )
         }
         if (!consent.canChange) {
-            Text("Sharing is required for you.", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Sharing is required for you by an adult who looks after you, so you can't turn it off. They can " +
+                    "also check where you are for a few minutes even with live checks off, and you can't stop " +
+                    "their checks. You always see a notification while they check, and every check is listed below.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
 
         when (locationSetup(consent.isSharing, fine, background, state.places ?: 1)) {
@@ -220,7 +225,8 @@ internal fun LocationCard(session: SessionManager, showMessage: (String) -> Unit
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f),
                     )
-                    if (consent.canChange) {
+                    // Older servers don't say; then sharing being required decides, as before.
+                    if (check.canStopOnMe ?: consent.canChange) {
                         TextButton(onClick = { vm.stopCheck(appContext, check.id) }) { Text("Stop") }
                     }
                 }

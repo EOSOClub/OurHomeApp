@@ -80,7 +80,7 @@ object HouseholdReminderAlerts {
         if (!RequestReminders.canNotify(context)) return
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Household reminders", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "Tasks ready for you, overdue tasks, low stock and bills coming due"
+                description = "Tasks ready for you, overdue tasks, low stock, bills coming due, and phones of the people you look after"
             },
         )
         val lines = showing.map { it.reminderLine() }

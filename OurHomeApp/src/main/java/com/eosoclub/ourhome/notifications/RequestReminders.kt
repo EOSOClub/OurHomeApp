@@ -218,6 +218,12 @@ object RequestReminders {
                 // Re-registers only when something changed.
                 runCatching { Geofences.sync(applicationContext, api, known = me?.let { Features.from(it.features) }) }
                     .onFailure { Log.w(TAG, "geofence sync failed", it) }
+                // Tells the server this phone is still here (parental controls).
+                runCatching { PhoneCheckIn.send(applicationContext, api) }
+                    .onFailure { Log.w(TAG, "check-in failed", it) }
+                // App usage, only while it's shared (parental controls).
+                runCatching { UsageReport.send(applicationContext, api) }
+                    .onFailure { Log.w(TAG, "app usage report failed", it) }
                 Result.success()
             } catch (e: UnauthorizedException) {
                 clear(applicationContext)

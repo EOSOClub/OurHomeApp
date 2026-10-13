@@ -153,6 +153,9 @@ data class LiveCheck(
     val intervalSec: Int,
     val state: String,
     val fix: LiveCheckFix? = null,
+    /** For the person checked: may they stop it (not a supervisor's check under
+     *  required sharing). Null when someone else asks, and on older servers. */
+    val canStopOnMe: Boolean? = null,
 ) {
     val isOver: Boolean get() = state == "ended"
 }
@@ -194,11 +197,48 @@ data class LiveChecksOverview(
 )
 
 /**
- * GET /api/supervision/ring: the children whose phone this member may ring
- * (the ones they supervise). [available]: false when the server can't push.
+ * GET /api/supervision/mine: the children and teens this member supervises.
+ * [canRing]: false when the server can't push.
  */
 @Serializable
-data class RingOverview(val available: Boolean = false, val ringable: List<CheckableMember> = emptyList())
+data class LookAfter(val canRing: Boolean = false, val people: List<LookedAfter> = emptyList())
+
+/** [sharing]: their location sharing, "off" | "on" | "required". */
+@Serializable
+data class LookedAfter(
+    val id: String,
+    val name: String,
+    val sharing: String = "off",
+    /** Their freshest phone's last check-in; null before any did, and from older servers. */
+    val phone: LookedAfterPhone? = null,
+    /** App usage sharing and the newest day reported; off on older servers. */
+    val appUsage: LookedAfterUsage = LookedAfterUsage(),
+) {
+    val required: Boolean get() = sharing == "required"
+
+    /** Under their name: null when required (the switch says it). */
+    val sharingNote: String?
+        get() = when (sharing) {
+            "required" -> null
+            "on" -> "Shares their location"
+            else -> "Not sharing their location"
+        }
+}
+
+/** [problems]: "quiet" | "location_off" | "usage_off" (web lib/phoneHealth.ts). */
+@Serializable
+data class LookedAfterPhone(val lastSeenAt: String, val deviceName: String? = null, val problems: List<String> = emptyList()) {
+    /** "Phone hasn't checked in" / "Location turned off on their phone"; null when all is well. */
+    val problemText: String?
+        get() = problems.mapNotNull {
+            when (it) {
+                "quiet" -> "Phone hasn't checked in"
+                "location_off" -> "Location turned off on their phone"
+                "usage_off" -> "Usage access turned off on their phone"
+                else -> null
+            }
+        }.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
 
 /** "5 minutes", "1 hour", "2 hours". */
 fun minutesLabel(minutes: Int): String = when {
