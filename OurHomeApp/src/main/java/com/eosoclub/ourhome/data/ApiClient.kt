@@ -955,9 +955,9 @@ class ApiClient(
     /** Whether my app usage is shared (an adult who looks after me turned it on). */
     suspend fun myUsageSharing(): UsageSharing = call(get("/api/phone/usage"), UsageSharing.serializer())
 
-    /** This phone's app usage for today and yesterday. 409 = it isn't shared. */
-    suspend fun reportUsage(days: List<UsageDay>) =
-        callUnit(
+    /** This phone's app usage for today and yesterday. 409 = it isn't shared. Answers which apps need an icon. */
+    suspend fun reportUsage(days: List<UsageDay>): UsageReportResult =
+        call(
             post(
                 "/api/phone/usage",
                 buildJsonObject {
@@ -980,7 +980,45 @@ class ApiClient(
                     }
                 },
             ),
+            UsageReportResult.serializer(),
         )
+
+    /** The app icons the server asked for: package name to PNG, base64. 409 = usage isn't shared. */
+    suspend fun reportUsageIcons(icons: Map<String, String>) =
+        callUnit(
+            post(
+                "/api/phone/usage/icons",
+                buildJsonObject {
+                    putJsonArray("icons") {
+                        icons.forEach { (app, png) ->
+                            addJsonObject {
+                                put("app", app)
+                                put("png", png)
+                            }
+                        }
+                    }
+                },
+            ),
+        )
+
+    /** Asks a supervised child's phone to send its app usage now; false when the server skipped it. */
+    suspend fun refreshUsage(supervisedId: String): Boolean =
+        call(
+            post("/api/supervision/usage/refresh", buildJsonObject { put("supervisedId", supervisedId) }),
+            UsageRefresh.serializer(),
+        ).asked
+
+    /** An app's icon (PNG) next to a supervised child's usage, or null when the server has none. */
+    suspend fun usageIcon(app: String): ByteArray? = withContext(Dispatchers.IO) {
+        val path = "/api/supervision/usage/icon?app=" + java.net.URLEncoder.encode(app, "UTF-8")
+        http.newCall(get(path)).execute().use { res ->
+            if (res.code == 401) {
+                onUnauthorized(null)
+                throw UnauthorizedException()
+            }
+            if (res.isSuccessful) res.body.bytes() else null
+        }
+    }
 
     /** Turns sharing a supervised child's app usage on or off (off deletes it). */
     suspend fun setUsageSharing(supervisedId: String, share: Boolean): LookAfter =

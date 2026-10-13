@@ -5,25 +5,53 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Process
 import android.provider.Settings
+import android.util.Base64
 import android.util.Log
+import androidx.core.graphics.drawable.toBitmap
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
+import com.eosoclub.ourhome.OurHomeApp
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.ApiException
+import com.eosoclub.ourhome.data.USAGE_ICONS_PER_UPLOAD
+import com.eosoclub.ourhome.data.USAGE_ICON_MAX_BYTES
+import com.eosoclub.ourhome.data.UnauthorizedException
 import com.eosoclub.ourhome.data.UsageDay
 import com.eosoclub.ourhome.data.UsageEvent
 import com.eosoclub.ourhome.data.foregroundMillis
 import com.eosoclub.ourhome.data.usageDay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.concurrent.TimeUnit
 
 /**
  * App usage (parental controls; web appUsageService). Only while an adult who
  * looks after this member has turned sharing it on, and only with Android's
  * Usage access allowed: measures how long each app was on screen today and
- * yesterday, and sends it with the hourly check. Nothing is blocked.
+ * yesterday, and sends it. Nothing is blocked.
+ *
+ * When: the hourly check ([RequestReminders.Worker]) asks whether usage is
+ * shared and, while it is, keeps a 15-minute job of its own going (the
+ * shortest repeat Android allows; it waits while the phone sleeps, when no
+ * new usage builds up anyway). A supervisor opening "People you look after"
+ * sends a "usage_refresh" push, and [sendNow] reports within seconds.
+ *
+ * After each report the server lists the apps it has no icon for; those are
+ * sent once, as small PNGs, so supervisors see the icon next to the minutes.
  *
  * Usage access is a special permission the member allows in Android's
  * settings (Profile shows how). On Android 15 an app installed outside Play
@@ -31,6 +59,52 @@ import java.time.ZoneId
  */
 object UsageReport {
     private const val TAG = "UsageReport"
+    private const val WORK_NAME = "usage-report"
+    private const val NOW_WORK_NAME = "usage-report-now"
+    private const val INTERVAL_MINUTES = 15L
+
+    /** Icon size sent to the server, in pixels. */
+    private const val ICON_PX = 96
+
+    /** Keeps the 15-minute report going (while usage is shared; [send] stops it otherwise). */
+    private fun schedule(context: Context) {
+        val request = PeriodicWorkRequestBuilder<Worker>(INTERVAL_MINUTES, TimeUnit.MINUTES)
+            .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+            .build()
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+    }
+
+    /** Reports right away (a supervisor is looking). Expedited, so a dozing phone runs it within seconds. */
+    fun sendNow(context: Context) {
+        val request = OneTimeWorkRequestBuilder<Worker>()
+            .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(NOW_WORK_NAME, ExistingWorkPolicy.KEEP, request)
+    }
+
+    /** Signed out, or usage no longer shared: no more reports. */
+    fun cancel(context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+        WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK_NAME)
+    }
+
+    class Worker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+        override suspend fun doWork(): Result {
+            val api = (applicationContext as OurHomeApp).session.api
+            return try {
+                send(applicationContext, api)
+                Result.success()
+            } catch (e: UnauthorizedException) {
+                cancel(applicationContext)
+                Result.success()
+            } catch (e: Exception) {
+                // The next run (15 minutes, or the hourly check) tries again.
+                Log.w(TAG, "app usage report failed", e)
+                Result.success()
+            }
+        }
+    }
 
     fun hasAccess(context: Context): Boolean {
         val ops = context.getSystemService(AppOpsManager::class.java) ?: return false
@@ -42,20 +116,51 @@ object UsageReport {
     fun settingsIntent(): Intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
 
     suspend fun send(context: Context, api: ApiClient) {
-        if (!api.myUsageSharing().shared) return
+        if (!api.myUsageSharing().shared) {
+            cancel(context)
+            return
+        }
+        schedule(context)
         if (!hasAccess(context)) {
             Log.i(TAG, "usage is shared but Usage access isn't allowed; nothing to send")
             return
         }
         val today = LocalDate.now()
         val days = withContext(Dispatchers.IO) { listOf(today.minusDays(1), today).map { measure(context, it) } }
-        try {
-            api.reportUsage(days)
-            Log.i(TAG, "sent ${days.size} day(s) of app usage")
+        val missing = try {
+            api.reportUsage(days).missingIcons
         } catch (e: ApiException) {
             // 409: sharing was turned off since we asked.
             if (e.status != 409) throw e
+            cancel(context)
+            return
         }
+        Log.i(TAG, "sent ${days.size} day(s) of app usage; ${missing.size} icon(s) wanted")
+        if (missing.isEmpty()) return
+        // A failed icon upload only means it's asked for again next time.
+        runCatching {
+            val icons = withContext(Dispatchers.IO) { icons(context, missing) }
+            icons.entries.chunked(USAGE_ICONS_PER_UPLOAD).forEach { batch ->
+                api.reportUsageIcons(batch.associate { it.key to it.value })
+            }
+            Log.i(TAG, "sent ${icons.size} app icon(s)")
+        }.onFailure { Log.w(TAG, "app icons not sent", it) }
+    }
+
+    /** [apps]' launcher icons as small PNGs, base64; apps gone from the phone, or too big, are left out. */
+    private fun icons(context: Context, apps: List<String>): Map<String, String> {
+        val pm = context.packageManager
+        val out = linkedMapOf<String, String>()
+        for (app in apps) {
+            val drawable = runCatching { pm.getApplicationIcon(app) }.getOrNull() ?: continue
+            val png = ByteArrayOutputStream().use { stream ->
+                drawable.toBitmap(ICON_PX, ICON_PX, Bitmap.Config.ARGB_8888).compress(Bitmap.CompressFormat.PNG, 100, stream)
+                stream.toByteArray()
+            }
+            if (png.size > USAGE_ICON_MAX_BYTES) continue
+            out[app] = Base64.encodeToString(png, Base64.NO_WRAP)
+        }
+        return out
     }
 
     private fun measure(context: Context, day: LocalDate): UsageDay {

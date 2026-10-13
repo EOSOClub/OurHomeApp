@@ -1,6 +1,16 @@
 package com.eosoclub.ourhome.ui
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import com.eosoclub.ourhome.data.UsageTopApp
+import com.eosoclub.ourhome.data.formatMinutes
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -45,7 +55,48 @@ import kotlinx.coroutines.launch
 /** Refetched this often while showing, so phone check-ins and usage stay current. */
 private const val LOOK_AFTER_REFRESH_MS = 60_000L
 
+/** After asking the phones for fresh usage, look again this long after (they answer in seconds). */
+private val AFTER_USAGE_REFRESH_MS = listOf(10_000L, 15_000L)
+
 class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
+    /** App icons by package name, loaded once each; null = the server has none. */
+    val icons = MutableStateFlow<Map<String, ImageBitmap?>>(emptyMap())
+    private val iconsAsked = mutableSetOf<String>()
+    private var usageAsked = false
+
+    /** Loads [app]'s icon unless it was already asked for. */
+    fun loadIcon(app: String) {
+        if (!iconsAsked.add(app)) return
+        viewModelScope.launch {
+            val bitmap = runCatching {
+                api.usageIcon(app)?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
+            }.getOrNull()
+            icons.update { it + (app to bitmap) }
+            // A failed load may try again on the next visit.
+            if (bitmap == null) iconsAsked.remove(app)
+        }
+    }
+
+    /**
+     * Once per visit: asks each child's phone whose usage is shared to send it
+     * now (the server skips it when it can't or just did), then looks again
+     * shortly after. Best effort; the stored numbers show either way.
+     */
+    fun askForFreshUsage() {
+        if (usageAsked) return
+        val shared = state.value.lookAfter?.people?.filter { it.appUsage.shared } ?: return
+        usageAsked = true
+        if (shared.isEmpty()) return
+        viewModelScope.launch {
+            val asked = shared.map { person -> runCatching { api.refreshUsage(person.id) }.getOrDefault(false) }
+            if (asked.none { it }) return@launch
+            for (wait in AFTER_USAGE_REFRESH_MS) {
+                delay(wait)
+                load().join()
+            }
+        }
+    }
+
     data class UiState(
         val lookAfter: LookAfter? = null,
         /** Whose "Location required" is being saved, and to what. */
@@ -125,11 +176,13 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
 internal fun LookAfterScreen(api: ApiClient, showMessage: (String) -> Unit, modifier: Modifier = Modifier) {
     val vm = viewModel { LookAfterViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val icons by vm.icons.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(Unit) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 vm.load().join()
+                vm.askForFreshUsage()
                 delay(LOOK_AFTER_REFRESH_MS)
             }
         }
@@ -161,6 +214,8 @@ internal fun LookAfterScreen(api: ApiClient, showMessage: (String) -> Unit, modi
                     onRing = { vm.ring(person, showMessage) },
                     onRequired = { vm.setRequired(person, it, showMessage) },
                     onUsage = { vm.setUsage(person, it, showMessage) },
+                    icons = icons,
+                    loadIcon = vm::loadIcon,
                 )
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp))
             }
@@ -169,7 +224,8 @@ internal fun LookAfterScreen(api: ApiClient, showMessage: (String) -> Unit, modi
                     "Ring rings their phone loudly for up to 30 seconds, even on silent. Location required keeps " +
                         "their location sharing on, and lets you check where they are on the Map without them allowing it. " +
                         "They always see when you check. Share app usage shows how long they spend in each app; " +
-                        "their phone needs Usage access for it." +
+                        "their phone needs Usage access for it. Their phone sends it every 15 minutes, and opening " +
+                        "this page asks it for the latest numbers." +
                         if (lookAfter.canRing) "" else " Ringing needs instant phone alerts, which this server doesn't have set up.",
                 )
             }
@@ -199,6 +255,8 @@ private fun LookedAfterRow(
     onRing: () -> Unit,
     onRequired: (Boolean) -> Unit,
     onUsage: (Boolean) -> Unit,
+    icons: Map<String, ImageBitmap?>,
+    loadIcon: (String) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -231,12 +289,56 @@ private fun LookedAfterRow(
             Switch(checked = sharesUsage, enabled = !savingUsage, onCheckedChange = onUsage)
         }
         if (person.appUsage.shared) {
+            val latest = person.appUsage.latest
             Text(
-                person.appUsage.latest?.line(java.time.LocalDate.now().toString())
+                latest?.let { "${it.header(java.time.LocalDate.now().toString())} · updated ${relativeTime(it.updatedAt)}" }
                     ?: "No app usage from their phone yet. It needs the latest OurHome app, and Usage access allowed.",
                 style = MaterialTheme.typography.bodySmall,
+                fontWeight = if (latest != null) FontWeight.Medium else null,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            latest?.top?.forEach { app -> UsageAppRow(app, icons, loadIcon) }
         }
+    }
+}
+
+/** One of their top apps: its icon (or first letter until their phone sent it), name and time. */
+@Composable
+private fun UsageAppRow(app: UsageTopApp, icons: Map<String, ImageBitmap?>, loadIcon: (String) -> Unit) {
+    if (app.icon && app.app.isNotEmpty()) LaunchedEffect(app.app) { loadIcon(app.app) }
+    val icon = icons[app.app]
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, end = 8.dp),
+    ) {
+        if (icon != null) {
+            Image(icon, contentDescription = null, modifier = Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)))
+        } else {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            ) {
+                Text(
+                    app.label.take(1).uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Text(
+            app.label,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(start = 8.dp),
+        )
+        Text(
+            formatMinutes(app.minutes),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

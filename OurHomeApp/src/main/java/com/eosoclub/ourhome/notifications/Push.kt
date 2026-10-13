@@ -99,6 +99,8 @@ class PushMessagingService : FirebaseMessagingService() {
             "live_check_stop" -> LiveChecks.stop(applicationContext)
             // A supervising adult ringing this phone (Ring); same high-priority rule.
             "ring" -> Ring.start(applicationContext, message.data["ringerId"])
+            // A supervising adult is looking at this member's app usage: send it now.
+            "usage_refresh" -> UsageReport.sendNow(applicationContext)
         }
     }
 }

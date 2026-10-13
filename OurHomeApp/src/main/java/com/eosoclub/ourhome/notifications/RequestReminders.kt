@@ -107,6 +107,7 @@ object RequestReminders {
         AppUpdateAlerts.clear(context)
         Geofences.clear(context)
         LiveChecks.stop(context)
+        UsageReport.cancel(context)
     }
 
     fun ensureChannel(context: Context) {
@@ -221,7 +222,8 @@ object RequestReminders {
                 // Tells the server this phone is still here (parental controls).
                 runCatching { PhoneCheckIn.send(applicationContext, api) }
                     .onFailure { Log.w(TAG, "check-in failed", it) }
-                // App usage, only while it's shared (parental controls).
+                // App usage, only while it's shared (parental controls); also
+                // starts or stops its own 15-minute report.
                 runCatching { UsageReport.send(applicationContext, api) }
                     .onFailure { Log.w(TAG, "app usage report failed", it) }
                 Result.success()

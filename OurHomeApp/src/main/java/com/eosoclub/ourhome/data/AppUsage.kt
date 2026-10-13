@@ -5,11 +5,26 @@ import kotlinx.serialization.Serializable
 // App usage (parental controls; web lib/appUsage.ts, appUsageService). While
 // an adult who looks after this member has turned sharing it on, the phone
 // measures how long each app was on screen (notifications/UsageReport) and
-// sends today and yesterday with the hourly check. Pure parts live here.
+// sends today and yesterday every 15 minutes, and at once when a supervisor
+// opens "People you look after". Pure parts live here.
 
 /** GET /api/phone/usage: whether this member's app usage is shared. */
 @Serializable
 data class UsageSharing(val shared: Boolean = false)
+
+/** POST /api/phone/usage: the reported apps the server has no icon for yet (an older server sends none). */
+@Serializable
+data class UsageReportResult(val missingIcons: List<String> = emptyList())
+
+/** POST /api/supervision/usage/refresh: whether the child's phone was asked. */
+@Serializable
+data class UsageRefresh(val asked: Boolean = false)
+
+/** Largest icon the server takes (web USAGE_ICON_MAX_BYTES). */
+const val USAGE_ICON_MAX_BYTES = 32 * 1024
+
+/** Icons per upload (web reportUsageIconsSchema). */
+const val USAGE_ICONS_PER_UPLOAD = 20
 
 /** One app coming to the screen ([foreground]) or leaving it, from Android's usage events. */
 data class UsageEvent(val app: String, val foreground: Boolean, val atMillis: Long)
@@ -81,11 +96,8 @@ data class UsageLatest(
     val top: List<UsageTopApp> = emptyList(),
     val updatedAt: String,
 ) {
-    /** "Today: 2 h 5 min · YouTube 1 h 10 min, Roblox 30 min". */
-    fun line(today: String): String {
-        val head = "${usageDayLabel(day, today)}: ${formatMinutes(totalMinutes)}"
-        return if (top.isEmpty()) head else head + " · " + top.joinToString(", ") { "${it.label} ${formatMinutes(it.minutes)}" }
-    }
+    /** "Today: 2 h 5 min"; the top apps are listed under it, each with its icon. */
+    fun header(today: String): String = "${usageDayLabel(day, today)}: ${formatMinutes(totalMinutes)}"
 }
 
 private val usageShortDate = java.time.format.DateTimeFormatter.ofPattern("MMM d", java.util.Locale.US)
@@ -99,5 +111,6 @@ fun usageDayLabel(day: String, today: String): String {
     return date.format(usageShortDate)
 }
 
+/** [app]: the package name (empty from an older server); [icon]: whether the server has its icon. */
 @Serializable
-data class UsageTopApp(val label: String, val minutes: Int)
+data class UsageTopApp(val label: String, val minutes: Int, val app: String = "", val icon: Boolean = false)

@@ -1,5 +1,6 @@
 package com.eosoclub.ourhome.data
 
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -61,9 +62,29 @@ class AppUsageTest {
         assertEquals("1 h", formatMinutes(60))
         assertEquals("2 h 5 min", formatMinutes(125))
         val latest = UsageLatest("2026-10-12", 125, listOf(UsageTopApp("YouTube", 70)), "2026-10-12T17:00:00Z")
-        assertEquals("Today: 2 h 5 min · YouTube 1 h 10 min", latest.line("2026-10-12"))
-        assertEquals("Yesterday: 2 h 5 min · YouTube 1 h 10 min", latest.line("2026-10-13"))
-        assertEquals("Oct 12: 2 h 5 min · YouTube 1 h 10 min", latest.line("2026-10-14"))
+        assertEquals("Today: 2 h 5 min", latest.header("2026-10-12"))
+        assertEquals("Yesterday: 2 h 5 min", latest.header("2026-10-13"))
+        assertEquals("Oct 12: 2 h 5 min", latest.header("2026-10-14"))
         assertEquals("Yesterday", usageDayLabel("2026-09-30", "2026-10-01"))
+    }
+
+    // Same settings as ApiClient's.
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+
+    @Test
+    fun `reads icons from a new server, and nothing missing from an old one`() {
+        val top = json.decodeFromString(
+            UsageTopApp.serializer(),
+            """{"app":"com.roblox.client","label":"Roblox","minutes":30,"icon":true}""",
+        )
+        assertEquals(UsageTopApp("Roblox", 30, app = "com.roblox.client", icon = true), top)
+        // A server from before icons: no package name, no icon.
+        assertEquals(UsageTopApp("Roblox", 30), json.decodeFromString(UsageTopApp.serializer(), """{"label":"Roblox","minutes":30}"""))
+
+        assertEquals(
+            listOf("com.roblox.client"),
+            json.decodeFromString(UsageReportResult.serializer(), """{"saved":true,"missingIcons":["com.roblox.client"]}""").missingIcons,
+        )
+        assertEquals(emptyList<String>(), json.decodeFromString(UsageReportResult.serializer(), """{"saved":true}""").missingIcons)
     }
 }
