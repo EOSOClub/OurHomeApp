@@ -37,6 +37,7 @@ import com.eosoclub.ourhome.data.UnauthorizedException
 import com.eosoclub.ourhome.data.geofenceSignature
 import com.eosoclub.ourhome.notifications.HouseholdReminderAlerts
 import com.eosoclub.ourhome.notifications.RequestReminders
+import com.eosoclub.ourhome.notifications.StayConnected
 import com.eosoclub.ourhome.notifications.lockScreenSafe
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofenceStatusCodes
@@ -386,11 +387,18 @@ class GeofenceReceiver : BroadcastReceiver() {
     }
 }
 
-/** Android drops geofences on reboot and on app updates: register them again. */
+/**
+ * Android drops geofences on reboot and on app updates: register them again.
+ * Also starts Stay connected again when it's on. An update stops the app
+ * without anyone pressing Stop, so it starts again even for an adult who had.
+ */
 class GeofenceRestoreReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> Geofences.syncNow(context, force = true)
+            Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                Geofences.syncNow(context, force = true)
+                StayConnected.ensureRunning(context, byUser = intent.action == Intent.ACTION_MY_PACKAGE_REPLACED)
+            }
         }
     }
 }

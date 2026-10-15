@@ -36,6 +36,14 @@
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+    <!-- Battery "Unrestricted" (notifications/BatteryAccess): only asked when the
+         member taps Allow on Profile; Android shows its own question. Lets the
+         hourly check, pushes and Stay connected run on time. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Stay connected (notifications/StayConnected): a foreground service that
+         keeps one connection to the household's server, only while the member
+         turned it on on Profile. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!-- App usage names apps the way the phone does: Android 11+ only lets an
          app see others it declares, so these are the apps a person can open
@@ -49,6 +57,9 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
         </intent>
+        <!-- The close guard reads Settings' own "Force stop" text, in the
+             phone's language (notifications/CloseGuard). -->
+        <package android:name="com.android.settings" />
     </queries>
 
     <application
@@ -141,6 +152,35 @@
             android:name=".notifications.RingService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Stay connected: one open connection to the household's server for
+             instant alerts without Firebase. Not exported: only the app starts
+             it. -->
+        <service
+            android:name=".notifications.StayConnectedService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps a connection to the user's own self-hosted household server so its alerts arrive instantly, without Firebase." />
+        </service>
+
+        <!-- "Keep Our Home running" (notifications/CloseGuard): an Accessibility
+             service turned on by hand in Android's settings. Holds Stay
+             connected's connection while on, and on a phone an adult looks
+             after closes Our Home's App info. Only the system binds it. -->
+        <service
+            android:name=".notifications.CloseGuardService"
+            android:exported="false"
+            android:label="@string/close_guard_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/close_guard" />
+        </service>
 
         <!-- Hands a downloaded app update to Android's installer (AppUpdate).
              Shares only cache/updates/, and only by a one-time read grant. -->

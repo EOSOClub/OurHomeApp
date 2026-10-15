@@ -36,6 +36,7 @@ import com.eosoclub.ourhome.nfc.TagRef
 import com.eosoclub.ourhome.location.Geofences
 import com.eosoclub.ourhome.notifications.Push
 import com.eosoclub.ourhome.notifications.RequestReminders
+import com.eosoclub.ourhome.notifications.StayConnected
 import com.eosoclub.ourhome.ui.ClearUserScope
 import com.eosoclub.ourhome.ui.HomeScreen
 import com.eosoclub.ourhome.ui.UserScope
@@ -148,6 +149,9 @@ private fun Root(
             is AuthState.SignedIn -> {
                 RequestReminders.schedule(context)
                 Push.register(context)
+                // In the foreground Android always allows starting it, and
+                // opening OurHome ends a Stop the member pressed.
+                StayConnected.ensureRunning(context, byUser = true)
                 // Picks up map place or sharing changes since the last run.
                 Geofences.syncNow(context)
             }

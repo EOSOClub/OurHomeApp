@@ -929,7 +929,7 @@ class ApiClient(
     suspend fun stopLiveCheck(id: String): LiveCheck =
         call(post("/api/location/checks/stop", buildJsonObject { put("id", id) }), LiveCheck.serializer())
 
-    /** This phone checking in (hourly): which install, and what it may still do. */
+    /** This phone checking in (hourly): which install, and what it may still do. Answers whether it must Stay connected. */
     suspend fun checkIn(
         installId: String,
         appVersion: String,
@@ -937,8 +937,14 @@ class ApiClient(
         locationAlways: Boolean,
         notifications: Boolean,
         usageAccess: Boolean,
-    ) =
-        callUnit(
+        lastPushAtMs: Long?,
+        lastPushVia: String?,
+        batteryUnrestricted: Boolean,
+        standbyBucket: Int,
+        stayConnected: Boolean,
+        closeGuard: Boolean,
+    ): CheckInResult =
+        call(
             post(
                 "/api/phone/checkin",
                 buildJsonObject {
@@ -948,9 +954,53 @@ class ApiClient(
                     put("locationAlways", locationAlways)
                     put("notifications", notifications)
                     put("usageAccess", usageAccess)
+                    // Left out until the first instant alert arrives (the server wants both or neither).
+                    if (lastPushAtMs != null && lastPushVia != null) {
+                        put("lastPushAtMs", lastPushAtMs)
+                        put("lastPushVia", lastPushVia)
+                    }
+                    put("batteryUnrestricted", batteryUnrestricted)
+                    put("standbyBucket", standbyBucket)
+                    put("stayConnected", stayConnected)
+                    put("closeGuard", closeGuard)
                 },
             ),
+            CheckInResult.serializer(),
         )
+
+    /** Sends a test notification to my own phones (this one included). */
+    suspend fun testPush(): TestPushResult = call(post("/api/push/test", JsonObject(emptyMap())), TestPushResult.serializer())
+
+    /**
+     * Stay connected: opens the server's event stream for this install and
+     * hands each line to [onLine] until the server or the network ends it.
+     * Blocking; run it off the main thread. [onOpen] gets a way to end it from
+     * another thread (the service stopping). No read timeout beyond [idleSec]:
+     * the server sends a comment every 45 s, so silence that long means the
+     * connection is dead.
+     */
+    fun stream(installId: String, idleSec: Long, onOpen: (cancel: () -> Unit) -> Unit, onLine: (String) -> Unit) {
+        val client = http.newBuilder()
+            .readTimeout(idleSec, TimeUnit.SECONDS)
+            .callTimeout(0, TimeUnit.SECONDS)
+            .build()
+        val path = "/api/phone/stream?installId=" + java.net.URLEncoder.encode(installId, "UTF-8")
+        val request = Request.Builder().url(baseUrl() + path).header("Accept", "text/event-stream").get().build()
+        val call = client.newCall(request)
+        onOpen(call::cancel)
+        call.execute().use { res ->
+            if (res.code == 401) {
+                onUnauthorized(null)
+                throw UnauthorizedException()
+            }
+            if (!res.isSuccessful) throw ApiException("Stay connected refused (${res.code})", res.code)
+            val source = res.body.source()
+            while (true) {
+                val line = source.readUtf8Line() ?: break
+                onLine(line)
+            }
+        }
+    }
 
     /** Whether my app usage is shared (an adult who looks after me turned it on). */
     suspend fun myUsageSharing(): UsageSharing = call(get("/api/phone/usage"), UsageSharing.serializer())

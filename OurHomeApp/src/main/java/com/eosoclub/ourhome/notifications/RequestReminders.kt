@@ -108,6 +108,8 @@ object RequestReminders {
         Geofences.clear(context)
         LiveChecks.stop(context)
         UsageReport.cancel(context)
+        // The member's own switch stays; "required" comes back with the next check-in.
+        StayConnected.signedOut(context)
     }
 
     fun ensureChannel(context: Context) {
@@ -226,6 +228,11 @@ object RequestReminders {
                 // starts or stops its own 15-minute report.
                 runCatching { UsageReport.send(applicationContext, api) }
                     .onFailure { Log.w(TAG, "app usage report failed", it) }
+                // Instant alerts: the token again once a day (so the server
+                // knows this phone is live), and Stay connected back on after
+                // Android's Stop or a crash.
+                Push.registerIfStale(applicationContext)
+                StayConnected.ensureRunning(applicationContext)
                 Result.success()
             } catch (e: UnauthorizedException) {
                 clear(applicationContext)

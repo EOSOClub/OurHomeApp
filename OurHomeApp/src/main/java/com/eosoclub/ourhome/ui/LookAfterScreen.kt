@@ -226,7 +226,12 @@ internal fun LookAfterScreen(api: ApiClient, showMessage: (String) -> Unit, modi
                         "They always see when you check. Share app usage shows how long they spend in each app; " +
                         "their phone needs Usage access for it. Their phone sends it every 15 minutes, and opening " +
                         "this page asks it for the latest numbers." +
-                        if (lookAfter.canRing) "" else " Ringing needs instant phone alerts, which this server doesn't have set up.",
+                        if (lookAfter.canRing) {
+                            ""
+                        } else {
+                            " Ringing needs instant phone alerts: Firebase on this server, or Stay connected turned on " +
+                                "in the app on their phone."
+                        },
                 )
             }
         }
@@ -277,6 +282,17 @@ private fun LookedAfterRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = if (problem != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // How instant alerts reach it; nothing for an app too old to say.
+                val alerts = when {
+                    phone == null -> null
+                    phone.stayConnected && phone.connected -> "Stay connected: connected now"
+                    phone.stayConnected -> "Stay connected is on, but it isn't connected right now"
+                    phone.lastPushAt != null -> "Last instant alert reached it ${relativeTime(phone.lastPushAt)}"
+                    else -> null
+                }
+                alerts?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             if (canRing) TextButton(onClick = onRing) { Text("Ring") }
         }

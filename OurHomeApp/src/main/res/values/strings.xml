@@ -1,3 +1,6 @@
 <resources>
     <string name="app_name">Our Home</string>
+    <!-- The close guard's name and text in Android's Accessibility settings (notifications/CloseGuard). -->
+    <string name="close_guard_name">Keep Our Home running</string>
+    <string name="close_guard_description">Keeps Our Home running so the household can always reach this phone. It holds Our Home\'s connection to the household\'s server, so Android shows no Stop button for it. While an adult in the household looks after you, it also closes Our Home\'s App info and this page, so Our Home can\'t be force stopped or turned off here. It looks at what\'s on screen only to recognise those pages. Nothing it sees is stored or sent.</string>
 </resources>

@@ -232,7 +232,12 @@ internal fun MapScreen(api: ApiClient, showMessage: (String) -> Unit, modifier: 
                     }
                     val running = started.map { it.targetId }.toSet()
                     if (!checks.available) {
-                        item { MapNote("Live checks need instant phone alerts (Firebase), which this server doesn't have set up.") }
+                        item {
+                            MapNote(
+                                "Live checks need instant phone alerts: Firebase on this server, or Stay connected " +
+                                    "turned on in the app on their phone.",
+                            )
+                        }
                     } else {
                         items(checks.checkable.filter { it.id !in running }, key = { "k-" + it.id }) { member ->
                             Row(

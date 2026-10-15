@@ -225,9 +225,21 @@ data class LookedAfter(
         }
 }
 
-/** [problems]: "quiet" | "location_off" | "usage_off" (web lib/phoneHealth.ts). */
+/**
+ * [problems]: "quiet" | "location_off" | "usage_off" | "battery_restricted"
+ * | "close_guard_off" (web lib/phoneHealth.ts). [lastPushAt]: when an instant alert last reached
+ * it (null: none yet, or an older app). [stayConnected]: turned on in the
+ * app; [connected]: holding its connection to the server right now.
+ */
 @Serializable
-data class LookedAfterPhone(val lastSeenAt: String, val deviceName: String? = null, val problems: List<String> = emptyList()) {
+data class LookedAfterPhone(
+    val lastSeenAt: String,
+    val deviceName: String? = null,
+    val problems: List<String> = emptyList(),
+    val lastPushAt: String? = null,
+    val stayConnected: Boolean = false,
+    val connected: Boolean = false,
+) {
     /** "Phone hasn't checked in" / "Location turned off on their phone"; null when all is well. */
     val problemText: String?
         get() = problems.mapNotNull {
@@ -235,6 +247,8 @@ data class LookedAfterPhone(val lastSeenAt: String, val deviceName: String? = nu
                 "quiet" -> "Phone hasn't checked in"
                 "location_off" -> "Location turned off on their phone"
                 "usage_off" -> "Usage access turned off on their phone"
+                "battery_restricted" -> "Battery saving can delay OurHome on their phone"
+                "close_guard_off" -> "OurHome can be closed on their phone"
                 else -> null
             }
         }.takeIf { it.isNotEmpty() }?.joinToString(" · ")

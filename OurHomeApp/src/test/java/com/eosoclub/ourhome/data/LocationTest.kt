@@ -19,6 +19,23 @@ class LocationTest {
             "Phone hasn't checked in · Location turned off on their phone",
             LookedAfterPhone("x", problems = listOf("quiet", "location_off", "unknown")).problemText,
         )
+        assertEquals(
+            "Battery saving can delay OurHome on their phone",
+            LookedAfterPhone("x", problems = listOf("battery_restricted")).problemText,
+        )
+        assertEquals(
+            "OurHome can be closed on their phone",
+            LookedAfterPhone("x", problems = listOf("close_guard_off")).problemText,
+        )
+    }
+
+    @Test
+    fun `a looked-after phone from an older server still reads, with no delivery details`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val phone = json.decodeFromString(LookedAfterPhone.serializer(), """{"lastSeenAt":"2026-10-12T10:00:00Z","problems":[]}""")
+        assertEquals(null, phone.lastPushAt)
+        assertFalse(phone.stayConnected)
+        assertFalse(phone.connected)
     }
 
     @Test
