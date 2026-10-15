@@ -741,9 +741,21 @@ class ApiClient(
 
     // --- Instant alerts (FCM) ------------------------------------------------
 
-    /** Tells the server this install's FCM token belongs to the signed-in user. */
-    suspend fun registerPushDevice(token: String) =
-        callUnit(post("/api/push/devices", buildJsonObject { put("token", token) }))
+    /**
+     * Tells the server this install's FCM token belongs to the signed-in user.
+     * [installId]: the check-in's, so a token Firebase later calls dead tells
+     * the server which phone lost OurHome.
+     */
+    suspend fun registerPushDevice(token: String, installId: String) =
+        callUnit(
+            post(
+                "/api/push/devices",
+                buildJsonObject {
+                    put("token", token)
+                    put("installId", installId)
+                },
+            ),
+        )
 
     /** Stops pushes to this install; called just before signing out. */
     suspend fun unregisterPushDevice(token: String) =
@@ -943,6 +955,8 @@ class ApiClient(
         standbyBucket: Int,
         stayConnected: Boolean,
         closeGuard: Boolean,
+        status: DeviceStatus?,
+        shuttingDown: Boolean,
     ): CheckInResult =
         call(
             post(
@@ -963,6 +977,9 @@ class ApiClient(
                     put("standbyBucket", standbyBucket)
                     put("stayConnected", stayConnected)
                     put("closeGuard", closeGuard)
+                    // Only while an adult looks after this member (DeviceStatus).
+                    status?.let { put("status", it.toJson()) }
+                    if (shuttingDown) put("shuttingDown", true)
                 },
             ),
             CheckInResult.serializer(),
@@ -977,14 +994,21 @@ class ApiClient(
      * Blocking; run it off the main thread. [onOpen] gets a way to end it from
      * another thread (the service stopping). No read timeout beyond [idleSec]:
      * the server sends a comment every 45 s, so silence that long means the
-     * connection is dead.
+     * connection is dead. [status]: only while an adult looks after this member.
      */
-    fun stream(installId: String, idleSec: Long, onOpen: (cancel: () -> Unit) -> Unit, onLine: (String) -> Unit) {
+    fun stream(
+        installId: String,
+        idleSec: Long,
+        status: DeviceStatus?,
+        onOpen: (cancel: () -> Unit) -> Unit,
+        onLine: (String) -> Unit,
+    ) {
         val client = http.newBuilder()
             .readTimeout(idleSec, TimeUnit.SECONDS)
             .callTimeout(0, TimeUnit.SECONDS)
             .build()
-        val path = "/api/phone/stream?installId=" + java.net.URLEncoder.encode(installId, "UTF-8")
+        val path = "/api/phone/stream?installId=" + java.net.URLEncoder.encode(installId, "UTF-8") +
+            status?.toQuery().orEmpty()
         val request = Request.Builder().url(baseUrl() + path).header("Accept", "text/event-stream").get().build()
         val call = client.newCall(request)
         onOpen(call::cancel)

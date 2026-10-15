@@ -226,8 +226,9 @@ data class LookedAfter(
 }
 
 /**
- * [problems]: "quiet" | "location_off" | "usage_off" | "battery_restricted"
- * | "close_guard_off" (web lib/phoneHealth.ts). [lastPushAt]: when an instant alert last reached
+ * [problems]: "quiet" | "app_removed" | "switched_off" | "battery_flat" |
+ * "no_signal" (why it went quiet, at most one) | "location_off" | "usage_off"
+ * | "battery_restricted" | "close_guard_off" (web lib/phoneHealth.ts). [lastPushAt]: when an instant alert last reached
  * it (null: none yet, or an older app). [stayConnected]: turned on in the
  * app; [connected]: holding its connection to the server right now.
  */
@@ -245,6 +246,10 @@ data class LookedAfterPhone(
         get() = problems.mapNotNull {
             when (it) {
                 "quiet" -> "Phone hasn't checked in"
+                "app_removed" -> "OurHome may have been removed from their phone"
+                "switched_off" -> "Their phone is switched off"
+                "battery_flat" -> "Their phone probably ran out of battery"
+                "no_signal" -> "Their phone may be out of signal"
                 "location_off" -> "Location turned off on their phone"
                 "usage_off" -> "Usage access turned off on their phone"
                 "battery_restricted" -> "Battery saving can delay OurHome on their phone"

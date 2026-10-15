@@ -129,6 +129,8 @@ object Push {
             "usage_refresh" -> UsageReport.sendNow(context)
             // "Send me a test notification" on Profile.
             "test" -> showTest(context, via)
+            // The server lost this phone's connection and is asking whether it's still here.
+            "ping" -> PhoneCheckIn.sendNow(context)
         }
     }
 
@@ -167,7 +169,7 @@ object Push {
             val session = (applicationContext as OurHomeApp).session
             return try {
                 val token = FirebaseMessaging.getInstance().token.await()
-                session.api.registerPushDevice(token)
+                session.api.registerPushDevice(token, PhoneCheckIn.installId(applicationContext))
                 session.rememberPushToken(token)
                 prefs(applicationContext).edit { putLong(KEY_REGISTERED_AT, System.currentTimeMillis()) }
                 Log.i(TAG, "registered for instant alerts")

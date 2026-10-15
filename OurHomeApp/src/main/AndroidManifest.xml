@@ -44,6 +44,10 @@
          keeps one connection to the household's server, only while the member
          turned it on on Profile. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Whether the phone is on Wi-Fi, mobile data or nothing (notifications/
+         PhoneCheckIn), sent only while an adult looks after its member, so a
+         phone that goes quiet can be told apart from one out of signal. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- App usage names apps the way the phone does: Android 11+ only lets an
          app see others it declares, so these are the apps a person can open
