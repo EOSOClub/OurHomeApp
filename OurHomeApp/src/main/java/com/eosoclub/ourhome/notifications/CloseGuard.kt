@@ -51,6 +51,7 @@ object CloseGuard {
     private const val KEY_UNLOCKED_UNTIL_MS = "unlocked_until_ms"
     private const val KEY_FAILED_ATTEMPTS = "pin_failed_attempts"
     private const val KEY_LOCKOUT_UNTIL_MS = "pin_lockout_until_ms"
+    private const val KEY_EMERGENCY_DURATION = "emergency_duration"
     private const val KEY_EMERGENCY_STARTED_AT_MS = "emergency_started_at_ms"
     private const val KEY_EMERGENCY_READY_AT_MS = "emergency_ready_at_ms"
     private const val KEY_EMERGENCY_SENT_STAGES = "emergency_sent_stages"
@@ -62,36 +63,109 @@ object CloseGuard {
     internal const val MAX_PIN_ATTEMPTS = 5
     internal const val PIN_LOCKOUT_MS = 30_000L
 
-    /**
-     * Offline PIN-less emergency unlock cooldown: 5 hours. Once started, it
-     * cannot be canceled and alerts the supervising parents at start, in 2 hours,
-     * 1 hour before unlock (4 hours in), and when unlocked (5 hours in).
-     */
+    /** Default emergency unlock cooldown (5 hours). */
     internal const val EMERGENCY_COOLDOWN_MS = 5 * 60 * 60_000L
 
-    enum class EmergencyStage(val wire: String, val offsetMs: Long) {
-        /** Sent immediately when the 5-hour countdown starts (5 hours left). */
-        Started("started", 0L),
-        /** Sent 2 hours after start (3 hours left). */
-        TwoHoursElapsed("2h_elapsed", 2 * 60 * 60_000L),
-        /** Sent 1 hour before unlock, i.e. 4 hours after start (1 hour left). */
-        OneHourLeft("1h_left", 4 * 60 * 60_000L),
-        /** Sent when the 5-hour timer finishes / unlocks. */
-        Unlocked("unlocked", EMERGENCY_COOLDOWN_MS),
+    /** One parent-notification milestone along a forgot-PIN emergency unlock countdown. */
+    data class EmergencyStage(val wire: String, val offsetMs: Long) {
+        companion object {
+            val Started = EmergencyStage("started", 0L)
+            val TwoHoursElapsed = EmergencyStage("2h_elapsed", 2 * 60 * 60_000L)
+            val OneHourLeft = EmergencyStage("1h_left", 4 * 60 * 60_000L)
+            val Unlocked = EmergencyStage("unlocked", EMERGENCY_COOLDOWN_MS)
+        }
+    }
+
+    /**
+     * Parent-configurable forgot-PIN emergency unlock durations. Each choice
+     * adjusts both the unlock time and how many / how often notifications are
+     * sent to the supervising parents' phones.
+     */
+    enum class EmergencyDuration(
+        val key: String,
+        val label: String,
+        val durationMs: Long,
+        val scheduleNote: String,
+        val stages: List<EmergencyStage>,
+    ) {
+        Sec30(
+            key = "30s",
+            label = "30 seconds",
+            durationMs = 30_000L,
+            scheduleNote = "2 parent notifications: when started and when unlocked",
+            stages = listOf(
+                EmergencyStage("started", 0L),
+                EmergencyStage("unlocked", 30_000L),
+            ),
+        ),
+        Sec60(
+            key = "60s",
+            label = "60 seconds",
+            durationMs = 60_000L,
+            scheduleNote = "3 parent notifications: when started, at 30 seconds, and when unlocked",
+            stages = listOf(
+                EmergencyStage("started", 0L),
+                EmergencyStage("30s_left", 30_000L),
+                EmergencyStage("unlocked", 60_000L),
+            ),
+        ),
+        Hours1(
+            key = "1h",
+            label = "1 hour",
+            durationMs = 60 * 60_000L,
+            scheduleNote = "3 parent notifications: when started, 30 minutes before unlock, and when unlocked",
+            stages = listOf(
+                EmergencyStage("started", 0L),
+                EmergencyStage("30m_left", 30 * 60_000L),
+                EmergencyStage("unlocked", 60 * 60_000L),
+            ),
+        ),
+        Hours5(
+            key = "5h",
+            label = "5 hours",
+            durationMs = 5 * 60 * 60_000L,
+            scheduleNote = "4 parent notifications: when started, in 2 hours, 1 hour before unlock, and when unlocked",
+            stages = listOf(
+                EmergencyStage.Started,
+                EmergencyStage.TwoHoursElapsed,
+                EmergencyStage.OneHourLeft,
+                EmergencyStage.Unlocked,
+            ),
+        ),
+        Hours10(
+            key = "10h",
+            label = "10 hours",
+            durationMs = 10 * 60 * 60_000L,
+            scheduleNote = "5 parent notifications: when started, in 3 hours, in 6 hours, 1 hour before unlock, and when unlocked",
+            stages = listOf(
+                EmergencyStage("started", 0L),
+                EmergencyStage("3h_elapsed", 3 * 60 * 60_000L),
+                EmergencyStage("6h_elapsed", 6 * 60 * 60_000L),
+                EmergencyStage("1h_left", 9 * 60 * 60_000L),
+                EmergencyStage("unlocked", 10 * 60 * 60_000L),
+            ),
+        );
+
+        companion object {
+            fun fromKey(key: String?): EmergencyDuration =
+                entries.firstOrNull { it.key == key } ?: Hours5
+        }
     }
 
     /**
      * Which milestone notifications are due at [nowMs] for an emergency unlock
-     * that began at [startedAtMs] and hasn't yet sent the stages in [alreadySent].
+     * of [duration] that began at [startedAtMs] and hasn't yet sent the stages
+     * in [alreadySent].
      */
     internal fun dueEmergencyStages(
         startedAtMs: Long,
         nowMs: Long,
         alreadySent: Set<String>,
+        duration: EmergencyDuration = EmergencyDuration.Hours5,
     ): List<EmergencyStage> {
         if (startedAtMs <= 0L) return emptyList()
         val elapsed = (nowMs - startedAtMs).coerceAtLeast(0L)
-        return EmergencyStage.entries.filter { stage ->
+        return duration.stages.filter { stage ->
             elapsed >= stage.offsetMs && stage.wire !in alreadySent
         }
     }
@@ -147,18 +221,28 @@ object CloseGuard {
     /** Whether a parent PIN has been set on this phone. */
     fun hasPin(context: Context): Boolean = !prefs(context).getString(KEY_PIN_HASH, null).isNullOrEmpty()
 
+    /** The parent-configured forgot-PIN emergency unlock duration (defaults to 5 hours). */
+    fun emergencyDuration(context: Context): EmergencyDuration =
+        EmergencyDuration.fromKey(prefs(context).getString(KEY_EMERGENCY_DURATION, null))
+
     /**
-     * Saves a new parent PIN (salted SHA-256 with SecureRandom) and clears any
-     * temporary unlock window. Never cancels a running 5-hour emergency unlock.
+     * Saves a new parent PIN (salted SHA-256 with SecureRandom) and the
+     * parent's chosen [duration] for forgot-PIN emergency unlock. Never cancels
+     * or shortens a currently running emergency unlock countdown.
      */
-    fun setPin(context: Context, pin: String) {
+    fun setPin(context: Context, pin: String, duration: EmergencyDuration = emergencyDuration(context)) {
         val clean = pin.trim()
         require(isValidPin(clean)) { "PIN must be 4 to 8 digits" }
         val saltBytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
         val salt = saltBytes.joinToString("") { "%02x".format(it) }
-        prefs(context).edit {
+        val p = prefs(context)
+        val emergencyRunning = p.getLong(KEY_EMERGENCY_READY_AT_MS, 0L) > 0L
+        p.edit {
             putString(KEY_PIN_SALT, salt)
             putString(KEY_PIN_HASH, hashPin(clean, salt))
+            if (!emergencyRunning) {
+                putString(KEY_EMERGENCY_DURATION, duration.key)
+            }
             remove(KEY_UNLOCKED_UNTIL_MS)
             remove(KEY_FAILED_ATTEMPTS)
             remove(KEY_LOCKOUT_UNTIL_MS)
@@ -208,56 +292,54 @@ object CloseGuard {
         return true
     }
 
-    // --- 5-hour emergency unlock (cannot be canceled; notifies parents) -----
+    // --- Configurable emergency unlock (cannot be canceled; notifies parents)
 
     /**
-     * Starts the 5-hour emergency unlock countdown. Once started, it cannot be
-     * canceled, and schedules parent notifications at:
-     * - Start (0h)
-     * - 2 hours elapsed (3h remaining)
-     * - 1 hour before unlock (4h elapsed, 1h remaining)
-     * - Unlocked (5h elapsed)
+     * Starts the emergency unlock countdown using the parent's configured
+     * [EmergencyDuration]. Once started, it cannot be canceled, and schedules
+     * parent notifications according to [EmergencyDuration.stages].
      */
     fun startEmergencyUnlock(context: Context, nowMs: Long = System.currentTimeMillis()): Long {
         val p = prefs(context)
         val existing = p.getLong(KEY_EMERGENCY_READY_AT_MS, 0L)
         if (existing > 0L) return existing
-        val readyAt = nowMs + EMERGENCY_COOLDOWN_MS
+        val duration = emergencyDuration(context)
+        val readyAt = nowMs + duration.durationMs
         p.edit {
             putLong(KEY_EMERGENCY_STARTED_AT_MS, nowMs)
             putLong(KEY_EMERGENCY_READY_AT_MS, readyAt)
             putStringSet(KEY_EMERGENCY_SENT_STAGES, emptySet())
         }
-        PhoneCheckIn.scheduleEmergencyNotifications(context.applicationContext)
+        PhoneCheckIn.scheduleEmergencyNotifications(context.applicationContext, duration)
         return readyAt
     }
 
-    /** Epoch millis when the 5-hour emergency unlock started, or 0 when not active. */
+    /** Epoch millis when the emergency unlock started, or 0 when not active. */
     fun emergencyStartedAtMs(context: Context): Long =
         prefs(context).getLong(KEY_EMERGENCY_STARTED_AT_MS, 0L)
 
-    /** Epoch millis when the 5-hour emergency unlock finishes, or 0 when not active. */
+    /** Epoch millis when the emergency unlock finishes, or 0 when not active. */
     fun emergencyReadyAtMs(context: Context): Long =
         prefs(context).getLong(KEY_EMERGENCY_READY_AT_MS, 0L)
 
     internal fun emergencySentStages(context: Context): Set<String> =
         prefs(context).getStringSet(KEY_EMERGENCY_SENT_STAGES, emptySet()).orEmpty()
 
-    internal fun markEmergencyStageSent(context: Context, stage: EmergencyStage) {
+    internal fun markEmergencyStageSent(context: Context, stageWire: String) {
         val p = prefs(context)
-        val updated = p.getStringSet(KEY_EMERGENCY_SENT_STAGES, emptySet()).orEmpty() + stage.wire
+        val updated = p.getStringSet(KEY_EMERGENCY_SENT_STAGES, emptySet()).orEmpty() + stageWire
         p.edit { putStringSet(KEY_EMERGENCY_SENT_STAGES, updated) }
     }
 
     /**
-     * Completes the 5-hour emergency unlock once the timer has elapsed; false
-     * if still counting down. Sends the final "unlocked" notification to the
-     * supervising parents' phones.
+     * Completes the emergency unlock once the timer has elapsed; false if still
+     * counting down. Sends the final "unlocked" notification to the supervising
+     * parents' phones.
      */
     fun completeEmergencyUnlock(context: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
         val readyAt = emergencyReadyAtMs(context)
         if (readyAt <= 0L || nowMs < readyAt) return false
-        PhoneCheckIn.notifyEmergencyStageNow(context.applicationContext, EmergencyStage.Unlocked)
+        PhoneCheckIn.notifyEmergencyStageNow(context.applicationContext, "unlocked")
         unlockAndRemoveAdmin(context, nowMs)
         return true
     }

@@ -61,6 +61,7 @@ internal fun InstantAlertsCard(session: SessionManager, showMessage: (String) ->
     var guardOn by remember { mutableStateOf(CloseGuard.isEnabled(context)) }
     var adminOn by remember { mutableStateOf(CloseGuard.isAdminActive(context)) }
     var hasPin by remember { mutableStateOf(CloseGuard.hasPin(context)) }
+    var emergencyDuration by remember { mutableStateOf(CloseGuard.emergencyDuration(context)) }
     var showSetPinDialog by remember { mutableStateOf(false) }
     var showUnlockDialog by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
@@ -74,6 +75,7 @@ internal fun InstantAlertsCard(session: SessionManager, showMessage: (String) ->
         guardOn = CloseGuard.isEnabled(context)
         adminOn = CloseGuard.isAdminActive(context)
         hasPin = CloseGuard.hasPin(context)
+        emergencyDuration = CloseGuard.emergencyDuration(context)
     }
 
     // Re-read on return from Android's battery question, Device admin prompt, or settings.
@@ -183,16 +185,22 @@ internal fun InstantAlertsCard(session: SessionManager, showMessage: (String) ->
             Text("Prevent uninstall", style = MaterialTheme.typography.bodyLarge)
             if (adminOn && hasPin) {
                 Text(
-                    "On. Android blocks uninstalling Our Home until a parent unlocks it here with the parent PIN.",
+                    "On. Android blocks uninstalling Our Home until a parent unlocks it here with the parent PIN. " +
+                        "Forgot-PIN emergency unlock: ${emergencyDuration.label} (${emergencyDuration.scheduleNote}).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                OutlinedButton(onClick = { showUnlockDialog = true }) {
-                    Text("Unlock or uninstall…")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { showUnlockDialog = true }) {
+                        Text("Unlock or uninstall…")
+                    }
+                    TextButton(onClick = { showSetPinDialog = true }) {
+                        Text("Change PIN or timer…")
+                    }
                 }
             } else if (adminOn) {
                 Text(
-                    "Device admin is on, but no parent PIN is set yet. Choose a parent PIN to lock removal.",
+                    "Device admin is on, but no parent PIN is set yet. Choose a parent PIN and forgot-PIN timer to lock removal.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -262,15 +270,18 @@ internal fun InstantAlertsCard(session: SessionManager, showMessage: (String) ->
 
     if (showSetPinDialog) {
         SetParentPinDialog(
+            requireCurrentPin = hasPin,
+            initialDuration = emergencyDuration,
+            onVerifyCurrentPin = { current -> CloseGuard.verifyPin(appContext, current) },
             onDismiss = { showSetPinDialog = false },
-            onSave = { pin ->
-                CloseGuard.setPin(appContext, pin)
+            onSave = { pin, chosenDuration ->
+                CloseGuard.setPin(appContext, pin, chosenDuration)
                 showSetPinDialog = false
                 refreshLocalState()
                 if (!CloseGuard.isAdminActive(context)) {
                     open(CloseGuard.activateAdminIntent(context))
                 } else {
-                    showMessage("Parent PIN saved")
+                    showMessage("Parent PIN and ${chosenDuration.label} emergency timer saved")
                 }
             },
         )
@@ -334,24 +345,53 @@ internal fun OfflineUnlockSection(showMessage: (String) -> Unit = {}) {
 }
 
 @Composable
-private fun SetParentPinDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
+private fun SetParentPinDialog(
+    requireCurrentPin: Boolean,
+    initialDuration: CloseGuard.EmergencyDuration,
+    onVerifyCurrentPin: (String) -> Boolean,
+    onDismiss: () -> Unit,
+    onSave: (pin: String, duration: CloseGuard.EmergencyDuration) -> Unit,
+) {
+    var currentPin by remember { mutableStateOf("") }
+    var currentError by remember { mutableStateOf<String?>(null) }
     var pin by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
-    val valid = CloseGuard.isValidPin(pin.trim()) && pin.trim() == confirm.trim()
+    var duration by remember { mutableStateOf(initialDuration) }
+    val valid = (!requireCurrentPin || CloseGuard.isValidPin(currentPin.trim())) &&
+        CloseGuard.isValidPin(pin.trim()) &&
+        pin.trim() == confirm.trim()
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Set parent PIN") },
+        title = { Text(if (requireCurrentPin) "Change parent PIN or timer" else "Set parent PIN") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Choose a 4 to 8 digit PIN. You'll need this PIN on this phone to unlock or uninstall Our Home.",
+                    "Choose a 4 to 8 digit PIN and how long the forgot-PIN emergency unlock takes.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (requireCurrentPin) {
+                    OutlinedTextField(
+                        value = currentPin,
+                        onValueChange = {
+                            if (it.length <= 8 && it.all(Char::isDigit)) {
+                                currentPin = it
+                                currentError = null
+                            }
+                        },
+                        label = { Text("Current parent PIN") },
+                        singleLine = true,
+                        isError = currentError != null,
+                        supportingText = currentError?.let { msg -> { Text(msg) } },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 OutlinedTextField(
                     value = pin,
                     onValueChange = { if (it.length <= 8 && it.all(Char::isDigit)) pin = it },
-                    label = { Text("Parent PIN (4–8 digits)") },
+                    label = { Text(if (requireCurrentPin) "New parent PIN (4–8 digits)" else "Parent PIN (4–8 digits)") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
@@ -366,10 +406,30 @@ private fun SetParentPinDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) 
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                DropdownField(
+                    label = "Forgot-PIN unlock timer",
+                    options = CloseGuard.EmergencyDuration.entries.map { it.key to it.label },
+                    value = duration.key,
+                    onSelect = { key -> duration = CloseGuard.EmergencyDuration.fromKey(key) },
+                )
+                Text(
+                    duration.scheduleNote,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
         confirmButton = {
-            Button(enabled = valid, onClick = { onSave(pin.trim()) }) {
+            Button(
+                enabled = valid,
+                onClick = {
+                    if (requireCurrentPin && !onVerifyCurrentPin(currentPin.trim())) {
+                        currentError = "Incorrect current PIN"
+                        return@Button
+                    }
+                    onSave(pin.trim(), duration)
+                },
+            ) {
                 Text("Save & continue")
             }
         },
@@ -387,6 +447,7 @@ internal fun UnlockOurHomeDialog(
     val context = LocalContext.current
     val appContext = context.applicationContext
     val hasPin = remember { CloseGuard.hasPin(appContext) }
+    val duration = remember { CloseGuard.emergencyDuration(appContext) }
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -460,7 +521,7 @@ internal fun UnlockOurHomeDialog(
                         style = MaterialTheme.typography.labelLarge,
                     )
                     Text(
-                        "1. 5-hour emergency unlock: once started, this timer cannot be canceled. It notifies the parents' phones when it starts, in 2 hours, 1 hour before unlock, and when unlocked. Once the 5 hours finish, tap Complete emergency uninstall.\n" +
+                        "1. ${duration.label} emergency unlock: once started, this timer cannot be canceled (${duration.scheduleNote}). Once it finishes, tap Complete emergency uninstall.\n" +
                             "2. Or use Android Safe Mode: hold the Power button, touch & hold Power off to reboot into Safe mode, then deactivate Our Home in Settings → Security → Device admin apps and uninstall.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -481,8 +542,13 @@ internal fun UnlockOurHomeDialog(
                             val hours = emergencyRemainingSec / 3600
                             val mins = (emergencyRemainingSec % 3600) / 60
                             val secs = emergencyRemainingSec % 60
+                            val formatted = if (hours > 0) {
+                                "%d:%02d:%02d".format(hours, mins, secs)
+                            } else {
+                                "%d:%02d".format(mins, secs)
+                            }
                             Text(
-                                "Emergency unlock ready in %d:%02d:%02d — cannot be canceled".format(hours, mins, secs),
+                                "Emergency unlock ready in $formatted — cannot be canceled",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                             )
@@ -494,7 +560,7 @@ internal fun UnlockOurHomeDialog(
                                     nowMs = System.currentTimeMillis()
                                 },
                             ) {
-                                Text("Start 5-hour emergency unlock")
+                                Text("Start ${duration.label} emergency unlock")
                             }
                         }
                     }

@@ -23,6 +23,11 @@ import com.eosoclub.ourhome.data.DeviceStatus
 import com.eosoclub.ourhome.data.UnauthorizedException
 import com.eosoclub.ourhome.location.Geofences
 import com.eosoclub.ourhome.location.readBattery
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 /**
@@ -51,26 +56,31 @@ object PhoneCheckIn {
     private const val NOW_WORK = "phone-check-in-now"
     private const val EMERGENCY_WORK_PREFIX = "phone-emergency-stage-"
     private const val KEY_STAGE = "stage"
+    private val emergencyScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+    )
 
     suspend fun send(
         context: Context,
         api: ApiClient,
         shuttingDown: Boolean = false,
-        forcedEmergencyStage: CloseGuard.EmergencyStage? = null,
+        forcedEmergencyStage: String? = null,
     ) {
         val lastPush = Push.lastReceived(context)
         val startedAt = CloseGuard.emergencyStartedAtMs(context)
         val readyAt = CloseGuard.emergencyReadyAtMs(context).takeIf { it > 0L }
+        val duration = CloseGuard.emergencyDuration(context)
         val dueStage = forcedEmergencyStage ?: CloseGuard.dueEmergencyStages(
             startedAtMs = startedAt,
             nowMs = System.currentTimeMillis(),
             alreadySent = CloseGuard.emergencySentStages(context),
-        ).lastOrNull()
+            duration = duration,
+        ).lastOrNull()?.wire
 
-        // If a new emergency unlock milestone is due (started, 2h_elapsed, 1h_left, unlocked),
-        // briefly check in with closeGuard=true first so servers that deduplicate on
-        // close_guard_off clear the previous alert row and push a fresh notification
-        // to the supervising parents' phones on the next call below.
+        // If a new emergency unlock milestone is due, briefly check in with
+        // closeGuard=true first so servers that deduplicate on close_guard_off
+        // clear the previous alert row and push a fresh notification to the
+        // supervising parents' phones on the next call below.
         if (dueStage != null && !shuttingDown) {
             runCatching {
                 api.checkIn(
@@ -108,7 +118,7 @@ object PhoneCheckIn {
             stayConnected = StayConnected.isOn(context),
             closeGuard = if (emergencyActive) false else CloseGuard.isEnabled(context),
             uninstallGuard = if (emergencyActive) false else CloseGuard.isAdminActive(context),
-            emergencyUnlockStage = dueStage?.wire,
+            emergencyUnlockStage = dueStage,
             emergencyUnlockReadyAtMs = readyAt,
             status = statusIfLookedAfter(context),
             shuttingDown = shuttingDown,
@@ -123,15 +133,14 @@ object PhoneCheckIn {
     }
 
     /**
-     * Schedules the 4 parent notifications for the 5-hour emergency unlock:
-     * 1. Immediately on start (0h)
-     * 2. In 2 hours (3h left)
-     * 3. 1 hour before unlock (4h in, 1h left)
-     * 4. When unlocked (5h in)
+     * Schedules the parent notifications for the chosen [duration] (30s, 60s,
+     * 1h, 5h, or 10h). Short sub-minute delays also run in-process so 30s/60s
+     * milestones fire on the exact second while the app is open.
      */
-    fun scheduleEmergencyNotifications(context: Context) {
-        val wm = WorkManager.getInstance(context)
-        for (stage in CloseGuard.EmergencyStage.entries) {
+    fun scheduleEmergencyNotifications(context: Context, duration: CloseGuard.EmergencyDuration) {
+        val appContext = context.applicationContext
+        val wm = WorkManager.getInstance(appContext)
+        for (stage in duration.stages) {
             val builder = OneTimeWorkRequestBuilder<EmergencyStageWorker>()
                 .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
                 .setInputData(androidx.work.workDataOf(KEY_STAGE to stage.wire))
@@ -140,19 +149,26 @@ object PhoneCheckIn {
             } else {
                 builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             }
-            wm.enqueueUniqueWork(EMERGENCY_WORK_PREFIX + stage.wire, ExistingWorkPolicy.KEEP, builder.build())
+            wm.enqueueUniqueWork(EMERGENCY_WORK_PREFIX + stage.wire, ExistingWorkPolicy.REPLACE, builder.build())
+
+            if (stage.offsetMs in 1L..60_000L) {
+                emergencyScope.launch {
+                    kotlinx.coroutines.delay(stage.offsetMs)
+                    notifyEmergencyStageNow(appContext, stage.wire)
+                }
+            }
         }
     }
 
     /** Sends a specific emergency unlock milestone notification (e.g. "unlocked") right away. */
-    fun notifyEmergencyStageNow(context: Context, stage: CloseGuard.EmergencyStage) {
+    fun notifyEmergencyStageNow(context: Context, stageWire: String) {
         val request = OneTimeWorkRequestBuilder<EmergencyStageWorker>()
             .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
-            .setInputData(androidx.work.workDataOf(KEY_STAGE to stage.wire))
+            .setInputData(androidx.work.workDataOf(KEY_STAGE to stageWire))
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
-            EMERGENCY_WORK_PREFIX + stage.wire,
+            EMERGENCY_WORK_PREFIX + stageWire,
             ExistingWorkPolicy.REPLACE,
             request,
         )
@@ -228,21 +244,20 @@ object PhoneCheckIn {
 
     class EmergencyStageWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
         override suspend fun doWork(): Result {
-            val wire = inputData.getString(KEY_STAGE)
-            val stage = CloseGuard.EmergencyStage.entries.firstOrNull { it.wire == wire } ?: return Result.success()
+            val wire = inputData.getString(KEY_STAGE)?.takeIf { it.isNotEmpty() } ?: return Result.success()
             // Only send if the emergency unlock is still active (or this is the final "unlocked" notice).
-            if (stage != CloseGuard.EmergencyStage.Unlocked && CloseGuard.emergencyReadyAtMs(applicationContext) <= 0L) {
+            if (wire != "unlocked" && CloseGuard.emergencyReadyAtMs(applicationContext) <= 0L) {
                 return Result.success()
             }
             val api = (applicationContext as OurHomeApp).session.api
             return try {
-                send(applicationContext, api, forcedEmergencyStage = stage)
-                Log.i(TAG, "sent emergency unlock stage notification (${stage.wire}) to parents")
+                send(applicationContext, api, forcedEmergencyStage = wire)
+                Log.i(TAG, "sent emergency unlock stage notification ($wire) to parents")
                 Result.success()
             } catch (e: UnauthorizedException) {
                 Result.success()
             } catch (e: Exception) {
-                Log.w(TAG, "emergency stage notification (${stage.wire}) failed; retrying", e)
+                Log.w(TAG, "emergency stage notification ($wire) failed; retrying", e)
                 Result.retry()
             }
         }

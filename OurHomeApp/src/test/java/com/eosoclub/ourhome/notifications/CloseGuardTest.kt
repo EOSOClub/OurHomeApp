@@ -94,33 +94,78 @@ class CloseGuardTest {
     @Test
     fun `5-hour emergency unlock notifies parents at start, 2 hours, 1 hour left, and when unlocked`() {
         val hour = 60 * 60_000L
-        org.junit.Assert.assertEquals(5 * hour, CloseGuard.EMERGENCY_COOLDOWN_MS)
+        val d5h = CloseGuard.EmergencyDuration.Hours5
+        org.junit.Assert.assertEquals(5 * hour, d5h.durationMs)
+        org.junit.Assert.assertEquals(4, d5h.stages.size)
 
         val start = 1_000_000L
         // At start (0h): Started
         org.junit.Assert.assertEquals(
-            listOf(CloseGuard.EmergencyStage.Started),
-            CloseGuard.dueEmergencyStages(start, start, emptySet()),
+            listOf("started"),
+            CloseGuard.dueEmergencyStages(start, start, emptySet(), d5h).map { it.wire },
         )
         // Before 2h: nothing new once Started was sent
         org.junit.Assert.assertEquals(
-            emptyList<CloseGuard.EmergencyStage>(),
-            CloseGuard.dueEmergencyStages(start, start + 2 * hour - 1, setOf("started")),
+            emptyList<String>(),
+            CloseGuard.dueEmergencyStages(start, start + 2 * hour - 1, setOf("started"), d5h).map { it.wire },
         )
-        // At 2h (3h left): TwoHoursElapsed
+        // At 2h (3h left): 2h_elapsed
         org.junit.Assert.assertEquals(
-            listOf(CloseGuard.EmergencyStage.TwoHoursElapsed),
-            CloseGuard.dueEmergencyStages(start, start + 2 * hour, setOf("started")),
+            listOf("2h_elapsed"),
+            CloseGuard.dueEmergencyStages(start, start + 2 * hour, setOf("started"), d5h).map { it.wire },
         )
-        // At 4h (1h before unlock): OneHourLeft
+        // At 4h (1h before unlock): 1h_left
         org.junit.Assert.assertEquals(
-            listOf(CloseGuard.EmergencyStage.OneHourLeft),
-            CloseGuard.dueEmergencyStages(start, start + 4 * hour, setOf("started", "2h_elapsed")),
+            listOf("1h_left"),
+            CloseGuard.dueEmergencyStages(start, start + 4 * hour, setOf("started", "2h_elapsed"), d5h).map { it.wire },
         )
-        // At 5h (unlocked): Unlocked
+        // At 5h (unlocked): unlocked
         org.junit.Assert.assertEquals(
-            listOf(CloseGuard.EmergencyStage.Unlocked),
-            CloseGuard.dueEmergencyStages(start, start + 5 * hour, setOf("started", "2h_elapsed", "1h_left")),
+            listOf("unlocked"),
+            CloseGuard.dueEmergencyStages(start, start + 5 * hour, setOf("started", "2h_elapsed", "1h_left"), d5h).map { it.wire },
+        )
+    }
+
+    @Test
+    fun `configurable emergency unlock durations adjust notification count and frequency`() {
+        val sec = 1_000L
+        val min = 60 * sec
+        val hour = 60 * min
+        val start = 1_000_000L
+
+        // 30 seconds: 2 notifications (start at 0s, unlocked at 30s)
+        val d30s = CloseGuard.EmergencyDuration.Sec30
+        org.junit.Assert.assertEquals(30 * sec, d30s.durationMs)
+        org.junit.Assert.assertEquals(listOf("started", "unlocked"), d30s.stages.map { it.wire })
+        org.junit.Assert.assertEquals(listOf(0L, 30 * sec), d30s.stages.map { it.offsetMs })
+        org.junit.Assert.assertEquals(
+            listOf("unlocked"),
+            CloseGuard.dueEmergencyStages(start, start + 30 * sec, setOf("started"), d30s).map { it.wire },
+        )
+
+        // 60 seconds: 3 notifications (start at 0s, 30s left at 30s, unlocked at 60s)
+        val d60s = CloseGuard.EmergencyDuration.Sec60
+        org.junit.Assert.assertEquals(60 * sec, d60s.durationMs)
+        org.junit.Assert.assertEquals(listOf("started", "30s_left", "unlocked"), d60s.stages.map { it.wire })
+        org.junit.Assert.assertEquals(listOf(0L, 30 * sec, 60 * sec), d60s.stages.map { it.offsetMs })
+
+        // 1 hour: 3 notifications (start at 0m, 30m left at 30m, unlocked at 60m)
+        val d1h = CloseGuard.EmergencyDuration.Hours1
+        org.junit.Assert.assertEquals(1 * hour, d1h.durationMs)
+        org.junit.Assert.assertEquals(listOf("started", "30m_left", "unlocked"), d1h.stages.map { it.wire })
+        org.junit.Assert.assertEquals(listOf(0L, 30 * min, 60 * min), d1h.stages.map { it.offsetMs })
+
+        // 10 hours: 5 notifications (start at 0h, 3h elapsed, 6h elapsed, 1h left at 9h, unlocked at 10h)
+        val d10h = CloseGuard.EmergencyDuration.Hours10
+        org.junit.Assert.assertEquals(10 * hour, d10h.durationMs)
+        org.junit.Assert.assertEquals(
+            listOf("started", "3h_elapsed", "6h_elapsed", "1h_left", "unlocked"),
+            d10h.stages.map { it.wire },
+        )
+        org.junit.Assert.assertEquals(
+            listOf(0L, 3 * hour, 6 * hour, 9 * hour, 10 * hour),
+            d10h.stages.map { it.offsetMs },
         )
     }
 }
+
