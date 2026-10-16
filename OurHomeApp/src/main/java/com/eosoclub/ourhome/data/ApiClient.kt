@@ -1199,15 +1199,19 @@ class ApiClient(
 
     suspend fun pointsSettings(): PointsSettings = call(get("/api/points/settings"), PointsSettings.serializer())
 
-    /** Head only. The server rejects an unknown time zone. */
-    suspend fun savePointsSettings(minutesPerPoint: Double, timezone: String, weekStartsOn: Int): PointsSettings =
+    /** Head only. Sends only what's given; the server keeps the rest. It rejects an unknown time zone. */
+    suspend fun savePointsSettings(
+        minutesPerPoint: Double? = null,
+        timezone: String? = null,
+        weekStartsOn: Int? = null,
+    ): PointsSettings =
         call(
             post(
                 "/api/points/settings",
                 buildJsonObject {
-                    put("minutesPerPoint", minutesPerPoint)
-                    put("timezone", timezone)
-                    put("weekStartsOn", weekStartsOn)
+                    minutesPerPoint?.let { put("minutesPerPoint", it) }
+                    timezone?.let { put("timezone", it) }
+                    weekStartsOn?.let { put("weekStartsOn", it) }
                 },
             ),
             PointsSettings.serializer(),

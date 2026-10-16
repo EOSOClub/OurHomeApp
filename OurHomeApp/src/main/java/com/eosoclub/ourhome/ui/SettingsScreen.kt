@@ -159,8 +159,14 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
         }
     }
 
-    fun savePoints(minutesPerPoint: Double, timezone: String, weekStartsOn: Int) = act("Points settings saved") {
-        val saved = api.savePointsSettings(minutesPerPoint, timezone, weekStartsOn)
+    fun savePoints(minutesPerPoint: Double) = act("Points settings saved") {
+        val saved = api.savePointsSettings(minutesPerPoint = minutesPerPoint)
+        state.update { it.copy(points = saved) }
+    }
+
+    // Stored with the points rate, so it saves through the same call.
+    fun saveTimeZone(timezone: String, weekStartsOn: Int) = act("Time zone and week saved") {
+        val saved = api.savePointsSettings(timezone = timezone, weekStartsOn = weekStartsOn)
         state.update { it.copy(points = saved) }
     }
 
@@ -307,8 +313,12 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-            // Keyed on the saved values so the form resets to them after a save.
-            state.points?.let { p -> key(p) { PointsCard(p, state.busy, vm::savePoints) } }
+            // Keyed on the saved values so the form resets to them after a save;
+            // each on its own, so saving one doesn't wipe an edit in the other.
+            state.points?.let { p ->
+                key(p.timezone, p.weekStartsOn) { TimeZoneCard(p, state.busy, vm::saveTimeZone) }
+                key(p.minutesPerPoint) { PointsCard(p, state.busy, vm::savePoints) }
+            }
             // Rooms are where tasks are done: hidden with Tasks.
             if (features.places) state.places?.let { PlacesCard(it, state.busy, vm) }
             state.categories?.let { CategoriesCard(it, state.busy, vm) }
@@ -321,31 +331,15 @@ fun SettingsScreen(
     }
 }
 
-// --- Task points (head) -------------------------------------------------------
+// --- Time zone and week (head) ------------------------------------------------
 
 @Composable
-private fun PointsCard(saved: PointsSettings, busy: Boolean, onSave: (Double, String, Int) -> Unit) {
-    var rate by remember { mutableStateOf(formatQuantity(saved.minutesPerPoint)) }
+private fun TimeZoneCard(saved: PointsSettings, busy: Boolean, onSave: (String, Int) -> Unit) {
     var timezone by remember { mutableStateOf(saved.timezone) }
     var weekStartsOn by remember { mutableStateOf(saved.weekStartsOn) }
-    val minutes = rate.toDoubleOrNull()?.takeIf { it > 0 }
     val phoneZone = ZoneId.systemDefault().id
 
-    SectionCard("Task points", "The time→points rate, and the calendar points stats and task cycles use.") {
-        OutlinedTextField(
-            value = rate,
-            onValueChange = { rate = it },
-            label = { Text("Minutes per point") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            supportingText = {
-                Text(
-                    (minutes?.let { "45 min of work = ${formatQuantity(Math.round(45 / it * 100) / 100.0)} pts. " } ?: "") +
-                        "Only new calculations use it; existing tasks keep their points.",
-                )
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
+    SectionCard("Time zone and week", "Everyone sees dates and times in this time zone, whatever their own phone is set to.") {
         OutlinedTextField(
             value = timezone,
             onValueChange = { timezone = it },
@@ -365,8 +359,38 @@ private fun PointsCard(saved: PointsSettings, busy: Boolean, onSave: (Double, St
             { weekStartsOn = it.toInt() },
         )
         Button(
-            onClick = { minutes?.let { onSave(it, timezone.trim(), weekStartsOn) } },
-            enabled = minutes != null && timezone.isNotBlank() && !busy,
+            onClick = { onSave(timezone.trim(), weekStartsOn) },
+            enabled = timezone.isNotBlank() && !busy,
+            modifier = Modifier.align(Alignment.End),
+        ) { Text("Save") }
+    }
+}
+
+// --- Task points (head) -------------------------------------------------------
+
+@Composable
+private fun PointsCard(saved: PointsSettings, busy: Boolean, onSave: (Double) -> Unit) {
+    var rate by remember { mutableStateOf(formatQuantity(saved.minutesPerPoint)) }
+    val minutes = rate.toDoubleOrNull()?.takeIf { it > 0 }
+
+    SectionCard("Task points", "The time→points rate.") {
+        OutlinedTextField(
+            value = rate,
+            onValueChange = { rate = it },
+            label = { Text("Minutes per point") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            supportingText = {
+                Text(
+                    (minutes?.let { "45 min of work = ${formatQuantity(Math.round(45 / it * 100) / 100.0)} pts. " } ?: "") +
+                        "Only new calculations use it; existing tasks keep their points.",
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = { minutes?.let { onSave(it) } },
+            enabled = minutes != null && !busy,
             modifier = Modifier.align(Alignment.End),
         ) { Text("Save") }
     }
