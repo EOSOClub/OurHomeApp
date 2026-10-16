@@ -214,7 +214,11 @@ fun ProfileScreen(
         modifier = modifier.fillMaxSize(),
     ) {
         val profile = state.profile
-        if (LoadState(state.loading, state.error, profile == null, "", vm::refresh) || profile == null) {
+        if (profile == null) {
+            Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                LoadState(state.loading, state.error, true, "", vm::refresh)
+                if (!state.loading) OfflineUnlockSection(showMessage)
+            }
             return@PullToRefreshBox
         }
         Column(

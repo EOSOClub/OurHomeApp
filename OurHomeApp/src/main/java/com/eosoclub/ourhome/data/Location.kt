@@ -254,6 +254,11 @@ data class LookedAfterPhone(
                 "usage_off" -> "Usage access turned off on their phone"
                 "battery_restricted" -> "Battery saving can delay OurHome on their phone"
                 "close_guard_off" -> "OurHome can be closed on their phone"
+                "uninstall_guard_off" -> "OurHome can be uninstalled on their phone"
+                "emergency_unlock_started" -> "5-hour emergency unlock started on their phone"
+                "emergency_unlock_2h" -> "Emergency unlock on their phone: 3 hours left"
+                "emergency_unlock_1h" -> "Emergency unlock on their phone: 1 hour left"
+                "emergency_unlock_unlocked" -> "Emergency unlock finished on their phone"
                 else -> null
             }
         }.takeIf { it.isNotEmpty() }?.joinToString(" · ")

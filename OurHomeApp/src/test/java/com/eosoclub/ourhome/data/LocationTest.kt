@@ -27,6 +27,10 @@ class LocationTest {
             "OurHome can be closed on their phone",
             LookedAfterPhone("x", problems = listOf("close_guard_off")).problemText,
         )
+        assertEquals(
+            "OurHome can be uninstalled on their phone",
+            LookedAfterPhone("x", problems = listOf("uninstall_guard_off")).problemText,
+        )
     }
 
     @Test

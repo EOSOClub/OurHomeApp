@@ -172,7 +172,8 @@
         <!-- "Keep Our Home running" (notifications/CloseGuard): an Accessibility
              service turned on by hand in Android's settings. Holds Stay
              connected's connection while on, and on a phone an adult looks
-             after closes Our Home's App info. Only the system binds it. -->
+             after closes Our Home's App info, Device admin page and uninstall
+             prompt. Only the system binds it. -->
         <service
             android:name=".notifications.CloseGuardService"
             android:exported="false"
@@ -185,6 +186,23 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/close_guard" />
         </service>
+
+        <!-- "Keep Our Home on this phone" (notifications/CloseGuard): a Device
+             admin with no policies of its own. While active, Android blocks
+             uninstalling Our Home until it's unlocked with the parent PIN. -->
+        <receiver
+            android:name=".notifications.CloseGuardAdminReceiver"
+            android:description="@string/close_guard_admin_description"
+            android:exported="true"
+            android:label="@string/close_guard_admin_name"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Hands a downloaded app update to Android's installer (AppUpdate).
              Shares only cache/updates/, and only by a one-time read grant. -->

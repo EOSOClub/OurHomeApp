@@ -955,6 +955,9 @@ class ApiClient(
         standbyBucket: Int,
         stayConnected: Boolean,
         closeGuard: Boolean,
+        uninstallGuard: Boolean = closeGuard,
+        emergencyUnlockStage: String? = null,
+        emergencyUnlockReadyAtMs: Long? = null,
         status: DeviceStatus?,
         shuttingDown: Boolean,
     ): CheckInResult =
@@ -977,6 +980,9 @@ class ApiClient(
                     put("standbyBucket", standbyBucket)
                     put("stayConnected", stayConnected)
                     put("closeGuard", closeGuard)
+                    put("uninstallGuard", uninstallGuard)
+                    emergencyUnlockStage?.let { put("emergencyUnlockStage", it) }
+                    emergencyUnlockReadyAtMs?.let { put("emergencyUnlockReadyAtMs", it) }
                     // Only while an adult looks after this member (DeviceStatus).
                     status?.let { put("status", it.toJson()) }
                     if (shuttingDown) put("shuttingDown", true)

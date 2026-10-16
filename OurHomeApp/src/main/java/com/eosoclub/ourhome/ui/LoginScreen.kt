@@ -117,5 +117,6 @@ fun LoginScreen(session: SessionManager, initialMessage: String?) {
         TextButton(onClick = { showServer = !showServer }) {
             Text(if (showServer) "Hide server" else "Server: $server")
         }
+        OfflineUnlockSection(showMessage = { error = it })
     }
 }
