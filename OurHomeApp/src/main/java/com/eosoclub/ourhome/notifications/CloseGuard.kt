@@ -39,8 +39,8 @@ import java.security.SecureRandom
  *      updates), and this service's own Accessibility pages, by going to the
  *      home screen.
  * 3. **Emergency offline recovery without PIN**: if the parent PIN is lost and
- *    there is no internet connection, an in-app 15-minute emergency unlock
- *    timer (or Android Safe Mode) lets the phone unlock and uninstall safely.
+ *    there is no internet connection, an in-app 5-hour emergency unlock timer
+ *    (or Android Safe Mode) lets the phone unlock and uninstall safely.
  */
 object CloseGuard {
     private const val TAG = "CloseGuard"
