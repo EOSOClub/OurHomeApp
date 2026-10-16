@@ -348,14 +348,33 @@ object CloseGuard {
     }
 
     /**
+     * The "Activate device admin app" prompt's words (Settings'
+     * `add_device_admin` button), its English title, and English. This is the
+     * screen the parent needs to turn protection on, so the guard must never
+     * close it even though it shows the admin's [close_guard_admin_name] label.
+     */
+    @SuppressLint("DiscouragedApi")
+    internal fun activateAdminLabels(context: Context): Set<String> {
+        val labels = DEFAULT_ACTIVATE_LABELS.toMutableSet()
+        runCatching {
+            val res = context.packageManager.getResourcesForApplication(SETTINGS_PACKAGE)
+            val id = res.getIdentifier("add_device_admin", "string", SETTINGS_PACKAGE)
+            if (id != 0) labels += res.getString(id)
+        }.onFailure { Log.w(TAG, "can't read Settings' add_device_admin text; using English", it) }
+        return labels
+    }
+
+    /**
      * Whether a screen must be closed on a guarded phone:
      * - OurHome's App info (its name and a Force stop button on one screen)
      * - This service's own page in Accessibility ([guardName])
      * - OurHome's Device admin deactivation page ([adminName], or [appName] with a Deactivate button)
      * - Android's package installer *uninstall* prompt for [appName] (never its
      *   update/install prompt, so self-hosted app updates still install cleanly)
-     * Never OurHome itself. [shows]: whether the screen has a piece of text
-     * exactly so (ignoring case).
+     * Never OurHome itself, and never the "Activate device admin app" prompt
+     * ([activateLabels]): the parent needs that to turn protection on, and it
+     * shows the same [adminName] label as the deactivation page.
+     * [shows]: whether the screen has a piece of text exactly so (ignoring case).
      */
     internal fun shouldClose(
         windowPackage: String?,
@@ -365,10 +384,14 @@ object CloseGuard {
         forceStopLabels: Set<String>,
         adminName: String = "Keep Our Home on this phone",
         deactivateLabels: Set<String> = emptySet(),
+        activateLabels: Set<String> = DEFAULT_ACTIVATE_LABELS,
         uninstallLabels: Set<String> = DEFAULT_UNINSTALL_LABELS,
         shows: (String) -> Boolean,
     ): Boolean {
         if (windowPackage == null || windowPackage == ownPackage) return false
+        // The "Activate device admin app" prompt shows [adminName] too, but the
+        // parent needs it to turn protection on, so leave it open.
+        if (activateLabels.any(shows)) return false
         if (shows(guardName) || shows(adminName)) return true
         if (!shows(appName)) return false
         if (windowPackage.contains("packageinstaller", ignoreCase = true)) {
@@ -380,6 +403,11 @@ object CloseGuard {
     internal val DEFAULT_UNINSTALL_LABELS = setOf(
         "Do you want to uninstall this app?",
         "Uninstall",
+    )
+
+    internal val DEFAULT_ACTIVATE_LABELS = setOf(
+        "Activate device admin app",
+        "Activate this device admin app",
     )
 }
 
@@ -402,6 +430,7 @@ class CloseGuardService : AccessibilityService() {
     private var connection: StreamConnection? = null
     private var forceStopLabels: Set<String> = emptySet()
     private var deactivateLabels: Set<String> = emptySet()
+    private var activateLabels: Set<String> = emptySet()
     private var lastCheckAt = 0L
     private var lastToastAt = 0L
     private var tornDown = false
@@ -410,6 +439,7 @@ class CloseGuardService : AccessibilityService() {
         super.onServiceConnected()
         forceStopLabels = CloseGuard.forceStopLabels(this)
         deactivateLabels = CloseGuard.deactivateAdminLabels(this)
+        activateLabels = CloseGuard.activateAdminLabels(this)
         CloseGuard.service = this
         // Same rules as any other start (an adult's Stop is still respected).
         StayConnected.ensureRunning(applicationContext)
@@ -450,6 +480,7 @@ class CloseGuardService : AccessibilityService() {
             forceStopLabels = forceStopLabels,
             adminName = getString(R.string.close_guard_admin_name),
             deactivateLabels = deactivateLabels,
+            activateLabels = activateLabels,
         ) { text -> root.shows(text) }
         if (!close) return
         Log.i(TAG, "closing a settings or installer page that could stop or remove OurHome")

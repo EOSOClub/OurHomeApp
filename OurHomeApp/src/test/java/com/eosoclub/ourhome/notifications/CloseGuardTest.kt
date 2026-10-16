@@ -49,6 +49,14 @@ class CloseGuardTest {
     }
 
     @Test
+    fun `never closes the Activate device admin app prompt, so a parent can turn protection on`() {
+        // The activate prompt shows the same admin label as the deactivate page,
+        // plus an Activate button/header. It must stay open.
+        assertFalse(close("com.android.settings", "Activate device admin app", "Keep Our Home on this phone"))
+        assertFalse(close("com.android.settings", "Activate this device admin app", "Keep Our Home on this phone", "Our Home"))
+    }
+
+    @Test
     fun `closes Android's package installer uninstall prompt for Our Home, but never an app update`() {
         assertTrue(close("com.google.android.packageinstaller", "Our Home", "Do you want to uninstall this app?"))
         assertTrue(close("com.android.packageinstaller", "Our Home", "Uninstall", "Cancel"))
