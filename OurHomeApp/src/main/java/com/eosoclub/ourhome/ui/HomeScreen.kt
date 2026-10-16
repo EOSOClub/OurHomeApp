@@ -23,7 +23,6 @@ import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
@@ -503,14 +502,11 @@ fun HomeScreen(
     }
 
     if (confirmSignOut) {
-        AlertDialog(
-            onDismissRequest = { confirmSignOut = false },
-            title = { Text("Sign out?") },
-            text = { Text("Signed in as ${user.name ?: user.username}.") },
-            confirmButton = {
-                TextButton(onClick = { confirmSignOut = false; scope.launch { session.signOut() } }) { Text("Sign out") }
-            },
-            dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("Cancel") } },
+        // Asks for the parent PIN while Prevent uninstall is on (signing out turns it off).
+        SignOutDialog(
+            who = "${user.name ?: user.username}",
+            onDismiss = { confirmSignOut = false },
+            onSignOut = { confirmSignOut = false; scope.launch { session.signOut() } },
         )
     }
 }

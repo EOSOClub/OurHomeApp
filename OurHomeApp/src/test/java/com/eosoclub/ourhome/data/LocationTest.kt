@@ -31,6 +31,14 @@ class LocationTest {
             "OurHome can be uninstalled on their phone",
             LookedAfterPhone("x", problems = listOf("uninstall_guard_off")).problemText,
         )
+        // Every emergency unlock milestone the server can send (web lib/phoneHealth.ts), with no length in the start.
+        assertEquals(
+            "Emergency unlock started on their phone",
+            LookedAfterPhone("x", problems = listOf("emergency_unlock_started")).problemText,
+        )
+        for (left in listOf("30m_left", "4h_left", "7h_left")) {
+            assertEquals(true, LookedAfterPhone("x", problems = listOf("emergency_unlock_$left")).problemText?.endsWith(" left"))
+        }
     }
 
     @Test

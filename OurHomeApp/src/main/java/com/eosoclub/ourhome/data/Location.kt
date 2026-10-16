@@ -228,9 +228,11 @@ data class LookedAfter(
 /**
  * [problems]: "quiet" | "app_removed" | "switched_off" | "battery_flat" |
  * "no_signal" (why it went quiet, at most one) | "location_off" | "usage_off"
- * | "battery_restricted" | "close_guard_off" (web lib/phoneHealth.ts). [lastPushAt]: when an instant alert last reached
- * it (null: none yet, or an older app). [stayConnected]: turned on in the
- * app; [connected]: holding its connection to the server right now.
+ * | "battery_restricted" | "close_guard_off" | "uninstall_guard_off" |
+ * "emergency_unlock_*" (web lib/phoneHealth.ts PHONE_PROBLEMS). [lastPushAt]:
+ * when an instant alert last reached it (null: none yet, or an older app).
+ * [stayConnected]: turned on in the app; [connected]: holding its connection
+ * to the server right now.
  */
 @Serializable
 data class LookedAfterPhone(
@@ -255,9 +257,12 @@ data class LookedAfterPhone(
                 "battery_restricted" -> "Battery saving can delay OurHome on their phone"
                 "close_guard_off" -> "OurHome can be closed on their phone"
                 "uninstall_guard_off" -> "OurHome can be uninstalled on their phone"
-                "emergency_unlock_started" -> "5-hour emergency unlock started on their phone"
+                "emergency_unlock_started" -> "Emergency unlock started on their phone"
                 "emergency_unlock_2h" -> "Emergency unlock on their phone: 3 hours left"
                 "emergency_unlock_1h" -> "Emergency unlock on their phone: 1 hour left"
+                "emergency_unlock_30m_left" -> "Emergency unlock on their phone: 30 minutes left"
+                "emergency_unlock_4h_left" -> "Emergency unlock on their phone: 4 hours left"
+                "emergency_unlock_7h_left" -> "Emergency unlock on their phone: 7 hours left"
                 "emergency_unlock_unlocked" -> "Emergency unlock finished on their phone"
                 else -> null
             }

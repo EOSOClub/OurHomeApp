@@ -25,7 +25,7 @@ import java.security.SecureRandom
  * 1. **Device admin** ([CloseGuardAdminReceiver]): while active in Android's
  *    Device admin settings, Android itself refuses to uninstall Our Home from
  *    the home screen, App info, or anywhere else. Turning it on in Our Home
- *    sets a parent PIN (4–8 digits, stored only as a salted SHA-256 hash);
+ *    sets a parent PIN (4 to 8 digits, stored only as a salted SHA-256 hash);
  *    entering that PIN on Profile (or Login when offline) removes Device admin
  *    and opens Android's uninstall prompt.
  * 2. **Accessibility service** ([CloseGuardService]):
@@ -39,8 +39,9 @@ import java.security.SecureRandom
  *      updates), and this service's own Accessibility pages, by going to the
  *      home screen.
  * 3. **Emergency offline recovery without PIN**: if the parent PIN is lost and
- *    there is no internet connection, an in-app 5-hour emergency unlock timer
- *    (or Android Safe Mode) lets the phone unlock and uninstall safely.
+ *    there is no internet connection, an in-app emergency unlock timer (its
+ *    length chosen by the parent with the PIN, [EmergencyDuration]) or
+ *    Android Safe Mode lets the phone unlock and uninstall safely.
  */
 object CloseGuard {
     private const val TAG = "CloseGuard"
@@ -79,7 +80,9 @@ object CloseGuard {
     /**
      * Parent-configurable forgot-PIN emergency unlock durations. Each choice
      * adjusts both the unlock time and how many / how often notifications are
-     * sent to the supervising parents' phones.
+     * sent to the supervising parents' phones. An hour at least, so the
+     * timer is never a quick way around the PIN (a phone that saved a removed
+     * shorter choice falls back to 5 hours in [fromKey]).
      */
     enum class EmergencyDuration(
         val key: String,
@@ -88,27 +91,6 @@ object CloseGuard {
         val scheduleNote: String,
         val stages: List<EmergencyStage>,
     ) {
-        Sec30(
-            key = "30s",
-            label = "30 seconds",
-            durationMs = 30_000L,
-            scheduleNote = "2 parent notifications: when started and when unlocked",
-            stages = listOf(
-                EmergencyStage("started", 0L),
-                EmergencyStage("unlocked", 30_000L),
-            ),
-        ),
-        Sec60(
-            key = "60s",
-            label = "60 seconds",
-            durationMs = 60_000L,
-            scheduleNote = "3 parent notifications: when started, at 30 seconds, and when unlocked",
-            stages = listOf(
-                EmergencyStage("started", 0L),
-                EmergencyStage("30s_left", 30_000L),
-                EmergencyStage("unlocked", 60_000L),
-            ),
-        ),
         Hours1(
             key = "1h",
             label = "1 hour",
@@ -170,6 +152,16 @@ object CloseGuard {
         }
     }
 
+    /**
+     * The milestone a check-in sends. Only the latest of [due]: the ones it
+     * passed while the phone was off or offline are marked sent with it, so
+     * the parents never get an older one after a newer one. While an unlock is
+     * [running], what's due decides, whichever worker asked; [forced] counts
+     * only once it's over ("unlocked", after completing cleared the countdown).
+     */
+    internal fun stageToSend(due: List<EmergencyStage>, forced: String?, running: Boolean): String? =
+        due.lastOrNull()?.wire ?: forced.takeIf { !running }
+
     /** The running service in this process, set by the service itself. */
     @Volatile
     internal var service: CloseGuardService? = null
@@ -205,7 +197,7 @@ object CloseGuard {
     fun uninstallIntent(context: Context): Intent =
         Intent(Intent.ACTION_DELETE, "package:${context.packageName}".toUri())
 
-    // --- Parent PIN (4–8 digits, salted SHA-256 + brute-force cooldown) -----
+    // --- Parent PIN (4 to 8 digits, salted SHA-256 + brute-force cooldown) --
 
     /** A parent PIN is 4 to 8 digits. */
     fun isValidPin(pin: String): Boolean = pin.length in 4..8 && pin.all { it.isDigit() }

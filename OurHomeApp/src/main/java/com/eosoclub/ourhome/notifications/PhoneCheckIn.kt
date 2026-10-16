@@ -23,11 +23,6 @@ import com.eosoclub.ourhome.data.DeviceStatus
 import com.eosoclub.ourhome.data.UnauthorizedException
 import com.eosoclub.ourhome.location.Geofences
 import com.eosoclub.ourhome.location.readBattery
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.util.UUID
 
 /**
@@ -56,9 +51,6 @@ object PhoneCheckIn {
     private const val NOW_WORK = "phone-check-in-now"
     private const val EMERGENCY_WORK_PREFIX = "phone-emergency-stage-"
     private const val KEY_STAGE = "stage"
-    private val emergencyScope = kotlinx.coroutines.CoroutineScope(
-        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
-    )
 
     suspend fun send(
         context: Context,
@@ -69,39 +61,18 @@ object PhoneCheckIn {
         val lastPush = Push.lastReceived(context)
         val startedAt = CloseGuard.emergencyStartedAtMs(context)
         val readyAt = CloseGuard.emergencyReadyAtMs(context).takeIf { it > 0L }
-        val duration = CloseGuard.emergencyDuration(context)
-        val dueStage = forcedEmergencyStage ?: CloseGuard.dueEmergencyStages(
-            startedAtMs = startedAt,
-            nowMs = System.currentTimeMillis(),
-            alreadySent = CloseGuard.emergencySentStages(context),
-            duration = duration,
-        ).lastOrNull()?.wire
-
-        // If a new emergency unlock milestone is due, briefly check in with
-        // closeGuard=true first so servers that deduplicate on close_guard_off
-        // clear the previous alert row and push a fresh notification to the
-        // supervising parents' phones on the next call below.
-        if (dueStage != null && !shuttingDown) {
-            runCatching {
-                api.checkIn(
-                    installId = installId(context),
-                    appVersion = BuildConfig.VERSION_NAME,
-                    deviceName = Build.MODEL.orEmpty().take(80),
-                    locationAlways = Geofences.hasFineLocation(context) && Geofences.hasBackgroundLocation(context),
-                    notifications = NotificationManagerCompat.from(context).areNotificationsEnabled(),
-                    usageAccess = UsageReport.hasAccess(context),
-                    lastPushAtMs = lastPush?.first,
-                    lastPushVia = lastPush?.second?.wire,
-                    batteryUnrestricted = BatteryAccess.isUnrestricted(context),
-                    standbyBucket = BatteryAccess.standbyBucket(context),
-                    stayConnected = StayConnected.isOn(context),
-                    closeGuard = true,
-                    uninstallGuard = true,
-                    status = statusIfLookedAfter(context),
-                    shuttingDown = false,
-                )
-            }
+        val running = startedAt > 0L
+        val due = if (running) {
+            CloseGuard.dueEmergencyStages(
+                startedAtMs = startedAt,
+                nowMs = System.currentTimeMillis(),
+                alreadySent = CloseGuard.emergencySentStages(context),
+                duration = CloseGuard.emergencyDuration(context),
+            )
+        } else {
+            emptyList()
         }
+        val dueStage = CloseGuard.stageToSend(due, forcedEmergencyStage, running)
 
         val emergencyActive = readyAt != null || dueStage != null
         val result = api.checkIn(
@@ -123,20 +94,14 @@ object PhoneCheckIn {
             status = statusIfLookedAfter(context),
             shuttingDown = shuttingDown,
         )
-        if (dueStage != null) {
-            CloseGuard.markEmergencyStageSent(context, dueStage)
-        }
+        due.forEach { CloseGuard.markEmergencyStageSent(context, it.wire) }
         // Switching off: the next check-in (after it's back) sets this again.
         if (shuttingDown) return
         // An adult looks after this member: Stay connected is kept on.
         StayConnected.setRequired(context, result.stayConnectedRequired)
     }
 
-    /**
-     * Schedules the parent notifications for the chosen [duration] (30s, 60s,
-     * 1h, 5h, or 10h). Short sub-minute delays also run in-process so 30s/60s
-     * milestones fire on the exact second while the app is open.
-     */
+    /** Schedules the parent notifications for the chosen [duration] (1h, 5h, or 10h). */
     fun scheduleEmergencyNotifications(context: Context, duration: CloseGuard.EmergencyDuration) {
         val appContext = context.applicationContext
         val wm = WorkManager.getInstance(appContext)
@@ -150,13 +115,6 @@ object PhoneCheckIn {
                 builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             }
             wm.enqueueUniqueWork(EMERGENCY_WORK_PREFIX + stage.wire, ExistingWorkPolicy.REPLACE, builder.build())
-
-            if (stage.offsetMs in 1L..60_000L) {
-                emergencyScope.launch {
-                    kotlinx.coroutines.delay(stage.offsetMs)
-                    notifyEmergencyStageNow(appContext, stage.wire)
-                }
-            }
         }
     }
 

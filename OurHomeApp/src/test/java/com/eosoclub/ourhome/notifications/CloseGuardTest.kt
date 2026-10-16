@@ -133,27 +133,20 @@ class CloseGuardTest {
         val hour = 60 * min
         val start = 1_000_000L
 
-        // 30 seconds: 2 notifications (start at 0s, unlocked at 30s)
-        val d30s = CloseGuard.EmergencyDuration.Sec30
-        org.junit.Assert.assertEquals(30 * sec, d30s.durationMs)
-        org.junit.Assert.assertEquals(listOf("started", "unlocked"), d30s.stages.map { it.wire })
-        org.junit.Assert.assertEquals(listOf(0L, 30 * sec), d30s.stages.map { it.offsetMs })
-        org.junit.Assert.assertEquals(
-            listOf("unlocked"),
-            CloseGuard.dueEmergencyStages(start, start + 30 * sec, setOf("started"), d30s).map { it.wire },
-        )
-
-        // 60 seconds: 3 notifications (start at 0s, 30s left at 30s, unlocked at 60s)
-        val d60s = CloseGuard.EmergencyDuration.Sec60
-        org.junit.Assert.assertEquals(60 * sec, d60s.durationMs)
-        org.junit.Assert.assertEquals(listOf("started", "30s_left", "unlocked"), d60s.stages.map { it.wire })
-        org.junit.Assert.assertEquals(listOf(0L, 30 * sec, 60 * sec), d60s.stages.map { it.offsetMs })
+        // Choices: 1, 5 and 10 hours. The 30 and 60 second ones (removed 2026-10-16) fall back to 5 hours.
+        org.junit.Assert.assertEquals(listOf("1h", "5h", "10h"), CloseGuard.EmergencyDuration.entries.map { it.key })
+        org.junit.Assert.assertEquals(CloseGuard.EmergencyDuration.Hours5, CloseGuard.EmergencyDuration.fromKey("30s"))
+        org.junit.Assert.assertEquals(CloseGuard.EmergencyDuration.Hours5, CloseGuard.EmergencyDuration.fromKey("60s"))
 
         // 1 hour: 3 notifications (start at 0m, 30m left at 30m, unlocked at 60m)
         val d1h = CloseGuard.EmergencyDuration.Hours1
         org.junit.Assert.assertEquals(1 * hour, d1h.durationMs)
         org.junit.Assert.assertEquals(listOf("started", "30m_left", "unlocked"), d1h.stages.map { it.wire })
         org.junit.Assert.assertEquals(listOf(0L, 30 * min, 60 * min), d1h.stages.map { it.offsetMs })
+        org.junit.Assert.assertEquals(
+            listOf("30m_left"),
+            CloseGuard.dueEmergencyStages(start, start + 30 * min, setOf("started"), d1h).map { it.wire },
+        )
 
         // 10 hours: 5 notifications (start at 0h, 3h elapsed, 6h elapsed, 1h left at 9h, unlocked at 10h)
         val d10h = CloseGuard.EmergencyDuration.Hours10
@@ -166,6 +159,32 @@ class CloseGuardTest {
             listOf(0L, 3 * hour, 6 * hour, 9 * hour, 10 * hour),
             d10h.stages.map { it.offsetMs },
         )
+    }
+
+    @Test
+    fun `every milestone is one the server knows, and the server knows no others`() {
+        // web lib/phoneHealth.ts EMERGENCY_UNLOCK_STAGES
+        val server = setOf("started", "30m_left", "2h_elapsed", "3h_elapsed", "6h_elapsed", "1h_left", "unlocked")
+        val sent = CloseGuard.EmergencyDuration.entries.flatMap { d -> d.stages.map { it.wire } }.toSet()
+        org.junit.Assert.assertEquals(server, sent)
+    }
+
+    @Test
+    fun `sends only the latest due milestone, never an older one after it`() {
+        val hour = 60 * 60_000L
+        val start = 1_000_000L
+        val d5h = CloseGuard.EmergencyDuration.Hours5
+        // Offline from the start until 4 hours in: three are due, only the latest goes.
+        val due = CloseGuard.dueEmergencyStages(start, start + 4 * hour, emptySet(), d5h)
+        org.junit.Assert.assertEquals(listOf("started", "2h_elapsed", "1h_left"), due.map { it.wire })
+        org.junit.Assert.assertEquals("1h_left", CloseGuard.stageToSend(due, forced = null, running = true))
+        // A late worker for an older milestone while it runs: what's due decides (nothing, once all were sent).
+        val sent = due.map { it.wire }.toSet()
+        val later = CloseGuard.dueEmergencyStages(start, start + 4 * hour + 1, sent, d5h)
+        org.junit.Assert.assertNull(CloseGuard.stageToSend(later, forced = "2h_elapsed", running = true))
+        // The "unlocked" notice after completing cleared the countdown.
+        org.junit.Assert.assertEquals("unlocked", CloseGuard.stageToSend(emptyList(), forced = "unlocked", running = false))
+        org.junit.Assert.assertNull(CloseGuard.stageToSend(emptyList(), forced = null, running = false))
     }
 }
 

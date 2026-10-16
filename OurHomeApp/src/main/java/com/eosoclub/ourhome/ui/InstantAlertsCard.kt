@@ -391,7 +391,7 @@ private fun SetParentPinDialog(
                 OutlinedTextField(
                     value = pin,
                     onValueChange = { if (it.length <= 8 && it.all(Char::isDigit)) pin = it },
-                    label = { Text(if (requireCurrentPin) "New parent PIN (4–8 digits)" else "Parent PIN (4–8 digits)") },
+                    label = { Text(if (requireCurrentPin) "New parent PIN (4 to 8 digits)" else "Parent PIN (4 to 8 digits)") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
@@ -436,6 +436,65 @@ private fun SetParentPinDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
+    )
+}
+
+/**
+ * "Sign out?" Signing out turns Prevent uninstall off and forgets the parent
+ * PIN ([CloseGuard.signedOut]), so while it's on with a PIN, signing out
+ * needs that PIN: otherwise a child could sign out and then uninstall.
+ */
+@Composable
+internal fun SignOutDialog(who: String, onDismiss: () -> Unit, onSignOut: () -> Unit) {
+    val appContext = LocalContext.current.applicationContext
+    val needsPin = remember { CloseGuard.isAdminActive(appContext) && CloseGuard.hasPin(appContext) }
+    var pin by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Sign out?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Signed in as $who.")
+                if (needsPin) {
+                    Text(
+                        "Prevent uninstall is on, and signing out turns it off. Enter the parent PIN to sign out.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = pin,
+                        onValueChange = {
+                            if (it.length <= 8 && it.all(Char::isDigit)) {
+                                pin = it
+                                error = null
+                            }
+                        },
+                        label = { Text("Parent PIN") },
+                        singleLine = true,
+                        isError = error != null,
+                        supportingText = error?.let { msg -> { Text(msg) } },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !needsPin || CloseGuard.isValidPin(pin),
+                onClick = {
+                    if (needsPin && !CloseGuard.verifyPin(appContext, pin)) {
+                        val wait = CloseGuard.pinLockoutRemainingSec(appContext)
+                        error = if (wait > 0) "Too many attempts. Try again in ${wait}s." else "Incorrect PIN"
+                        return@TextButton
+                    }
+                    onSignOut()
+                },
+            ) { Text("Sign out") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -548,7 +607,7 @@ internal fun UnlockOurHomeDialog(
                                 "%d:%02d".format(mins, secs)
                             }
                             Text(
-                                "Emergency unlock ready in $formatted — cannot be canceled",
+                                "Emergency unlock ready in $formatted. It can't be cancelled.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                             )
