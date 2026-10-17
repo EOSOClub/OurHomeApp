@@ -192,12 +192,17 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
     private fun replaceTask(updated: Task) =
         state.update { s -> s.copy(tasks = s.tasks.map { if (it.id == updated.id) updated else it }) }
 
+    /** The open editor's last save failure: why, and which fields to mark. */
+    val form = FormErrors()
+
     fun startEdit(task: Task) {
+        form.clear()
         state.update { it.copy(editing = task) }
         loadLookups()
     }
 
     fun startCreate() {
+        form.clear()
         state.update { it.copy(creating = true) }
         loadLookups()
     }
@@ -212,17 +217,22 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
-    fun cancelEdit() = state.update { it.copy(editing = null, creating = false) }
+    fun cancelEdit() {
+        form.clear()
+        state.update { it.copy(editing = null, creating = false) }
+    }
 
     /** Creates the task with its whole checklist (time/points included) in one call. */
     fun create(edit: TaskEdit) = viewModelScope.launch {
         state.update { it.copy(saving = true) }
+        form.clear()
         try {
             val task = api.createTask(edit.input, edit.steps)
             state.update { it.copy(tasks = it.tasks + task, creating = false) }
             say("Added “${task.title}”")
         } catch (e: Exception) {
-            say(e.message ?: "Couldn't add task")
+            // Shown in the editor, which sits over the snackbar.
+            form.fail(e, "Couldn't add task")
         } finally {
             state.update { it.copy(saving = false) }
         }
@@ -231,12 +241,13 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
     /** Saves the task and its whole checklist in one call (the server replaces the checklist). */
     fun save(task: Task, edit: TaskEdit) = viewModelScope.launch {
         state.update { it.copy(saving = true) }
+        form.clear()
         try {
             replaceTask(api.updateTask(task.id, edit.input, edit.steps))
             state.update { it.copy(editing = null) }
             say("Saved “${edit.input.title}”")
         } catch (e: Exception) {
-            say(e.message ?: "Couldn't save task")
+            form.fail(e, "Couldn't save task")
         } finally {
             state.update { it.copy(saving = false) }
         }
@@ -244,12 +255,13 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
 
     fun delete(task: Task) = viewModelScope.launch {
         state.update { it.copy(saving = true) }
+        form.clear()
         try {
             api.deleteTask(task.id)
             state.update { s -> s.copy(tasks = s.tasks.filterNot { it.id == task.id }, editing = null) }
             say("Deleted “${task.title}”")
         } catch (e: Exception) {
-            say(e.message ?: "Couldn't delete task")
+            form.fail(e, "Couldn't delete task")
         } finally {
             state.update { it.copy(saving = false) }
         }
@@ -487,6 +499,7 @@ fun TasksScreen(
             categories = state.categories,
             places = state.places,
             saving = state.saving,
+            errors = vm.form,
             onDismiss = vm::cancelEdit,
             canSave = access.canEdit(task.createdById, userId),
             showPoints = showPoints,
@@ -502,6 +515,7 @@ fun TasksScreen(
             categories = state.categories,
             places = state.places,
             saving = state.saving,
+            errors = vm.form,
             onDismiss = vm::cancelEdit,
             canSave = true,
             showPoints = showPoints,

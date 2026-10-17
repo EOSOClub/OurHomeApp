@@ -87,6 +87,8 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
         val format: TagFormat = TagFormat.OurHome,
         val busy: Boolean = false,
         val error: String? = null,
+        /** The fields the server named in the last failure (a new item's are all under "newItem", saying which). */
+        val fieldErrors: Map<String, String> = emptyMap(),
         /** Showing the setup form (new tag, or "Change item"). */
         val settingUp: Boolean = false,
         /** Waiting for the tag to be held to the phone again to write it. */
@@ -287,12 +289,17 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
     }
 
     private fun runBusy(block: suspend () -> Unit) {
-        state.update { it.copy(busy = true, error = null) }
+        state.update { it.copy(busy = true, error = null, fieldErrors = emptyMap()) }
         viewModelScope.launch {
             try {
                 block()
             } catch (e: Exception) {
-                state.update { it.copy(error = e.message ?: "Something went wrong") }
+                state.update {
+                    it.copy(
+                        error = e.message ?: "Something went wrong",
+                        fieldErrors = (e as? com.eosoclub.ourhome.data.ApiException)?.fieldErrors.orEmpty(),
+                    )
+                }
             } finally {
                 state.update { it.copy(busy = false) }
             }
@@ -381,12 +388,16 @@ private fun BoundContent(lookup: NfcLookup, canWrite: Boolean, state: ScanViewMo
     }
     var custom by remember { mutableStateOf("") }
     val amount = custom.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 }
+    val amountError = vm.state.collectAsStateWithLifecycle().value.fieldErrors["amount"]
+        ?: if (custom.isNotBlank() && amount == null) "Enter an amount above 0." else null
     OutlinedTextField(
         value = custom,
         onValueChange = { custom = it },
         label = { Text("Other amount") },
         placeholder = { Text("e.g. 2 or 0.5") },
         singleLine = true,
+        isError = amountError != null,
+        supportingText = amountError?.let { { Text(it) } },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = Modifier.fillMaxWidth(),
     )
@@ -561,7 +572,14 @@ private fun SetupContent(lookup: NfcLookup, state: ScanViewModel.UiState, vm: Sc
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        DropdownField("Room", places.choices(roomsOnly = true), choice, { choice = it }, placeholder = "Choose a room…")
+        DropdownField(
+            "Room",
+            places.choices(roomsOnly = true),
+            choice,
+            { choice = it },
+            placeholder = "Choose a room…",
+            error = state.fieldErrors["roomId"],
+        )
         Button(
             onClick = { vm.setupRoom(choice.removePrefix("room:")) },
             enabled = !state.busy && choice.isNotEmpty(),
@@ -574,6 +592,8 @@ private fun SetupContent(lookup: NfcLookup, state: ScanViewModel.UiState, vm: Sc
         var low by remember { mutableStateOf("") }
         val qty = quantity.ifBlank { "0" }.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0 }
         val lowValue = low.ifBlank { "0" }.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0 }
+        // The server reports a new item's problems under "newItem", saying which field.
+        FieldError(state.fieldErrors["newItem"])
         OutlinedTextField(
             value = name,
             onValueChange = { name = it },
@@ -598,6 +618,7 @@ private fun SetupContent(lookup: NfcLookup, state: ScanViewModel.UiState, vm: Sc
                 label = { Text("On hand now") },
                 placeholder = { Text("0") },
                 isError = qty == null,
+                supportingText = if (qty == null) { { Text("Enter 0 or more.") } } else null,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.weight(1f),
@@ -608,6 +629,7 @@ private fun SetupContent(lookup: NfcLookup, state: ScanViewModel.UiState, vm: Sc
                 label = { Text("Low at") },
                 placeholder = { Text("0") },
                 isError = lowValue == null,
+                supportingText = if (lowValue == null) { { Text("Enter 0 or more.") } } else null,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.weight(1f),
@@ -633,6 +655,7 @@ private fun SetupContent(lookup: NfcLookup, state: ScanViewModel.UiState, vm: Sc
                 itemId,
                 { itemId = it },
                 placeholder = "Choose an item…",
+                error = state.fieldErrors["itemId"],
             )
             ScanActionChooser(action, { action = it }, listId, { listId = it }, state.lists)
             Button(

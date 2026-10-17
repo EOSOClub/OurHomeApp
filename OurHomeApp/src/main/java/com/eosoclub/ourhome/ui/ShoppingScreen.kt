@@ -82,12 +82,22 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
 
     fun select(listId: String) = state.update { it.copy(selectedId = listId) }
 
-    fun add(name: String) = viewModelScope.launch {
+    /** The open editor's last save failure (item or list editor): why, and which fields to mark. */
+    val form = FormErrors()
+
+    /** The add bar's last failure: its name field is marked, and the text stays to fix. */
+    val addForm = FormErrors()
+
+    /** [onAdded] runs only when it worked, so a refused name stays in the box to fix. */
+    fun add(name: String, onAdded: () -> Unit) = viewModelScope.launch {
         val list = state.value.selected ?: return@launch
+        addForm.clear()
         try {
             val item = api.addShoppingItem(list.id, name, 1)
             editItems(list.id) { it + item }
+            onAdded()
         } catch (e: Exception) {
+            addForm.fail(e, "Couldn't add item")
             _messages.send(e.message ?: "Couldn't add item")
         }
     }
@@ -104,19 +114,27 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
-    fun startEdit(item: ShoppingItem) = state.update { it.copy(editing = item) }
+    fun startEdit(item: ShoppingItem) {
+        form.clear()
+        state.update { it.copy(editing = item) }
+    }
 
-    fun cancelEdit() = state.update { it.copy(editing = null) }
+    fun cancelEdit() {
+        form.clear()
+        state.update { it.copy(editing = null) }
+    }
 
     fun save(item: ShoppingItem, name: String, quantity: Int, priority: String, notes: String?, recurring: Boolean) =
         viewModelScope.launch {
             state.update { it.copy(saving = true) }
+            form.clear()
             try {
                 val updated = api.updateShoppingItem(item.id, name, quantity, priority, notes, recurring)
                 editItems(item.listId) { items -> items.map { if (it.id == item.id) updated else it } }
                 state.update { it.copy(editing = null) }
             } catch (e: Exception) {
-                _messages.send(e.message ?: "Couldn't save item")
+                // Shown in the editor, which sits over the snackbar.
+                form.fail(e, "Couldn't save item")
             } finally {
                 state.update { it.copy(saving = false) }
             }
@@ -124,12 +142,13 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
 
     fun delete(item: ShoppingItem) = viewModelScope.launch {
         state.update { it.copy(saving = true) }
+        form.clear()
         try {
             api.deleteShoppingItem(item.id)
             editItems(item.listId) { items -> items.filterNot { it.id == item.id } }
             state.update { it.copy(editing = null) }
         } catch (e: Exception) {
-            _messages.send(e.message ?: "Couldn't delete item")
+            form.fail(e, "Couldn't delete item")
         } finally {
             state.update { it.copy(saving = false) }
         }
@@ -148,11 +167,20 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
 
     // --- Lists (the "Shopping lists" row of the head's permissions grid) ---
 
-    fun startCreateList() = state.update { it.copy(creatingList = true, editingList = null) }
+    fun startCreateList() {
+        form.clear()
+        state.update { it.copy(creatingList = true, editingList = null) }
+    }
 
-    fun startEditList(list: ShoppingList) = state.update { it.copy(editingList = list, creatingList = false) }
+    fun startEditList(list: ShoppingList) {
+        form.clear()
+        state.update { it.copy(editingList = list, creatingList = false) }
+    }
 
-    fun closeListEditor() = state.update { it.copy(creatingList = false, editingList = null) }
+    fun closeListEditor() {
+        form.clear()
+        state.update { it.copy(creatingList = false, editingList = null) }
+    }
 
     /** Creates the list and switches to it. */
     fun createList(name: String, kind: String) = listAction("Couldn't create list") {
@@ -181,11 +209,13 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
 
     private fun listAction(failure: String, block: suspend () -> Unit) = viewModelScope.launch {
         state.update { it.copy(saving = true) }
+        form.clear()
         try {
             block()
             closeListEditor()
         } catch (e: Exception) {
-            _messages.send(e.message ?: failure)
+            // Shown in the list editor, which sits over the snackbar.
+            form.fail(e, failure)
         } finally {
             state.update { it.copy(saving = false) }
         }
@@ -222,6 +252,7 @@ fun ShoppingScreen(
         ShoppingListEditor(
             list = list,
             saving = state.saving,
+            errors = vm.form,
             canSave = list == null || listAccess.canEdit(list.createdById, userId),
             onDismiss = vm::closeListEditor,
             onSave = { name, kind -> if (list == null) vm.createList(name, kind) else vm.renameList(list, name) },
@@ -233,6 +264,7 @@ fun ShoppingScreen(
         ShoppingItemEditor(
             item = item,
             saving = state.saving,
+            errors = vm.form,
             canSave = access.canEdit(item.createdById, userId),
             onDismiss = vm::cancelEdit,
             onSave = { name, qty, priority, notes, recurring -> vm.save(item, name, qty, priority, notes, recurring) },
@@ -297,7 +329,7 @@ private fun ListContent(list: ShoppingList, vm: ShoppingViewModel, access: PageA
     val open = list.items.filter { !it.purchased }
     val bought = list.items.filter { it.purchased }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        if (access.create) item(key = "add") { AddItemRow(onAdd = vm::add) }
+        if (access.create) item(key = "add") { AddItemRow(vm.addForm, onAdd = vm::add) }
         items(open, key = { it.id }) { ItemRow(it, vm, access, userId) }
         if (bought.isNotEmpty()) {
             item(key = "bought-header") {
@@ -318,20 +350,20 @@ private fun ListContent(list: ShoppingList, vm: ShoppingViewModel, access: PageA
     }
 }
 
+/** The text is cleared only once the item is added, so a refused name stays to fix (marked red). */
 @Composable
-private fun AddItemRow(onAdd: (String) -> Unit) {
+private fun AddItemRow(errors: FormErrors, onAdd: (String, () -> Unit) -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     fun submit() {
-        if (text.isNotBlank()) {
-            onAdd(text.trim())
-            text = ""
-        }
+        if (text.isNotBlank()) onAdd(text.trim()) { text = "" }
     }
     OutlinedTextField(
         value = text,
-        onValueChange = { text = it },
+        onValueChange = { text = it; errors.clear("name") },
         placeholder = { Text("Add an item") },
         singleLine = true,
+        isError = errors["name"] != null,
+        supportingText = errors["name"]?.let { { Text(it) } },
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
         keyboardActions = KeyboardActions(onDone = { submit() }),
         trailingIcon = {
@@ -424,6 +456,8 @@ private val SHOPPING_LIST_KINDS = listOf(
 private fun ShoppingListEditor(
     list: ShoppingList?,
     saving: Boolean,
+    /** The last save failure: said at the top, and the fields the server named marked. */
+    errors: FormErrors,
     /** False when the user may only delete this list, not rename it. */
     canSave: Boolean,
     onDismiss: () -> Unit,
@@ -445,18 +479,21 @@ private fun ShoppingListEditor(
         saveLabel = if (list == null) "Create" else "Save",
         deleteLabel = "Delete list",
         onDelete = onDelete,
+        error = errors.message,
     ) {
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it.take(100) },
+            onValueChange = { name = it.take(100); errors.clear("name") },
             label = { Text("Name") },
             singleLine = true,
             enabled = canSave,
+            isError = errors["name"] != null,
+            supportingText = errors["name"]?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
             modifier = Modifier.fillMaxWidth(),
         )
         if (list == null) {
-            DropdownField("Kind", SHOPPING_LIST_KINDS, kind, onSelect = { kind = it })
+            DropdownField("Kind", SHOPPING_LIST_KINDS, kind, onSelect = { kind = it; errors.clear("kind") }, error = errors["kind"])
         }
         if (list != null && onDelete != null) {
             Text(
@@ -474,6 +511,8 @@ private val SHOPPING_PRIORITIES = listOf("low", "medium", "high")
 private fun ShoppingItemEditor(
     item: ShoppingItem,
     saving: Boolean,
+    /** The last save failure: said at the top, and the fields the server named marked. */
+    errors: FormErrors,
     /** False when the user may only delete this item, not change it. */
     canSave: Boolean,
     onDismiss: () -> Unit,
@@ -486,6 +525,7 @@ private fun ShoppingItemEditor(
     var notes by remember { mutableStateOf(item.notes.orEmpty()) }
     var recurring by remember { mutableStateOf(item.recurring) }
     val qty = quantity.toIntOrNull()?.takeIf { it in 1..999 }
+    val quantityError = errors["quantity"] ?: if (qty == null) "Enter a number from 1 to 999." else null
 
     EditorDialog(
         title = if (canSave) "Edit item" else "Item",
@@ -495,31 +535,38 @@ private fun ShoppingItemEditor(
         onSave = { onSave(name.trim(), qty!!, priority, notes.trim().ifEmpty { null }, recurring) },
         deleteLabel = "Delete item",
         onDelete = onDelete,
+        error = errors.message,
     ) {
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it },
+            onValueChange = { name = it; errors.clear("name") },
             label = { Text("Name") },
             singleLine = true,
+            isError = errors["name"] != null,
+            supportingText = errors["name"]?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = quantity,
-            onValueChange = { quantity = it.filter(Char::isDigit).take(3) },
+            onValueChange = { quantity = it.filter(Char::isDigit).take(3); errors.clear("quantity") },
             label = { Text("Quantity") },
             singleLine = true,
-            isError = qty == null,
+            isError = quantityError != null,
+            supportingText = quantityError?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
         )
         FieldLabel("Priority")
-        ChoiceChips(SHOPPING_PRIORITIES, priority) { priority = it }
+        ChoiceChips(SHOPPING_PRIORITIES, priority) { priority = it; errors.clear("priority") }
+        FieldError(errors["priority"])
         OutlinedTextField(
             value = notes,
-            onValueChange = { notes = it },
+            onValueChange = { notes = it; errors.clear("notes") },
             label = { Text("Notes") },
             minLines = 2,
+            isError = errors["notes"] != null,
+            supportingText = errors["notes"]?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -531,7 +578,8 @@ private fun ShoppingItemEditor(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Switch(checked = recurring, onCheckedChange = { recurring = it })
+            Switch(checked = recurring, onCheckedChange = { recurring = it; errors.clear("recurring") })
         }
+        FieldError(errors["recurring"])
     }
 }

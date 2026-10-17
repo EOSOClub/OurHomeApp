@@ -42,6 +42,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.LookAfter
 import com.eosoclub.ourhome.data.LookedAfter
+import com.eosoclub.ourhome.data.PhoneRule
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
@@ -49,7 +50,8 @@ import kotlinx.coroutines.launch
 
 // "People you look after" (web: /look-after): the children and teens this
 // adult supervises (the Head's supervision list). Ring their phone, make their
-// location sharing required, share their app usage. Only offered in the menu
+// location sharing required, share their app usage, choose which protections
+// their phone must have on (PhoneRule). Only offered in the menu
 // to someone who supervises somebody; the server checks it again.
 
 /** Refetched this often while showing, so phone check-ins and usage stay current. */
@@ -103,6 +105,8 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
         val savingRequired: Pair<String, Boolean>? = null,
         /** Whose "Share app usage" is being saved, and to what. */
         val savingUsage: Pair<String, Boolean>? = null,
+        /** Which of whose phone rules is being saved, and to what. */
+        val savingRule: Triple<String, PhoneRule, Boolean>? = null,
         val loaded: Boolean = false,
         val loading: Boolean = true,
         val error: String? = null,
@@ -170,6 +174,24 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
             onDone(e.message ?: "Couldn't change it")
         }
     }
+
+    /** Requires [rule] on [person]'s phone, or stops requiring it. */
+    fun setRule(person: LookedAfter, rule: PhoneRule, required: Boolean, onDone: (String) -> Unit) = viewModelScope.launch {
+        edits++
+        state.update { it.copy(savingRule = Triple(person.id, rule, required)) }
+        try {
+            val next = api.setPhoneRule(person.id, rule, required)
+            // Set before the saving state ends, so the switch never flicks back.
+            state.update { it.copy(lookAfter = next, savingRule = null) }
+            onDone(
+                if (required) "${rule.label} is now required on ${person.name}'s phone"
+                else "${rule.label} is no longer required on ${person.name}'s phone",
+            )
+        } catch (e: Exception) {
+            state.update { it.copy(savingRule = null) }
+            onDone(e.message ?: "Couldn't change it")
+        }
+    }
 }
 
 @Composable
@@ -214,6 +236,8 @@ internal fun LookAfterScreen(api: ApiClient, showMessage: (String) -> Unit, modi
                     onRing = { vm.ring(person, showMessage) },
                     onRequired = { vm.setRequired(person, it, showMessage) },
                     onUsage = { vm.setUsage(person, it, showMessage) },
+                    savingRule = state.savingRule?.takeIf { it.first == person.id }?.let { it.second to it.third },
+                    onRule = { rule, required -> vm.setRule(person, rule, required, showMessage) },
                     icons = icons,
                     loadIcon = vm::loadIcon,
                 )
@@ -225,7 +249,12 @@ internal fun LookAfterScreen(api: ApiClient, showMessage: (String) -> Unit, modi
                         "their location sharing on, and lets you check where they are on the Map without them allowing it. " +
                         "They always see when you check. Share app usage shows how long they spend in each app; " +
                         "their phone needs Usage access for it. Their phone sends it every 15 minutes, and opening " +
-                        "this page asks it for the latest numbers." +
+                        "this page asks it for the latest numbers. Require Keep Our Home running stops OurHome " +
+                        "being closed on their phone, Require Prevent uninstall stops it being removed without " +
+                        "your PIN, and Require Unrestricted battery stops battery saving from holding back rings " +
+                        "and alerts. Each one you require is a step in Set up this phone on their phone, and " +
+                        "you're told if it gets turned off. Not requiring one only stops the step and the alert: " +
+                        "whatever is already on stays on." +
                         if (lookAfter.canRing) {
                             ""
                         } else {
@@ -248,7 +277,10 @@ private fun LookAfterNote(text: String) {
     )
 }
 
-/** One child or teen: their phone, Ring, and the Location required and Share app usage switches. */
+/**
+ * One child or teen: their phone, Ring, the Location required and Share app
+ * usage switches, and a switch per protection their phone must have on.
+ */
 @Composable
 private fun LookedAfterRow(
     person: LookedAfter,
@@ -260,6 +292,9 @@ private fun LookedAfterRow(
     onRing: () -> Unit,
     onRequired: (Boolean) -> Unit,
     onUsage: (Boolean) -> Unit,
+    /** The rule being saved for them, and to what. */
+    savingRule: Pair<PhoneRule, Boolean>?,
+    onRule: (PhoneRule, Boolean) -> Unit,
     icons: Map<String, ImageBitmap?>,
     loadIcon: (String) -> Unit,
 ) {
@@ -314,6 +349,21 @@ private fun LookedAfterRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             latest?.top?.forEach { app -> UsageAppRow(app, icons, loadIcon) }
+        }
+        // Only from servers that send the rules.
+        person.rules?.let { rules ->
+            PhoneRule.entries.forEach { rule ->
+                val pending = savingRule?.takeIf { it.first == rule }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Require ${rule.label}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = pending?.second ?: rule.of(rules),
+                        // One rule saves at a time per person.
+                        enabled = savingRule == null,
+                        onCheckedChange = { onRule(rule, it) },
+                    )
+                }
+            }
         }
     }
 }

@@ -344,8 +344,9 @@ internal fun OfflineUnlockSection(showMessage: (String) -> Unit = {}) {
     }
 }
 
+/** Also opened by Set up this phone (PhoneSetupScreen). */
 @Composable
-private fun SetParentPinDialog(
+internal fun SetParentPinDialog(
     requireCurrentPin: Boolean,
     initialDuration: CloseGuard.EmergencyDuration,
     onVerifyCurrentPin: (String) -> Boolean,

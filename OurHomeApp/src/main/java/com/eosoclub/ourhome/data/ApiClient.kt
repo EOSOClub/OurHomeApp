@@ -26,7 +26,27 @@ import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 /** [status]: the HTTP status when the server answered with an error, for callers that tell them apart. */
-class ApiException(message: String, val status: Int? = null) : Exception(message)
+/**
+ * A refused request. [message] says why in plain words; [fieldErrors]: the
+ * first problem for each form field the server named (a 422, or a 409 like a
+ * username already taken), so a form can mark those fields.
+ */
+class ApiException(
+    message: String,
+    val status: Int? = null,
+    val fieldErrors: Map<String, String> = emptyMap(),
+) : Exception(message)
+
+/** The server's per-field errors (web server/api/http.ts: details.fieldErrors), first one each. */
+internal fun fieldErrorsOf(details: JsonElement?): Map<String, String> {
+    val fields = (details as? JsonObject)?.get("fieldErrors") as? JsonObject ?: return emptyMap()
+    return buildMap {
+        for ((key, value) in fields) {
+            val first = (value as? kotlinx.serialization.json.JsonArray)?.firstOrNull()?.jsonPrimitive?.contentOrNull
+            if (first != null) put(key, first)
+        }
+    }
+}
 class UnauthorizedException : Exception("Your session has expired. Please sign in again.")
 
 /**
@@ -157,14 +177,21 @@ class ApiClient(
             http.newCall(post("/api/auth/change-password", body)).execute().use { res ->
                 if (!res.isSuccessful) {
                     val err = runCatching { json.decodeFromString(AuthError.serializer(), res.body.string()) }.getOrNull()
-                    throw ApiException(
-                        when {
-                            res.code == 429 -> "Too many attempts. Wait a few seconds and try again."
-                            err?.code == "INVALID_PASSWORD" -> "Your current password is incorrect."
-                            err?.message != null -> err.message
-                            else -> "Couldn't change your password (${res.code})"
-                        },
-                    )
+                    val message = when {
+                        res.code == 429 -> "Too many attempts. Wait a few seconds and try again."
+                        err?.code == "INVALID_PASSWORD" -> "Your current password is incorrect."
+                        err?.code == "PASSWORD_TOO_SHORT" -> "Your new password is too short: use at least 8 characters."
+                        err?.code == "PASSWORD_TOO_LONG" -> "Your new password is too long: use at most 128 characters."
+                        err?.message != null -> err.message
+                        else -> "Couldn't change your password (${res.code})"
+                    }
+                    // Better Auth names no field; its codes say which one, so the form can mark it.
+                    val field = when (err?.code) {
+                        "INVALID_PASSWORD" -> "currentPassword"
+                        "PASSWORD_TOO_SHORT", "PASSWORD_TOO_LONG" -> "newPassword"
+                        else -> null
+                    }
+                    throw ApiException(message, res.code, field?.let { mapOf(it to message) }.orEmpty())
                 }
             }
         }
@@ -683,7 +710,15 @@ class ApiClient(
         call(get("/api/members"), ListSerializer(MemberAccount.serializer()))
 
     /** Adds someone with a temporary password they must change; a blank [email] gets a placeholder. */
-    suspend fun createMember(name: String, username: String, email: String?, role: String, password: String): MemberAccount =
+    /** [supervisorIds]: who supervises a new child or teen (Head of House only; empty sends none). */
+    suspend fun createMember(
+        name: String,
+        username: String,
+        email: String?,
+        role: String,
+        password: String,
+        supervisorIds: List<String> = emptyList(),
+    ): MemberAccount =
         call(
             post(
                 "/api/members",
@@ -693,9 +728,26 @@ class ApiClient(
                     email?.let { put("email", it) }
                     put("role", role)
                     put("password", password)
+                    if (supervisorIds.isNotEmpty()) putJsonArray("supervisorIds") { supervisorIds.forEach { add(it) } }
                 },
             ),
             MemberAccount.serializer(),
+        )
+
+    /** Who supervises each child and teen (Head of House only; 403 for anyone else). */
+    suspend fun supervision(): Supervision = call(get("/api/supervision"), Supervision.serializer())
+
+    /** Replaces who supervises one child or teen (Head of House only). */
+    suspend fun setSupervisors(supervisedId: String, supervisorIds: List<String>): Supervision =
+        call(
+            post(
+                "/api/supervision",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    putJsonArray("supervisorIds") { supervisorIds.forEach { add(it) } }
+                },
+            ),
+            Supervision.serializer(),
         )
 
     /** Changes only the fields passed (non-null); the server checks username/email are free. */
@@ -1129,6 +1181,23 @@ class ApiClient(
             LookAfter.serializer(),
         )
 
+    /** Requires one protection ([PhoneRule]) on a supervised child's phone, or stops requiring it. */
+    suspend fun setPhoneRule(supervisedId: String, rule: PhoneRule, required: Boolean): LookAfter =
+        call(
+            post(
+                "/api/supervision/phone-rules",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    put("rule", rule.key)
+                    put("required", required)
+                },
+            ),
+            LookAfter.serializer(),
+        )
+
+    /** What this phone must have on while an adult looks after me (Set up this phone). */
+    suspend fun phoneSetup(): PhoneSetup = call(get("/api/phone/setup"), PhoneSetup.serializer())
+
     /** Rings a supervised child's phone loudly, even on silent. 409 = still ringing, or no phone reached. */
     suspend fun ringPhone(targetId: String) =
         callUnit(post("/api/supervision/ring", buildJsonObject { put("targetId", targetId) }))
@@ -1328,7 +1397,11 @@ class ApiClient(
                         onUnauthorized(envelope.error?.message)
                         throw UnauthorizedException()
                     }
-                    throw ApiException(envelope.error?.message ?: "Request failed (${res.code})", res.code)
+                    throw ApiException(
+                        envelope.error?.message ?: "Request failed (${res.code})",
+                        res.code,
+                        fieldErrorsOf(envelope.error?.details),
+                    )
                 }
                 envelope
             }

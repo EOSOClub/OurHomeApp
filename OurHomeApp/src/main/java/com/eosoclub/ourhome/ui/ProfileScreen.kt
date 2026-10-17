@@ -62,6 +62,9 @@ import com.eosoclub.ourhome.data.Member
 import com.eosoclub.ourhome.data.ProfileOverview
 import com.eosoclub.ourhome.data.ProfileStyle
 import com.eosoclub.ourhome.data.PublicProfile
+import com.eosoclub.ourhome.data.emailProblem
+import com.eosoclub.ourhome.data.passwordProblem
+import com.eosoclub.ourhome.data.usernameProblem
 import java.time.Month
 import java.time.format.TextStyle
 import java.util.Locale
@@ -73,9 +76,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 // Mirror the web's validation (src/lib/validation/user.ts) so errors show
-// before a round trip; the server stays the authority.
-internal val USERNAME_RE = Regex("^[a-zA-Z0-9._-]{3,30}$")
-internal val EMAIL_RE =Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+// before a round trip; the server stays the authority. Usernames and emails
+// are checked in data/FieldChecks.kt, in the server's words.
 internal const val MIN_PASSWORD = 8
 
 internal val ROLE_LABELS = mapOf(
@@ -137,14 +139,22 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
         }
     }
 
+    // Each card's last failure: the fields the server named are marked with why
+    // (the reason also goes to the snackbar, which these inline cards don't cover).
+    val profileForm = FormErrors()
+    val aboutForm = FormErrors()
+    val passwordForm = FormErrors()
+
     fun saveProfile(name: String?, username: String?, email: String?, currentPassword: String?) = viewModelScope.launch {
         state.update { it.copy(savingProfile = true) }
+        profileForm.clear()
         try {
             val updated = api.updateProfile(name, username, email, currentPassword)
             state.update { it.copy(profile = updated) }
             session.applyProfile(updated)
             _messages.send("Profile updated")
         } catch (e: Exception) {
+            profileForm.fail(e, "Couldn't update your profile")
             _messages.send(e.message ?: "Couldn't update your profile")
         } finally {
             state.update { it.copy(savingProfile = false) }
@@ -153,6 +163,7 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
 
     fun saveAboutMe(about: PublicProfile) = viewModelScope.launch {
         state.update { it.copy(savingAbout = true) }
+        aboutForm.clear()
         try {
             val updated = api.updateAboutMe(about)
             state.update { s ->
@@ -169,6 +180,7 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
             }
             _messages.send("About me saved")
         } catch (e: Exception) {
+            aboutForm.fail(e, "Couldn't save your about me")
             _messages.send(e.message ?: "Couldn't save your about me")
         } finally {
             state.update { it.copy(savingAbout = false) }
@@ -177,6 +189,7 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
 
     fun changePassword(current: String, new: String, signOutOthers: Boolean) = viewModelScope.launch {
         state.update { it.copy(changingPassword = true) }
+        passwordForm.clear()
         try {
             api.changePassword(current, new, signOutOthers)
             // Lift the temporary-password flag if it was set; not fatal if it fails.
@@ -185,6 +198,7 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
             state.update { it.copy(passwordFormKey = it.passwordFormKey + 1) }
             _messages.send(if (signOutOthers) "Password changed - other devices were signed out" else "Password changed")
         } catch (e: Exception) {
+            passwordForm.fail(e, "Couldn't change your password")
             _messages.send(e.message ?: "Couldn't change your password")
         } finally {
             state.update { it.copy(changingPassword = false) }
@@ -242,7 +256,7 @@ fun ProfileScreen(
             profile.profile?.let { about ->
                 // Keyed on the saved values so the form resets to them after a save.
                 key(about) {
-                    AboutMeCard(profile.name, about, saving = state.savingAbout, onSave = vm::saveAboutMe)
+                    AboutMeCard(profile.name, about, saving = state.savingAbout, errors = vm.aboutForm, onSave = vm::saveAboutMe)
                 }
             }
             state.members?.takeIf { it.size > 1 }?.let { HouseholdCard(it, profile.id) }
@@ -255,10 +269,10 @@ fun ProfileScreen(
             }
             // Keyed on the saved values so the form resets to them after a save.
             key(profile.name, profile.username, profile.email) {
-                EditProfileCard(profile, saving = state.savingProfile, onSave = vm::saveProfile)
+                EditProfileCard(profile, saving = state.savingProfile, errors = vm.profileForm, onSave = vm::saveProfile)
             }
             key(state.passwordFormKey) {
-                ChangePasswordCard(changing = state.changingPassword, onChange = vm::changePassword)
+                ChangePasswordCard(changing = state.changingPassword, errors = vm.passwordForm, onChange = vm::changePassword)
             }
         }
     }
@@ -366,6 +380,8 @@ private fun AboutMeCard(
     name: String,
     p: PublicProfile,
     saving: Boolean,
+    /** The last save failure: the fields the server named are marked with why. */
+    errors: FormErrors,
     onSave: (PublicProfile) -> Unit,
 ) {
     var emoji by remember { mutableStateOf(p.avatarEmoji.orEmpty()) }
@@ -393,18 +409,20 @@ private fun AboutMeCard(
         FieldLabel("Avatar emoji")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             ProfileStyle.EMOJI_PICKS.forEach { e ->
-                FilterChip(selected = emoji == e, onClick = { emoji = e }, label = { Text(e) })
+                FilterChip(selected = emoji == e, onClick = { emoji = e; errors.clear("avatarEmoji") }, label = { Text(e) })
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = emoji,
-                onValueChange = { if (it.length <= 16) emoji = it },
+                onValueChange = { if (it.length <= 16) emoji = it; errors.clear("avatarEmoji") },
                 label = { Text("Or type one") },
                 singleLine = true,
+                isError = errors["avatarEmoji"] != null,
+                supportingText = errors["avatarEmoji"]?.let { { Text(it) } },
                 modifier = Modifier.weight(1f),
             )
-            if (emoji.isNotEmpty()) TextButton(onClick = { emoji = "" }) { Text("Use initials") }
+            if (emoji.isNotEmpty()) TextButton(onClick = { emoji = ""; errors.clear("avatarEmoji") }) { Text("Use initials") }
         }
         FieldLabel("Colour")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -416,10 +434,11 @@ private fun AboutMeCard(
                         .clip(CircleShape)
                         .background(Color(argb))
                         .border(3.dp, if (selected) MaterialTheme.colorScheme.onSurface else Color.Transparent, CircleShape)
-                        .clickable { color = if (selected) null else key },
+                        .clickable { color = if (selected) null else key; errors.clear("profileColor") },
                 )
             }
         }
+        FieldError(errors["profileColor"])
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 // The phone's language as Compose sees it, so month names follow a change.
@@ -430,30 +449,32 @@ private fun AboutMeCard(
                         it.value.toString() to it.getDisplayName(TextStyle.FULL, locale)
                     },
                     month?.toString().orEmpty(),
-                    onSelect = { month = it.toIntOrNull() },
+                    onSelect = { month = it.toIntOrNull(); errors.clear("birthday") },
                 )
             }
             OutlinedTextField(
                 value = day,
-                onValueChange = { v -> day = v.filter(Char::isDigit).take(2) },
+                onValueChange = { v -> day = v.filter(Char::isDigit).take(2); errors.clear("birthday") },
                 label = { Text("Day") },
                 singleLine = true,
-                isError = !birthdayValid,
+                isError = !birthdayValid || errors["birthday"] != null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(0.5f),
             )
         }
+        val birthdayError = errors["birthday"] ?: if (!birthdayValid) "Pick a month and a real day (or neither)." else null
         Text(
-            if (birthdayValid) "Month and day only, no year." else "Pick a month and a real day (or neither).",
+            birthdayError ?: "Month and day only, no year.",
             style = MaterialTheme.typography.bodySmall,
-            color = if (birthdayValid) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+            color = if (birthdayError == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
         )
         OutlinedTextField(
             value = bio,
-            onValueChange = { if (it.length <= ProfileStyle.BIO_MAX) bio = it },
+            onValueChange = { if (it.length <= ProfileStyle.BIO_MAX) bio = it; errors.clear("bio") },
             label = { Text("About me") },
             placeholder = { Text("Favourite foods, hobbies, what you're up to…") },
-            supportingText = { Text("${bio.length}/${ProfileStyle.BIO_MAX}") },
+            isError = errors["bio"] != null,
+            supportingText = { Text(errors["bio"] ?: "${bio.length}/${ProfileStyle.BIO_MAX}") },
             minLines = 3,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             modifier = Modifier.fillMaxWidth(),
@@ -496,6 +517,8 @@ private fun HouseholdCard(members: List<Member>, userId: String) {
 private fun EditProfileCard(
     p: ProfileOverview,
     saving: Boolean,
+    /** The last save failure: the fields the server named are marked with why. */
+    errors: FormErrors,
     onSave: (name: String?, username: String?, email: String?, currentPassword: String?) -> Unit,
 ) {
     var name by remember { mutableStateOf(p.name) }
@@ -507,39 +530,46 @@ private fun EditProfileCard(
     val nameDirty = name.trim() != p.name
     val usernameDirty = username.trim() != p.username.orEmpty()
     val emailDirty = email.trim() != p.email
-    val nameValid = name.trim().length in 1..80
-    val usernameValid = USERNAME_RE.matches(username.trim())
-    val emailValid = EMAIL_RE.matches(email.trim())
-    val canSave = (nameDirty || usernameDirty || emailDirty) && nameValid && usernameValid && emailValid &&
-        (!emailDirty || emailPassword.isNotEmpty()) && !saving
+    // Why each is red: the server's word first, then the same rules checked here.
+    val nameError = errors["name"] ?: when {
+        name.isBlank() -> "Enter a name."
+        name.trim().length > 80 -> "At most 80 characters."
+        else -> null
+    }
+    val usernameError = errors["username"] ?: usernameProblem(username) ?: if (username.isBlank()) "Enter a username." else null
+    val emailError = errors["email"] ?: emailProblem(email) ?: if (email.isBlank()) "Enter an email address." else null
+    val passwordError = errors["currentPassword"]
+    val canSave = (nameDirty || usernameDirty || emailDirty) && nameError == null && usernameError == null &&
+        emailError == null && (!emailDirty || emailPassword.isNotEmpty()) && !saving
 
     SectionCard("Edit profile", "Your display name, sign-in username, and recovery email.") {
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it },
+            onValueChange = { name = it; errors.clear("name") },
             label = { Text("Display name") },
             singleLine = true,
-            isError = !nameValid,
+            isError = nameError != null,
+            supportingText = nameError?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = username,
-            onValueChange = { username = it },
+            onValueChange = { username = it; errors.clear("username") },
             label = { Text("Username") },
-            supportingText = { Text(if (usernameValid) "You sign in with this." else "3-30 letters, numbers, or . _ -") },
+            supportingText = { Text(usernameError ?: "You sign in with this.") },
             singleLine = true,
-            isError = !usernameValid,
+            isError = usernameError != null,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = email,
-            onValueChange = { email = it },
+            onValueChange = { email = it; errors.clear("email") },
             label = { Text("Email") },
-            supportingText = { Text(if (emailValid) "Used for password recovery." else "Enter a valid email address.") },
+            supportingText = { Text(emailError ?: "Used for password recovery.") },
             singleLine = true,
-            isError = !emailValid,
+            isError = emailError != null,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth(),
         )
@@ -547,8 +577,9 @@ private fun EditProfileCard(
             PasswordField(
                 "Current password",
                 emailPassword,
-                supporting = "Needed to change your email, since password resets go there.",
-            ) { emailPassword = it }
+                supporting = passwordError ?: "Needed to change your email, since password resets go there.",
+                isError = passwordError != null,
+            ) { emailPassword = it; errors.clear("currentPassword") }
         }
         Button(
             onClick = {
@@ -567,6 +598,8 @@ private fun EditProfileCard(
 @Composable
 private fun ChangePasswordCard(
     changing: Boolean,
+    /** The last failure: a wrong current password or a refused new one is marked on its field. */
+    errors: FormErrors,
     onChange: (current: String, new: String, signOutOthers: Boolean) -> Unit,
 ) {
     var current by remember { mutableStateOf("") }
@@ -574,18 +607,24 @@ private fun ChangePasswordCard(
     var confirm by remember { mutableStateOf("") }
     var signOutOthers by remember { mutableStateOf(true) }
 
-    val tooShort = new.isNotEmpty() && new.length < MIN_PASSWORD
     val mismatch = confirm.isNotEmpty() && confirm != new
     val canChange = current.isNotEmpty() && new.length >= MIN_PASSWORD && confirm == new && !changing
+    val currentError = errors["currentPassword"]
+    val newError = errors["newPassword"] ?: passwordProblem(new)
 
     SectionCard("Change password", "Enter your current password, then choose a new one.") {
-        PasswordField("Current password", current) { current = it }
+        PasswordField(
+            "Current password",
+            current,
+            supporting = currentError,
+            isError = currentError != null,
+        ) { current = it; errors.clear("currentPassword") }
         PasswordField(
             "New password",
             new,
-            supporting = "At least $MIN_PASSWORD characters.",
-            isError = tooShort,
-        ) { new = it }
+            supporting = newError ?: "At least $MIN_PASSWORD characters.",
+            isError = newError != null,
+        ) { new = it; errors.clear("newPassword") }
         PasswordField(
             "Confirm new password",
             confirm,

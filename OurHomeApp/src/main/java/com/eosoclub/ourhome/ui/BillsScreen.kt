@@ -59,19 +59,33 @@ class BillsViewModel(private val api: ApiClient) : ViewModel() {
 
     val state = MutableStateFlow(UiState())
 
-    fun startEdit(bill: Bill) = state.update { it.copy(editing = bill) }
+    /** The open editor's last save failure: why, and which fields to mark. */
+    val form = FormErrors()
 
-    fun cancelEdit() = state.update { it.copy(editing = null) }
+    /** The pay dialog's last failure, shown in it (it stays open until the payment is recorded). */
+    val payForm = FormErrors()
+
+    fun startEdit(bill: Bill) {
+        form.clear()
+        state.update { it.copy(editing = bill) }
+    }
+
+    fun cancelEdit() {
+        form.clear()
+        state.update { it.copy(editing = null) }
+    }
 
     fun save(bill: Bill, name: String, amount: Double, dueDate: Instant?, autoPay: Boolean, notes: String?) =
         viewModelScope.launch {
             state.update { it.copy(saving = true) }
+            form.clear()
             try {
                 api.updateBill(bill.id, name, amount, dueDate, autoPay, notes)
                 state.update { it.copy(editing = null) }
                 refresh()
             } catch (e: Exception) {
-                _messages.send(e.message ?: "Couldn't save bill")
+                // Shown in the editor, which sits over the snackbar.
+                form.fail(e, "Couldn't save bill")
             } finally {
                 state.update { it.copy(saving = false) }
             }
@@ -79,12 +93,13 @@ class BillsViewModel(private val api: ApiClient) : ViewModel() {
 
     fun delete(bill: Bill) = viewModelScope.launch {
         state.update { it.copy(saving = true) }
+        form.clear()
         try {
             api.deleteBill(bill.id)
             state.update { s -> s.copy(bills = s.bills.filterNot { it.id == bill.id }, editing = null) }
             _messages.send("Deleted ${bill.name}")
         } catch (e: Exception) {
-            _messages.send(e.message ?: "Couldn't delete bill")
+            form.fail(e, "Couldn't delete bill")
         } finally {
             state.update { it.copy(saving = false) }
         }
@@ -97,16 +112,19 @@ class BillsViewModel(private val api: ApiClient) : ViewModel() {
         state.load({ api.bills() }, { s, v -> s.copy(bills = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
     }
 
-    /** [amount] null pays the remaining balance. */
-    fun pay(bill: Bill, amount: Double?) = viewModelScope.launch {
+    /** [amount] null pays the remaining balance. [onDone] (close the dialog) only when it worked. */
+    fun pay(bill: Bill, amount: Double?, onDone: () -> Unit) = viewModelScope.launch {
         state.update { it.copy(busy = it.busy + bill.id) }
+        payForm.clear()
         try {
             api.payBill(bill.id, amount)
+            onDone()
             // Reload: a recurring bill may roll forward to its next due date.
             refresh().join()
             _messages.send("Recorded ${formatMoney(amount ?: bill.remaining, bill.currency)} for ${bill.name}")
         } catch (e: Exception) {
-            _messages.send(e.message ?: "Couldn't record payment")
+            // Shown in the pay dialog, which stays open with the amount to fix.
+            payForm.fail(e, "Couldn't record payment")
         } finally {
             state.update { it.copy(busy = it.busy - bill.id) }
         }
@@ -137,6 +155,7 @@ fun BillsScreen(
         BillEditor(
             bill = bill,
             saving = state.saving,
+            errors = vm.form,
             canSave = access.canEdit(bill.createdById, userId),
             onDismiss = vm::cancelEdit,
             onSave = { name, amount, due, autoPay, notes -> vm.save(bill, name, amount, due, autoPay, notes) },
@@ -182,7 +201,7 @@ fun BillsScreen(
                     unpaid = true,
                     busy = bill.id in state.busy,
                     // Recording a payment adds a record: Bills "Add".
-                    onPay = if (access.create) ({ paying = bill }) else null,
+                    onPay = if (access.create) ({ vm.payForm.clear(); paying = bill }) else null,
                     onEdit = editHandler(bill),
                 )
             }
@@ -213,8 +232,10 @@ fun BillsScreen(
     paying?.let { bill ->
         PayDialog(
             bill = bill,
+            busy = bill.id in state.busy,
+            errors = vm.payForm,
             onDismiss = { paying = null },
-            onPay = { amount -> vm.pay(bill, amount); paying = null },
+            onPay = { amount -> vm.pay(bill, amount) { paying = null } },
         )
     }
 }
@@ -275,6 +296,8 @@ private fun BillCard(bill: Bill, unpaid: Boolean, busy: Boolean, onPay: (() -> U
 private fun BillEditor(
     bill: Bill,
     saving: Boolean,
+    /** The last save failure: said at the top, and the fields the server named marked. */
+    errors: FormErrors,
     /** False when the user may only delete this bill, not change it. */
     canSave: Boolean,
     onDismiss: () -> Unit,
@@ -287,6 +310,7 @@ private fun BillEditor(
     var autoPay by remember { mutableStateOf(bill.autoPay) }
     var notes by remember { mutableStateOf(bill.notes.orEmpty()) }
     val amountValue = amount.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0 }
+    val amountError = errors["amount"] ?: if (amountValue == null) "Enter an amount of 0 or more." else null
 
     EditorDialog(
         title = if (canSave) "Edit bill" else "Bill",
@@ -296,66 +320,81 @@ private fun BillEditor(
         onSave = { onSave(name.trim(), amountValue!!, dueInstant(due, bill.dueDate), autoPay, notes.trim().ifEmpty { null }) },
         deleteLabel = "Delete bill",
         onDelete = onDelete,
+        error = errors.message,
     ) {
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it },
+            onValueChange = { name = it; errors.clear("name") },
             label = { Text("Name") },
             singleLine = true,
+            isError = errors["name"] != null,
+            supportingText = errors["name"]?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = amount,
-            onValueChange = { amount = it },
+            onValueChange = { amount = it; errors.clear("amount") },
             label = { Text("Amount") },
             singleLine = true,
-            isError = amountValue == null,
+            isError = amountError != null,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            supportingText = if (bill.paidTotal > 0) {
-                { Text("Already paid: ${formatMoney(bill.paidTotal, bill.currency)}") }
-            } else null,
+            supportingText = when {
+                amountError != null -> { { Text(amountError) } }
+                bill.paidTotal > 0 -> { { Text("Already paid: ${formatMoney(bill.paidTotal, bill.currency)}") } }
+                else -> null
+            },
             modifier = Modifier.fillMaxWidth(),
         )
-        DateField("Due date", due) { due = it }
+        DateField("Due date", due, errors["dueDate"]) { due = it; errors.clear("dueDate") }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Autopay", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Switch(checked = autoPay, onCheckedChange = { autoPay = it })
+            Switch(checked = autoPay, onCheckedChange = { autoPay = it; errors.clear("autoPay") })
         }
+        FieldError(errors["autoPay"])
         OutlinedTextField(
             value = notes,
-            onValueChange = { notes = it },
+            onValueChange = { notes = it; errors.clear("notes") },
             label = { Text("Notes") },
             minLines = 2,
+            isError = errors["notes"] != null,
+            supportingText = errors["notes"]?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
     }
 }
 
+/** Stays open until the payment is recorded: a refusal is said here, with the amount marked to fix. */
 @Composable
-private fun PayDialog(bill: Bill, onDismiss: () -> Unit, onPay: (Double?) -> Unit) {
+private fun PayDialog(bill: Bill, busy: Boolean, errors: FormErrors, onDismiss: () -> Unit, onPay: (Double?) -> Unit) {
     // Locale.US so the prefilled value always parses back with toDoubleOrNull.
     val full = String.format(Locale.US, "%.2f", bill.remaining)
     var text by remember { mutableStateOf(full) }
     val amount = text.replace(',', '.').toDoubleOrNull()
     val valid = amount != null && amount > 0
+    val amountError = errors["amount"] ?: if (!valid) "Enter an amount above 0." else null
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Pay ${bill.name}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                errors.message?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
                 Text("Remaining: ${formatMoney(bill.remaining, bill.currency)}")
                 OutlinedTextField(
                     value = text,
-                    onValueChange = { text = it },
+                    onValueChange = { text = it; errors.clear("amount") },
                     label = { Text("Amount") },
                     singleLine = true,
+                    isError = amountError != null,
+                    supportingText = amountError?.let { { Text(it) } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
             }
         },
         confirmButton = {
             // Paying the exact remainder sends no amount so the server settles it fully.
-            TextButton(onClick = { onPay(if (text == full) null else amount) }, enabled = valid) { Text("Record") }
+            TextButton(onClick = { onPay(if (text == full) null else amount) }, enabled = valid && !busy) {
+                Text(if (busy) "Recording…" else "Record")
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

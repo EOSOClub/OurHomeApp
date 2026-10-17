@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
@@ -73,6 +74,7 @@ import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.defaultAccess
 import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.Permission
+import com.eosoclub.ourhome.data.PhoneSetup
 import com.eosoclub.ourhome.data.can
 import android.content.Context
 import android.content.SharedPreferences
@@ -187,6 +189,26 @@ fun HomeScreen(
         }
         runCatching { session.api.lookAfter().people.isNotEmpty() }
             .onSuccess { looksAfter = it }
+            .onFailure { if (it is CancellationException) throw it }
+    }
+    // What this phone must have on while an adult looks after this member
+    // (Set up this phone), asked again like looksAfter. Null until known, and
+    // on older servers. The first answer opens the checklist by itself when
+    // something is missing, once per app start; a temporary password goes
+    // first (Profile), and the menu offers it any time.
+    val currentContext = LocalContext.current
+    var phoneSetup by remember { mutableStateOf<PhoneSetup?>(null) }
+    var setupOffered by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(tab, menuOpen) {
+        runCatching { session.api.phoneSetup() }
+            .onSuccess { setup ->
+                phoneSetup = setup
+                if (!setupOffered) {
+                    setupOffered = true
+                    val missing = PhoneSetupDevice.steps(currentContext, setup).any { !it.done }
+                    if (missing && overlay == null && user.mustChangePassword != true) overlay = Overlay.PhoneSetup
+                }
+            }
             .onFailure { if (it is CancellationException) throw it }
     }
     // Keep both badges and the permissions current as the user moves around.
@@ -357,6 +379,13 @@ fun HomeScreen(
                                         onClick = { menuOpen = false; overlay = Overlay.LookAfter },
                                     )
                                 }
+                                if (phoneSetup?.supervised == true) {
+                                    DropdownMenuItem(
+                                        text = { Text("Set up this phone") },
+                                        leadingIcon = { Icon(Icons.Filled.Build, contentDescription = null) },
+                                        onClick = { menuOpen = false; overlay = Overlay.PhoneSetup },
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Activity") },
                                     leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
@@ -468,6 +497,7 @@ fun HomeScreen(
             Overlay.Activity -> ActivityScreen(session.api, user.id, modifier)
             Overlay.Map -> MapScreen(session.api, showMessage, modifier)
             Overlay.LookAfter -> LookAfterScreen(session.api, showMessage, modifier)
+            Overlay.PhoneSetup -> PhoneSetupScreen(session.api, showMessage, onClose = { overlay = null }, modifier)
             Overlay.Settings -> SettingsScreen(session.api, session.baseUrl, isHead = user.role == "head", features, showMessage, modifier)
             Overlay.Members -> MembersScreen(session, user, showMessage, modifier)
             null -> TabContent(
@@ -519,6 +549,7 @@ private enum class Overlay(val label: String) {
     Activity("Activity"),
     Map("Map"),
     LookAfter("People you look after"),
+    PhoneSetup("Set up this phone"),
     Settings("Settings"),
     Members("Household"),
 }

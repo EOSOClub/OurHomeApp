@@ -89,13 +89,18 @@ class PointsViewModel(private val api: ApiClient) : ViewModel() {
         load()
     }
 
+    /** The void dialog's last failure, shown in it (it stays open until the points are voided). */
+    val voidForm = FormErrors()
+
+    /** [onDone] (close the dialog, say so) only when it worked; a failure is marked in the dialog. */
     fun void(award: PointAward, reason: String, onDone: (String) -> Unit) = viewModelScope.launch {
+        voidForm.clear()
         try {
             api.voidAward(award.id, reason)
             onDone("Points voided")
             load()
         } catch (e: Exception) {
-            onDone(e.message ?: "Couldn't void")
+            voidForm.fail(e, "Couldn't void")
         }
     }
 }
@@ -217,7 +222,7 @@ fun PointsScreen(
                     fontWeight = FontWeight.SemiBold,
                     textDecoration = if (a.voided) TextDecoration.LineThrough else null,
                 )
-                if (isHead && !a.voided) TextButton(onClick = { voiding = a }) { Text("Void") }
+                if (isHead && !a.voided) TextButton(onClick = { vm.voidForm.clear(); voiding = a }) { Text("Void") }
             }
         }
     }
@@ -229,14 +234,22 @@ fun PointsScreen(
             title = { Text("Void these points?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Why it wasn't voided (the screen's snackbar sits behind this dialog).
+                    vm.voidForm.message?.takeIf { vm.voidForm["reason"] == null }?.let { FieldError(it) }
                     Text("${pts(a.points)} pts for ${a.userName ?: "a former member"} (“${a.taskTitle}”). It stays in the history and stops counting.")
-                    OutlinedTextField(value = reason, onValueChange = { reason = it.take(200) }, label = { Text("Reason") }, singleLine = true)
+                    OutlinedTextField(
+                        value = reason,
+                        onValueChange = { reason = it.take(200); vm.voidForm.clear("reason") },
+                        label = { Text("Reason") },
+                        singleLine = true,
+                        isError = vm.voidForm["reason"] != null,
+                        supportingText = vm.voidForm["reason"]?.let { { Text(it) } },
+                    )
                 }
             },
             confirmButton = {
                 TextButton(enabled = reason.isNotBlank(), onClick = {
-                    vm.void(a, reason.trim(), showMessage)
-                    voiding = null
+                    vm.void(a, reason.trim()) { message -> voiding = null; showMessage(message) }
                 }) { Text("Void") }
             },
             dismissButton = { TextButton(onClick = { voiding = null }) { Text("Cancel") } },

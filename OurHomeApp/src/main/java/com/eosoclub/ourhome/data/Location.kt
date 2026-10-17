@@ -213,6 +213,8 @@ data class LookedAfter(
     val phone: LookedAfterPhone? = null,
     /** App usage sharing and the newest day reported; off on older servers. */
     val appUsage: LookedAfterUsage = LookedAfterUsage(),
+    /** The protections their phone must have on; null from older servers (no switches then). */
+    val rules: PhoneRules? = null,
 ) {
     val required: Boolean get() = sharing == "required"
 
@@ -227,7 +229,8 @@ data class LookedAfter(
 
 /**
  * [problems]: "quiet" | "app_removed" | "switched_off" | "battery_flat" |
- * "no_signal" (why it went quiet, at most one) | "location_off" | "usage_off"
+ * "no_signal" (why it went quiet, at most one) | "notifications_off" |
+ * "location_off" | "usage_off"
  * | "battery_restricted" | "close_guard_off" | "uninstall_guard_off" |
  * "emergency_unlock_*" (web lib/phoneHealth.ts PHONE_PROBLEMS). [lastPushAt]:
  * when an instant alert last reached it (null: none yet, or an older app).
@@ -252,6 +255,7 @@ data class LookedAfterPhone(
                 "switched_off" -> "Their phone is switched off"
                 "battery_flat" -> "Their phone probably ran out of battery"
                 "no_signal" -> "Their phone may be out of signal"
+                "notifications_off" -> "Notifications turned off on their phone"
                 "location_off" -> "Location turned off on their phone"
                 "usage_off" -> "Usage access turned off on their phone"
                 "battery_restricted" -> "Battery saving can delay OurHome on their phone"
@@ -268,6 +272,50 @@ data class LookedAfterPhone(
             }
         }.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
+
+/**
+ * The protections a supervising adult requires on a child's phone (web
+ * lib/phoneHealth.ts PHONE_RULES). Each one they require is a step in that
+ * phone's Set up this phone, and they're alerted when it's off.
+ */
+@Serializable
+data class PhoneRules(
+    val keepRunning: Boolean = true,
+    val preventUninstall: Boolean = true,
+    val batteryUnrestricted: Boolean = true,
+)
+
+/** The [PhoneRules] the web knows, by its key, with the switch's label. */
+enum class PhoneRule(val key: String, val label: String) {
+    KeepRunning("keepRunning", "Keep Our Home running"),
+    PreventUninstall("preventUninstall", "Prevent uninstall"),
+    BatteryUnrestricted("batteryUnrestricted", "Unrestricted battery"),
+    ;
+
+    fun of(rules: PhoneRules): Boolean = when (this) {
+        KeepRunning -> rules.keepRunning
+        PreventUninstall -> rules.preventUninstall
+        BatteryUnrestricted -> rules.batteryUnrestricted
+    }
+}
+
+/**
+ * GET /api/phone/setup: what this member's phone must have on, for Set up
+ * this phone. Nothing while nobody looks after them; older servers have no
+ * such endpoint (the call fails, and the checklist stays away).
+ */
+@Serializable
+data class PhoneSetup(val supervised: Boolean = false, val required: PhoneSetupRequired = PhoneSetupRequired())
+
+@Serializable
+data class PhoneSetupRequired(
+    val notifications: Boolean = false,
+    val location: Boolean = false,
+    val usageAccess: Boolean = false,
+    val keepRunning: Boolean = false,
+    val preventUninstall: Boolean = false,
+    val batteryUnrestricted: Boolean = false,
+)
 
 /** "5 minutes", "1 hour", "2 hours". */
 fun minutesLabel(minutes: Int): String = when {

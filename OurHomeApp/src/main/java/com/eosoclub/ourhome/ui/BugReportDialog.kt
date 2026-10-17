@@ -33,6 +33,9 @@ fun BugReportDialog(
     var description by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    // Why it wasn't sent, shown in this dialog (the screen's snackbar sits behind it).
+    val errors = remember { FormErrors() }
+    val titleError = errors["title"] ?: if (title.isNotEmpty() && title.trim().length < 3) "At least 3 characters." else null
 
     EditorDialog(
         title = "Report a bug",
@@ -42,18 +45,20 @@ fun BugReportDialog(
         onDismiss = onDismiss,
         onSave = {
             sending = true
+            errors.clear()
             scope.launch {
                 try {
                     api.submitBugReport(title.trim(), description.trim(), "App: $where", BuildConfig.VERSION_NAME)
                     showMessage("Thanks - your bug report was sent.")
                     onDismiss()
                 } catch (e: Exception) {
-                    showMessage(e.message ?: "Couldn't send your bug report")
+                    errors.fail(e, "Couldn't send your bug report")
                 } finally {
                     sending = false
                 }
             }
         },
+        error = errors.message,
     ) {
         Text(
             "Tell us what went wrong. We'll include the screen you were on ($where) and the app version.",
@@ -62,19 +67,23 @@ fun BugReportDialog(
         )
         OutlinedTextField(
             value = title,
-            onValueChange = { title = it.take(150) },
+            onValueChange = { title = it.take(150); errors.clear("title") },
             label = { Text("What's wrong?") },
             placeholder = { Text("e.g. Bills tab won't load") },
             singleLine = true,
+            isError = titleError != null,
+            supportingText = titleError?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = description,
-            onValueChange = { description = it.take(5000) },
+            onValueChange = { description = it.take(5000); errors.clear("description") },
             label = { Text("Details") },
             placeholder = { Text("What did you do, what did you expect, and what happened instead?") },
             minLines = 5,
+            isError = errors["description"] != null,
+            supportingText = errors["description"]?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             modifier = Modifier.fillMaxWidth(),
         )

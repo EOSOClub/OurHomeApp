@@ -139,13 +139,24 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
         state.update { it.copy(loading = false) }
     }
 
-    /** Runs one change; [onDone] (close the dialog, …) only when it worked. */
-    private fun act(success: String?, onDone: () -> Unit = {}, block: suspend () -> Unit) {
-        viewModelScope.launch { run(success, onDone, block) }
+    // Each form's last failure: why, and which fields to mark (the editors
+    // show the reason at their top, since they sit over the snackbar).
+    val timeZoneForm = FormErrors()
+    val pointsForm = FormErrors()
+    val placeForm = FormErrors()
+    val categoryForm = FormErrors()
+    val paperlessForm = FormErrors()
+    val tokenForm = FormErrors()
+    val tagForm = FormErrors()
+
+    /** Runs one change; [onDone] (close the dialog, …) only when it worked. [form]: where a failure is marked. */
+    private fun act(success: String?, onDone: () -> Unit = {}, form: FormErrors? = null, block: suspend () -> Unit) {
+        viewModelScope.launch { run(success, onDone, form, block) }
     }
 
-    private suspend fun run(success: String?, onDone: () -> Unit, block: suspend () -> Unit) {
+    private suspend fun run(success: String?, onDone: () -> Unit, form: FormErrors?, block: suspend () -> Unit) {
         state.update { it.copy(busy = true) }
+        form?.clear()
         try {
             block()
             onDone()
@@ -153,47 +164,49 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            form?.fail(e, "Something went wrong")
             _messages.send(e.message ?: "Something went wrong")
         } finally {
             state.update { it.copy(busy = false) }
         }
     }
 
-    fun savePoints(minutesPerPoint: Double) = act("Points settings saved") {
+    fun savePoints(minutesPerPoint: Double) = act("Points settings saved", form = pointsForm) {
         val saved = api.savePointsSettings(minutesPerPoint = minutesPerPoint)
         state.update { it.copy(points = saved) }
     }
 
     // Stored with the points rate, so it saves through the same call.
-    fun saveTimeZone(timezone: String, weekStartsOn: Int) = act("Time zone and week saved") {
+    fun saveTimeZone(timezone: String, weekStartsOn: Int) = act("Time zone and week saved", form = timeZoneForm) {
         val saved = api.savePointsSettings(timezone = timezone, weekStartsOn = weekStartsOn)
         state.update { it.copy(points = saved) }
     }
 
     // Every places call answers with the whole new list. Tags shown here name
     // their room, so they're re-read (a removed room leaves its tags with none).
-    private fun places(success: String?, onDone: () -> Unit = {}, call: suspend () -> Places) = act(success, onDone) {
-        val next = call()
-        state.update { it.copy(places = next) }
-        if (state.value.tags != null) runCatching { api.nfcTags() }.onSuccess { t -> state.update { it.copy(tags = t) } }
-    }
+    private fun places(success: String?, onDone: () -> Unit = {}, form: FormErrors? = null, call: suspend () -> Places) =
+        act(success, onDone, form) {
+            val next = call()
+            state.update { it.copy(places = next) }
+            if (state.value.tags != null) runCatching { api.nfcTags() }.onSuccess { t -> state.update { it.copy(tags = t) } }
+        }
 
-    fun saveFloor(id: String?, name: String, onDone: () -> Unit) = places(null, onDone) { api.saveFloor(id, name) }
+    fun saveFloor(id: String?, name: String, onDone: () -> Unit) = places(null, onDone, placeForm) { api.saveFloor(id, name) }
     fun saveRoom(id: String?, name: String, floorId: String?, onDone: () -> Unit) =
-        places(null, onDone) { api.saveRoom(id, name, floorId) }
+        places(null, onDone, placeForm) { api.saveRoom(id, name, floorId) }
     fun deletePlace(kind: String, id: String, onDone: () -> Unit) =
-        places(if (kind == "floor") "Floor removed" else "Room removed", onDone) { api.deletePlace(kind, id) }
+        places(if (kind == "floor") "Floor removed" else "Room removed", onDone, placeForm) { api.deletePlace(kind, id) }
     fun movePlace(kind: String, ids: List<String>, id: String, direction: Int) =
         places(null) { api.reorderPlaces(kind, moveId(ids, id, direction)) }
 
     fun saveCategory(id: String?, name: String, kind: String, color: String, icon: String?, onDone: () -> Unit) =
-        act(null, onDone) {
+        act(null, onDone, categoryForm) {
             api.saveCategory(id, name, kind, color, icon)
             val next = api.allCategories()
             state.update { it.copy(categories = next) }
         }
 
-    fun deleteCategory(id: String, onDone: () -> Unit) = act("Category deleted", onDone) {
+    fun deleteCategory(id: String, onDone: () -> Unit) = act("Category deleted", onDone, categoryForm) {
         api.deleteCategory(id)
         state.update { s -> s.copy(categories = s.categories?.filterNot { it.id == id }) }
     }
@@ -216,7 +229,7 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
     }
 
     fun savePaperless(url: String, publicUrl: String, token: String?, onDone: () -> Unit) =
-        act("Paperless connected. Bills changed from now on will be imported.", onDone) {
+        act("Paperless connected. Bills changed from now on will be imported.", onDone, paperlessForm) {
             val next = api.savePaperless(url, publicUrl, token)
             state.update { it.copy(paperless = next) }
         }
@@ -226,7 +239,7 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
         state.update { it.copy(paperless = next) }
     }
 
-    fun createToken(name: String, onDone: () -> Unit) = act(null, onDone) {
+    fun createToken(name: String, onDone: () -> Unit) = act(null, onDone, tokenForm) {
         val created = api.createIntegration(name)
         val next = api.integrations()
         state.update { it.copy(newToken = created.token, integrations = next) }
@@ -241,7 +254,7 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
 
     /** A location tag gets [roomId]; any other kind [itemId]. */
     fun mapTag(tagId: String, label: String, itemId: String?, roomId: String?, represents: String, onDone: () -> Unit) =
-        act(null, onDone) {
+        act(null, onDone, tagForm) {
             api.registerNfcTag(tagId, label, itemId, roomId, represents)
             val next = api.nfcTags()
             state.update { it.copy(tags = next) }
@@ -316,8 +329,8 @@ fun SettingsScreen(
             // Keyed on the saved values so the form resets to them after a save;
             // each on its own, so saving one doesn't wipe an edit in the other.
             state.points?.let { p ->
-                key(p.timezone, p.weekStartsOn) { TimeZoneCard(p, state.busy, vm::saveTimeZone) }
-                key(p.minutesPerPoint) { PointsCard(p, state.busy, vm::savePoints) }
+                key(p.timezone, p.weekStartsOn) { TimeZoneCard(p, state.busy, vm.timeZoneForm, vm::saveTimeZone) }
+                key(p.minutesPerPoint) { PointsCard(p, state.busy, vm.pointsForm, vm::savePoints) }
             }
             // Rooms are where tasks are done: hidden with Tasks.
             if (features.places) state.places?.let { PlacesCard(it, state.busy, vm) }
@@ -334,29 +347,32 @@ fun SettingsScreen(
 // --- Time zone and week (head) ------------------------------------------------
 
 @Composable
-private fun TimeZoneCard(saved: PointsSettings, busy: Boolean, onSave: (String, Int) -> Unit) {
+private fun TimeZoneCard(saved: PointsSettings, busy: Boolean, errors: FormErrors, onSave: (String, Int) -> Unit) {
     var timezone by remember { mutableStateOf(saved.timezone) }
     var weekStartsOn by remember { mutableStateOf(saved.weekStartsOn) }
     val phoneZone = ZoneId.systemDefault().id
+    val zoneError = errors["timezone"]
 
     SectionCard("Time zone and week", "Everyone sees dates and times in this time zone, whatever their own phone is set to.") {
         OutlinedTextField(
             value = timezone,
-            onValueChange = { timezone = it },
+            onValueChange = { timezone = it; errors.clear("timezone") },
             label = { Text("Time zone") },
             placeholder = { Text("America/Chicago") },
             singleLine = true,
-            supportingText = { Text("Days, weeks and task cycles start at midnight here.") },
+            isError = zoneError != null,
+            supportingText = { Text(zoneError ?: "Days, weeks and task cycles start at midnight here.") },
             modifier = Modifier.fillMaxWidth(),
         )
         if (timezone.trim() != phoneZone) {
-            TextButton(onClick = { timezone = phoneZone }) { Text("Use this phone's ($phoneZone)") }
+            TextButton(onClick = { timezone = phoneZone; errors.clear("timezone") }) { Text("Use this phone's ($phoneZone)") }
         }
         DropdownField(
             "Weeks start on",
             WEEKDAYS.mapIndexed { i, d -> i.toString() to d },
             weekStartsOn.toString(),
-            { weekStartsOn = it.toInt() },
+            { weekStartsOn = it.toInt(); errors.clear("weekStartsOn") },
+            error = errors["weekStartsOn"],
         )
         Button(
             onClick = { onSave(timezone.trim(), weekStartsOn) },
@@ -369,21 +385,24 @@ private fun TimeZoneCard(saved: PointsSettings, busy: Boolean, onSave: (String, 
 // --- Task points (head) -------------------------------------------------------
 
 @Composable
-private fun PointsCard(saved: PointsSettings, busy: Boolean, onSave: (Double) -> Unit) {
+private fun PointsCard(saved: PointsSettings, busy: Boolean, errors: FormErrors, onSave: (Double) -> Unit) {
     var rate by remember { mutableStateOf(formatQuantity(saved.minutesPerPoint)) }
     val minutes = rate.toDoubleOrNull()?.takeIf { it > 0 }
+    val rateError = errors["minutesPerPoint"] ?: if (rate.isNotBlank() && minutes == null) "Enter a number above 0." else null
 
     SectionCard("Task points", "The time→points rate.") {
         OutlinedTextField(
             value = rate,
-            onValueChange = { rate = it },
+            onValueChange = { rate = it; errors.clear("minutesPerPoint") },
             label = { Text("Minutes per point") },
             singleLine = true,
+            isError = rateError != null,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             supportingText = {
                 Text(
-                    (minutes?.let { "45 min of work = ${formatQuantity(Math.round(45 / it * 100) / 100.0)} pts. " } ?: "") +
-                        "Only new calculations use it; existing tasks keep their points.",
+                    rateError
+                        ?: ((minutes?.let { "45 min of work = ${formatQuantity(Math.round(45 / it * 100) / 100.0)} pts. " } ?: "") +
+                            "Only new calculations use it; existing tasks keep their points."),
                 )
             },
             modifier = Modifier.fillMaxWidth(),
@@ -458,6 +477,8 @@ private fun PlacesCard(places: Places, busy: Boolean, vm: SettingsViewModel) {
     }
 
     editing?.let { edit ->
+        // Starts without the last editor's errors.
+        LaunchedEffect(edit) { vm.placeForm.clear() }
         PlaceEditor(edit, places.floors, busy, vm, onClose = { editing = null })
     }
 }
@@ -486,6 +507,7 @@ private fun PlaceEditor(edit: PlaceEdit, floors: List<Floor>, busy: Boolean, vm:
     val noun = if (edit is PlaceEdit.FloorEdit) "floor" else "room"
     var name by remember { mutableStateOf(existingName ?: "") }
     var floorId by remember { mutableStateOf((edit as? PlaceEdit.RoomEdit)?.floorId ?: "") }
+    val errors = vm.placeForm
 
     EditorDialog(
         title = if (existingId != null) "Edit $noun" else "New $noun",
@@ -498,17 +520,26 @@ private fun PlaceEditor(edit: PlaceEdit, floors: List<Floor>, busy: Boolean, vm:
         },
         deleteLabel = "Remove $noun",
         onDelete = existingId?.let { id -> { vm.deletePlace(noun, id, onClose) } },
+        error = errors.message,
     ) {
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it.take(60) },
+            onValueChange = { name = it.take(60); errors.clear("name") },
             label = { Text("Name") },
             placeholder = { Text(if (edit is PlaceEdit.FloorEdit) "Upstairs" else "Kitchen") },
             singleLine = true,
+            isError = errors["name"] != null,
+            supportingText = errors["name"]?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
         if (edit is PlaceEdit.RoomEdit && floors.isNotEmpty()) {
-            DropdownField("Floor", listOf("" to "Not on a floor") + floors.map { it.id to it.name }, floorId, { floorId = it })
+            DropdownField(
+                "Floor",
+                listOf("" to "Not on a floor") + floors.map { it.id to it.name },
+                floorId,
+                { floorId = it; errors.clear("floorId") },
+                error = errors["floorId"],
+            )
         }
         if (existingId != null) {
             Text(
@@ -554,7 +585,13 @@ private fun CategoriesCard(categories: List<CategoryAdmin>, busy: Boolean, vm: S
         }
     }
 
-    editing?.let { c -> key(c.id) { CategoryEditor(c, busy, vm, onClose = { editing = null }) } }
+    editing?.let { c ->
+        key(c.id) {
+            // Starts without the last editor's errors.
+            LaunchedEffect(Unit) { vm.categoryForm.clear() }
+            CategoryEditor(c, busy, vm, onClose = { editing = null })
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -566,6 +603,8 @@ private fun CategoryEditor(category: CategoryAdmin, busy: Boolean, vm: SettingsV
     var color by remember { mutableStateOf(category.color ?: "#38bdf8") }
     var icon by remember { mutableStateOf(category.icon ?: "") }
     val colorOk = HEX_COLOR.matches(color.trim())
+    val errors = vm.categoryForm
+    val colorError = errors["color"] ?: if (!colorOk) "Use a hex colour like #38bdf8" else null
 
     EditorDialog(
         title = if (isNew) "New category" else "Edit category",
@@ -577,22 +616,27 @@ private fun CategoryEditor(category: CategoryAdmin, busy: Boolean, vm: SettingsV
         },
         deleteLabel = "Delete category",
         onDelete = if (isNew) null else ({ vm.deleteCategory(category.id, onClose) }),
+        error = errors.message,
     ) {
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it.take(60) },
+            onValueChange = { name = it.take(60); errors.clear("name") },
             label = { Text("Name") },
             placeholder = { Text("e.g. Cleaning") },
             singleLine = true,
+            isError = errors["name"] != null,
+            supportingText = errors["name"]?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
-        DropdownField("Used for", CATEGORY_KINDS, kind, { kind = it })
+        DropdownField("Used for", CATEGORY_KINDS, kind, { kind = it; errors.clear("kind") }, error = errors["kind"])
         OutlinedTextField(
             value = icon,
-            onValueChange = { icon = it.take(40) },
+            onValueChange = { icon = it.take(40); errors.clear("icon") },
             label = { Text("Icon / emoji (optional)") },
             placeholder = { Text("e.g. 🧹") },
             singleLine = true,
+            isError = errors["icon"] != null,
+            supportingText = errors["icon"]?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
         FieldLabel("Colour")
@@ -605,17 +649,17 @@ private fun CategoryEditor(category: CategoryAdmin, busy: Boolean, vm: SettingsV
                         .clip(CircleShape)
                         .background(hexColor(hex)!!)
                         .border(if (selected) 3.dp else 0.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
-                        .clickable { color = hex },
+                        .clickable { color = hex; errors.clear("color") },
                 )
             }
         }
         OutlinedTextField(
             value = color,
-            onValueChange = { color = it.take(7) },
+            onValueChange = { color = it.take(7); errors.clear("color") },
             label = { Text("Hex") },
             singleLine = true,
-            isError = !colorOk,
-            supportingText = { if (!colorOk) Text("Use a hex colour like #38bdf8") },
+            isError = colorError != null,
+            supportingText = { if (colorError != null) Text(colorError) },
             leadingIcon = { ColorDot(hexColor(color.trim())) },
             textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
             modifier = Modifier.fillMaxWidth(),
@@ -653,8 +697,9 @@ private fun PaperlessCard(status: PaperlessStatus, busy: Boolean, syncing: Boole
             editing || conn == null -> PaperlessForm(
                 status,
                 busy,
+                vm.paperlessForm,
                 onSave = { url, publicUrl, token -> vm.savePaperless(url, publicUrl, token) { editing = false } },
-                onCancel = if (conn != null) ({ editing = false }) else null,
+                onCancel = if (conn != null) ({ vm.paperlessForm.clear(); editing = false }) else null,
             )
             conn != null -> Bordered {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -744,6 +789,8 @@ private fun PaperlessCard(status: PaperlessStatus, busy: Boolean, syncing: Boole
 private fun PaperlessForm(
     status: PaperlessStatus,
     busy: Boolean,
+    /** The last save failure: the fields the server named are marked with why. */
+    errors: FormErrors,
     onSave: (String, String, String?) -> Unit,
     onCancel: (() -> Unit)?,
 ) {
@@ -751,22 +798,24 @@ private fun PaperlessForm(
     var url by remember { mutableStateOf(own?.url ?: "") }
     var publicUrl by remember { mutableStateOf(own?.publicUrl ?: "") }
     var token by remember { mutableStateOf("") }
-    val canSave = Regex("^https?://\\S+$", RegexOption.IGNORE_CASE).matches(url.trim()) &&
-        (token.isNotBlank() || own != null) && !busy
+    val urlLooksRight = Regex("^https?://\\S+$", RegexOption.IGNORE_CASE).matches(url.trim())
+    val canSave = urlLooksRight && (token.isNotBlank() || own != null) && !busy
+    val urlError = errors["url"] ?: if (url.isNotBlank() && !urlLooksRight) "Start with http:// or https://, with no spaces." else null
 
     Bordered {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(if (own != null) "Change your Paperless" else "Connect your Paperless", fontWeight = FontWeight.SemiBold)
             OutlinedTextField(
                 value = url,
-                onValueChange = { url = it },
+                onValueChange = { url = it; errors.clear("url") },
                 label = { Text("Paperless address") },
                 placeholder = { Text(if (status.privateNetworkAllowed) "http://paperless:8000" else "https://paperless.example.com") },
                 singleLine = true,
+                isError = urlError != null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 supportingText = {
                     Text(
-                        if (status.privateNetworkAllowed) "How this server reaches it: a Docker or home-network address works."
+                        urlError ?: if (status.privateNetworkAllowed) "How this server reaches it: a Docker or home-network address works."
                         else "Must be a public internet address. To use one on the server's own network, ask the server admin to allow it.",
                     )
                 },
@@ -774,26 +823,28 @@ private fun PaperlessForm(
             )
             OutlinedTextField(
                 value = publicUrl,
-                onValueChange = { publicUrl = it },
+                onValueChange = { publicUrl = it; errors.clear("publicUrl") },
                 label = { Text("Address you open it at (optional)") },
                 placeholder = { Text("https://paperless.example.com") },
                 singleLine = true,
+                isError = errors["publicUrl"] != null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                supportingText = { Text("For \"Open in Paperless\" links on skipped documents.") },
+                supportingText = { Text(errors["publicUrl"] ?: "For \"Open in Paperless\" links on skipped documents.") },
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
                 value = token,
-                onValueChange = { token = it },
+                onValueChange = { token = it; errors.clear("token") },
                 label = { Text("API token") },
                 placeholder = { if (own != null) Text("Leave blank to keep the saved token") },
                 singleLine = true,
+                isError = errors["token"] != null,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 supportingText = {
                     Text(
-                        "Of a read-only Paperless user that can see the bill / bill-payment tags and the Amount field. " +
-                            "Stored encrypted. Saving checks the connection first.",
+                        errors["token"] ?: ("Of a read-only Paperless user that can see the bill / bill-payment tags and the Amount field. " +
+                            "Stored encrypted. Saving checks the connection first."),
                     )
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -853,10 +904,12 @@ private fun HomeAssistantCard(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = name,
-                onValueChange = { name = it.take(120) },
+                onValueChange = { name = it.take(120); vm.tokenForm.clear("name") },
                 label = { Text("Connection name") },
                 placeholder = { Text("e.g. Home Assistant (LAN)") },
                 singleLine = true,
+                isError = vm.tokenForm["name"] != null,
+                supportingText = vm.tokenForm["name"]?.let { { Text(it) } },
                 modifier = Modifier.weight(1f),
             )
             Button(onClick = { vm.createToken(name.trim()) { name = "" } }, enabled = name.isNotBlank() && !busy) { Text("Create") }
@@ -936,6 +989,7 @@ private fun NfcTagsCard(tags: List<NfcTag>, items: List<InventoryItem>, places: 
     // Location tags open a room; every other kind is bound to an item.
     val isLocation = represents == NfcTag.LOCATION
     val rooms = places?.rooms.orEmpty()
+    val errors = vm.tagForm
 
     SectionCard(
         "NFC tags",
@@ -948,28 +1002,48 @@ private fun NfcTagsCard(tags: List<NfcTag>, items: List<InventoryItem>, places: 
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
+            // A problem that isn't about one field (the tag needs an item or a room) is said here.
+            if (errors.message != null && errors.fields.isEmpty()) FieldError(errors.message)
             OutlinedTextField(
                 value = tagId,
-                onValueChange = { tagId = it },
+                onValueChange = { tagId = it; errors.clear("tagId") },
                 label = { Text("Tag id") },
                 placeholder = { Text("e.g. pantry_coffee") },
                 singleLine = true,
+                isError = errors["tagId"] != null,
+                supportingText = errors["tagId"]?.let { { Text(it) } },
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
                 value = label,
-                onValueChange = { label = it.take(120) },
+                onValueChange = { label = it.take(120); errors.clear("label") },
                 label = { Text("Label") },
                 placeholder = { Text("e.g. Coffee shelf") },
                 singleLine = true,
+                isError = errors["label"] != null,
+                supportingText = errors["label"]?.let { { Text(it) } },
                 modifier = Modifier.fillMaxWidth(),
             )
-            DropdownField("Represents", NFC_REPRESENTS, represents, { represents = it })
+            DropdownField("Represents", NFC_REPRESENTS, represents, { represents = it; errors.clear("represents") }, error = errors["represents"])
             when {
                 isLocation && places != null && rooms.isNotEmpty() ->
-                    DropdownField("Opens room", places.choices(roomsOnly = true), room, { room = it }, placeholder = "Choose a room…")
+                    DropdownField(
+                        "Opens room",
+                        places.choices(roomsOnly = true),
+                        room,
+                        { room = it; errors.clear("roomId") },
+                        placeholder = "Choose a room…",
+                        error = errors["roomId"],
+                    )
                 isLocation -> Text("Add a room in Rooms & floors first.", style = MaterialTheme.typography.bodySmall)
-                items.isNotEmpty() -> DropdownField("Inventory item", items.map { it.id to it.name }, itemId, { itemId = it })
+                items.isNotEmpty() ->
+                    DropdownField(
+                        "Inventory item",
+                        items.map { it.id to it.name },
+                        itemId,
+                        { itemId = it; errors.clear("itemId") },
+                        error = errors["itemId"],
+                    )
                 else -> Text("Add an inventory item first.", style = MaterialTheme.typography.bodySmall)
             }
             Button(

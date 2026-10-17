@@ -73,6 +73,14 @@ fun canManageMember(actorRole: String?, targetRole: String?): Boolean {
     }
 }
 
+// --- Supervision (the web's canSupervise / canBeSupervised) -----------------
+
+/** Only children and teens are supervised (parental controls). */
+fun canBeSupervised(role: String?): Boolean = role == "child" || role == "teen"
+
+/** Adults, managers and the Head of House may supervise. */
+fun canSupervise(role: String?): Boolean = role == "head" || role == "manager" || role == "adult" || role == "member"
+
 /** Never "head": headship only moves by transfer, so there is always one. */
 fun canAssignRole(actorRole: String?, targetRole: String): Boolean =
     targetRole != "head" && targetRole in USER_ROLES && canManageMember(actorRole, targetRole)

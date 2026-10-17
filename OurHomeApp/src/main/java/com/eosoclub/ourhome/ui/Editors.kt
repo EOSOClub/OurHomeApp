@@ -71,7 +71,9 @@ import java.time.format.FormatStyle
 
 /**
  * Full-screen editor shell: close + title + Save on top, the form scrolling
- * below, and an optional confirmed Delete at the bottom.
+ * below, and an optional confirmed Delete at the bottom. [error]: why the last
+ * save failed, shown at the top of the form (the screen's snackbar sits
+ * behind this dialog, so it can't be seen from here).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,6 +86,7 @@ internal fun EditorDialog(
     deleteLabel: String? = null,
     onDelete: (() -> Unit)? = null,
     saveLabel: String = "Save",
+    error: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
@@ -113,6 +116,9 @@ internal fun EditorDialog(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (error != null) {
+                    Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                }
                 content()
                 if (onDelete != null) {
                     OutlinedButton(
@@ -140,10 +146,13 @@ internal fun EditorDialog(
     }
 }
 
-/** A read-only field that opens a date picker; the trailing button clears it. */
+/**
+ * A read-only field that opens a date picker; the trailing button clears it.
+ * [error]: what's wrong with it (red, said under it).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun DateField(label: String, date: LocalDate?, onChange: (LocalDate?) -> Unit) {
+internal fun DateField(label: String, date: LocalDate?, error: String? = null, onChange: (LocalDate?) -> Unit) {
     var picking by remember { mutableStateOf(false) }
     Box {
         OutlinedTextField(
@@ -153,6 +162,7 @@ internal fun DateField(label: String, date: LocalDate?, onChange: (LocalDate?) -
             label = { Text(label) },
             placeholder = { Text("None") },
             leadingIcon = { Icon(Icons.Filled.DateRange, contentDescription = null) },
+            isError = error != null,
             modifier = Modifier.fillMaxWidth(),
         )
         // The text field swallows taps, so an overlay opens the picker.
@@ -163,6 +173,8 @@ internal fun DateField(label: String, date: LocalDate?, onChange: (LocalDate?) -
             }
         }
     }
+    // Under the box, so the clear button stays centred on the field.
+    FieldError(error)
     if (picking) {
         // DatePicker works in UTC-midnight millis for the chosen calendar day.
         val state = rememberDatePickerState(
@@ -186,7 +198,7 @@ internal fun DateField(label: String, date: LocalDate?, onChange: (LocalDate?) -
 /** Like [DateField], for a time of day; the clear button empties it. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun TimeField(label: String, time: LocalTime?, onChange: (LocalTime?) -> Unit) {
+internal fun TimeField(label: String, time: LocalTime?, error: String? = null, onChange: (LocalTime?) -> Unit) {
     var picking by remember { mutableStateOf(false) }
     val context = LocalContext.current
     Box {
@@ -196,6 +208,7 @@ internal fun TimeField(label: String, time: LocalTime?, onChange: (LocalTime?) -
             readOnly = true,
             label = { Text(label) },
             placeholder = { Text("Noon") },
+            isError = error != null,
             modifier = Modifier.fillMaxWidth(),
         )
         Box(Modifier.matchParentSize().padding(end = 48.dp).clickable { picking = true })
@@ -205,6 +218,7 @@ internal fun TimeField(label: String, time: LocalTime?, onChange: (LocalTime?) -
             }
         }
     }
+    FieldError(error)
     if (picking) {
         val start = time ?: LocalTime.NOON
         val state = rememberTimePickerState(start.hour, start.minute, DateFormat.is24HourFormat(context))
@@ -285,7 +299,10 @@ internal fun ChoiceChips(options: List<String>, selected: String, onSelect: (Str
     }
 }
 
-/** A read-only dropdown; [options] are (value, label) pairs, [value] "" shows the placeholder. */
+/**
+ * A read-only dropdown; [options] are (value, label) pairs, [value] "" shows
+ * the placeholder. [error]: what's wrong with the choice (red, said under it).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun DropdownField(
@@ -294,6 +311,7 @@ internal fun DropdownField(
     value: String,
     onSelect: (String) -> Unit,
     placeholder: String = "Choose…",
+    error: String? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
@@ -304,6 +322,8 @@ internal fun DropdownField(
             label = { Text(label) },
             placeholder = { Text(placeholder) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(open) },
+            isError = error != null,
+            supportingText = error?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
         )
         ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
@@ -317,6 +337,46 @@ internal fun DropdownField(
 @Composable
 internal fun FieldLabel(text: String) {
     Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** What's wrong with a field that has no text box of its own (chips, day toggles, a picker), in red; nothing when null. */
+@Composable
+internal fun FieldError(error: String?) {
+    if (error == null) return
+    Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+}
+
+/**
+ * A form's last save failure, kept in its ViewModel: why it failed (shown at
+ * the top of the open editor, since the screen's snackbar sits behind
+ * dialogs) and which fields the server named, each until it's edited.
+ * Compose state, so screens redraw when it changes.
+ */
+class FormErrors {
+    var message by mutableStateOf<String?>(null)
+        private set
+    var fields by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+
+    /** A save failed: say why and mark the fields the server named. */
+    fun fail(e: Throwable, fallback: String) {
+        message = e.message ?: fallback
+        fields = (e as? com.eosoclub.ourhome.data.ApiException)?.fieldErrors.orEmpty()
+    }
+
+    /** An editor opened, closed or saved: start clean. */
+    fun clear() {
+        message = null
+        fields = emptyMap()
+    }
+
+    /** [key] was edited: what the server said about it no longer applies. */
+    fun clear(key: String) {
+        if (key in fields) fields = fields - key
+    }
+
+    /** What's wrong with [key], or null. */
+    operator fun get(key: String): String? = fields[key]
 }
 
 /**

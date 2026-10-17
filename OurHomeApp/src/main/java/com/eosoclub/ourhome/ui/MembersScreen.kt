@@ -20,6 +20,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,13 +47,21 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.eosoclub.ourhome.data.ApiException
+import com.eosoclub.ourhome.data.AuthState
 import com.eosoclub.ourhome.data.MemberAccount
 import com.eosoclub.ourhome.data.Permission
 import com.eosoclub.ourhome.data.SessionManager
 import com.eosoclub.ourhome.data.SessionUser
+import com.eosoclub.ourhome.data.Supervision
+import com.eosoclub.ourhome.data.SupervisionPerson
 import com.eosoclub.ourhome.data.assignableRoles
 import com.eosoclub.ourhome.data.can
+import com.eosoclub.ourhome.data.canBeSupervised
 import com.eosoclub.ourhome.data.canManageMember
+import com.eosoclub.ourhome.data.emailProblem
+import com.eosoclub.ourhome.data.passwordProblem
+import com.eosoclub.ourhome.data.usernameProblem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -66,8 +75,9 @@ import java.util.UUID
 /**
  * The web's Members page (head + managers): rename the household (head), add
  * members with a temporary password, edit their name / username / email,
- * change roles, reset passwords, hand over Head of House (head) and remove
- * people. The per-page permissions grid stays on the website.
+ * change roles, reset passwords, choose who supervises each child and teen
+ * (head), hand over Head of House (head) and remove people. The per-page
+ * permissions grid stays on the website.
  */
 class MembersViewModel(private val session: SessionManager) : ViewModel() {
     private val api = session.api
@@ -81,19 +91,40 @@ class MembersViewModel(private val session: SessionManager) : ViewModel() {
         val busy: Boolean = false,
         /** Just added: shown with their sign-in name until dismissed. */
         val added: MemberAccount? = null,
+        /** Who supervises each child and teen; only for the Head of House (null otherwise). */
+        val supervision: Supervision? = null,
+        /** Whose supervisors are being saved, and to what. */
+        val savingSupervisors: Pair<String, List<String>>? = null,
+        /** Why the last change failed, shown in the open editor (the snackbar is behind it). */
+        val formError: String? = null,
+        /** The fields the server said were wrong, each until it's edited. */
+        val fieldErrors: Map<String, String> = emptyMap(),
     )
 
     val state = MutableStateFlow(UiState())
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages = _messages.receiveAsFlow()
 
+    /** Only the Head of House chooses who supervises whom (the server checks it too). */
+    private fun isHead() = (session.state.value as? AuthState.SignedIn)?.user?.role == "head"
+
+    private suspend fun loadSupervision(): Supervision? =
+        if (isHead()) runCatching { api.supervision() }.getOrNull() else null
+
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true, error = null) }
         try {
             coroutineScope {
                 val name = async { runCatching { api.profile().householdName }.getOrNull() }
+                val supervision = async { loadSupervision() }
                 val members = api.memberAccounts()
-                state.update { it.copy(members = members, householdName = name.await() ?: it.householdName) }
+                state.update {
+                    it.copy(
+                        members = members,
+                        householdName = name.await() ?: it.householdName,
+                        supervision = supervision.await(),
+                    )
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -111,20 +142,48 @@ class MembersViewModel(private val session: SessionManager) : ViewModel() {
      */
     private fun act(success: String?, touchesMe: Boolean = false, onDone: () -> Unit = {}, block: suspend () -> Unit) {
         viewModelScope.launch {
-            state.update { it.copy(busy = true) }
+            state.update { it.copy(busy = true, formError = null, fieldErrors = emptyMap()) }
             try {
                 block()
                 onDone()
                 success?.let { _messages.send(it) }
                 runCatching { api.memberAccounts() }.onSuccess { m -> state.update { it.copy(members = m) } }
+                // Someone added, removed or re-roled changes the supervision list.
+                val supervision = loadSupervision()
+                state.update { it.copy(supervision = supervision) }
                 if (touchesMe) session.refreshUser()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _messages.send(e.message ?: "Something went wrong")
+                val message = e.message ?: "Something went wrong"
+                // The open editor shows why and marks the fields; the snackbar is for everything else.
+                state.update { it.copy(formError = message, fieldErrors = (e as? ApiException)?.fieldErrors.orEmpty()) }
+                _messages.send(message)
             } finally {
                 state.update { it.copy(busy = false) }
             }
+        }
+    }
+
+    /** A field was edited: what the server said about it no longer applies. */
+    fun clearFieldError(key: String) = state.update { it.copy(fieldErrors = it.fieldErrors - key) }
+
+    /** An editor opened or closed: start without the last one's errors. */
+    fun clearErrors() = state.update { it.copy(formError = null, fieldErrors = emptyMap()) }
+
+    /** Replaces who supervises one child or teen (Head of House), saved with each tick. */
+    fun setSupervisors(kid: MemberAccount, supervisorIds: List<String>) = viewModelScope.launch {
+        state.update { it.copy(savingSupervisors = kid.id to supervisorIds, formError = null) }
+        try {
+            val next = api.setSupervisors(kid.id, supervisorIds)
+            // Set before the saving state ends, so the boxes never flick back.
+            state.update { it.copy(supervision = next, savingSupervisors = null) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val message = e.message ?: "Couldn't save who supervises ${kid.name}"
+            state.update { it.copy(savingSupervisors = null, formError = message) }
+            _messages.send(message)
         }
     }
 
@@ -134,11 +193,19 @@ class MembersViewModel(private val session: SessionManager) : ViewModel() {
         _messages.send("Household renamed to “${household.name}”")
     }
 
-    fun add(name: String, username: String, email: String?, role: String, password: String, onDone: () -> Unit) =
-        act(null, onDone = onDone) {
-            val member = api.createMember(name, username, email, role, password)
-            state.update { it.copy(added = member) }
-        }
+    /** [supervisorIds]: who supervises a new child or teen (the Head's picks; empty for anyone else). */
+    fun add(
+        name: String,
+        username: String,
+        email: String?,
+        role: String,
+        password: String,
+        supervisorIds: List<String>,
+        onDone: () -> Unit,
+    ) = act(null, onDone = onDone) {
+        val member = api.createMember(name, username, email, role, password, supervisorIds)
+        state.update { it.copy(added = member) }
+    }
 
     fun dismissAdded() = state.update { it.copy(added = null) }
 
@@ -222,7 +289,7 @@ fun MembersScreen(
             }
 
             if (assignableRoles(user.role).isNotEmpty()) {
-                Button(onClick = { vm.dismissAdded(); adding = true }) { Text("Add a member") }
+                Button(onClick = { vm.dismissAdded(); vm.clearErrors(); adding = true }) { Text("Add a member") }
             }
             state.added?.let { added ->
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
@@ -243,7 +310,12 @@ fun MembersScreen(
                     val isSelf = m.id == user.id
                     // Anyone you manage, and yourself (your name, username, email).
                     val canOpen = isSelf || canManageMember(user.role, m.role)
-                    MemberRow(m, isSelf, onClick = if (canOpen) ({ editingId = m.id }) else null)
+                    MemberRow(
+                        m,
+                        isSelf,
+                        supervisedBy = state.supervision?.supervisedBy(m.id),
+                        onClick = if (canOpen) ({ vm.clearErrors(); editingId = m.id }) else null,
+                    )
                 }
             }
         }
@@ -255,20 +327,21 @@ fun MembersScreen(
         }
     }
     if (adding) {
-        AddMemberDialog(user.role, state.busy, vm, onClose = { adding = false })
+        AddMemberDialog(user.role, state, vm, onClose = { adding = false })
     }
     editingId?.let { id ->
         val member = state.members?.firstOrNull { it.id == id }
         if (member != null) {
-            MemberEditor(member, user, state.busy, vm, onClose = { editingId = null })
+            MemberEditor(member, user, state, vm, onClose = { editingId = null })
         } else {
             LaunchedEffect(id) { editingId = null }
         }
     }
 }
 
+/** [supervisedBy]: "Supervised by …" for a child or teen, shown to the Head of House; null otherwise. */
 @Composable
-private fun MemberRow(m: MemberAccount, isSelf: Boolean, onClick: (() -> Unit)?) {
+private fun MemberRow(m: MemberAccount, isSelf: Boolean, supervisedBy: String?, onClick: (() -> Unit)?) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -304,6 +377,15 @@ private fun MemberRow(m: MemberAccount, isSelf: Boolean, onClick: (() -> Unit)?)
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            supervisedBy?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(
@@ -342,18 +424,22 @@ private fun RenameDialog(current: String, busy: Boolean, onSave: (String) -> Uni
     )
 }
 
-/** A temporary password field with Generate and Copy, shared by add and reset. */
+/**
+ * A temporary password field with Generate and Copy, shared by add and reset.
+ * [error]: what's wrong with it (red, said under it); null shows the hint.
+ */
 @Composable
-private fun TempPasswordField(password: String, label: String, onChange: (String) -> Unit) {
-    val tooShort = password.isNotEmpty() && password.length < MIN_PASSWORD
+private fun TempPasswordField(password: String, label: String, error: String?, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = password,
         onValueChange = { onChange(it.take(128)) },
         label = { Text(label) },
         singleLine = true,
-        isError = tooShort,
+        isError = error != null,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        supportingText = { Text("At least $MIN_PASSWORD characters. They choose their own when they next sign in.") },
+        supportingText = {
+            Text(error ?: "At least $MIN_PASSWORD characters. They choose their own when they next sign in.")
+        },
         modifier = Modifier.fillMaxWidth(),
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -363,23 +449,45 @@ private fun TempPasswordField(password: String, label: String, onChange: (String
 }
 
 @Composable
-private fun AddMemberDialog(actorRole: String?, busy: Boolean, vm: MembersViewModel, onClose: () -> Unit) {
+private fun AddMemberDialog(actorRole: String?, state: MembersViewModel.UiState, vm: MembersViewModel, onClose: () -> Unit) {
     val roles = assignableRoles(actorRole)
     var name by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var role by remember { mutableStateOf(if ("adult" in roles) "adult" else roles.first()) }
     var password by remember { mutableStateOf("") }
-    val usernameOk = USERNAME_RE.matches(username.trim())
-    val emailOk = email.isBlank() || EMAIL_RE.matches(email.trim())
+    var supervisorIds by remember { mutableStateOf(emptyList<String>()) }
+    // Checked as they type, by the server's own rules; what the server said wins.
+    val errors = state.fieldErrors
+    val nameError = errors["name"]
+    val usernameError = errors["username"] ?: usernameProblem(username)
+    val emailError = errors["email"] ?: emailProblem(email)
+    val passwordError = errors["password"] ?: passwordProblem(password)
+    val roleError = errors["role"]
+    val supervisorsError = errors["supervisorIds"]
+    // Only a child or teen is supervised, and only the Head chooses who by.
+    val supervised = canBeSupervised(role)
+    val supervision = state.supervision
 
     EditorDialog(
         title = "Add a member",
-        saving = busy,
-        saveEnabled = name.isNotBlank() && usernameOk && emailOk && password.length >= MIN_PASSWORD,
-        onDismiss = onClose,
-        onSave = { vm.add(name.trim(), username.trim(), email.trim().ifEmpty { null }, role, password, onClose) },
+        saving = state.busy,
+        saveEnabled = name.isNotBlank() && username.isNotBlank() && password.isNotEmpty() &&
+            listOf(nameError, usernameError, emailError, passwordError, roleError, supervisorsError).all { it == null },
+        onDismiss = { vm.clearErrors(); onClose() },
+        onSave = {
+            vm.add(
+                name.trim(),
+                username.trim(),
+                email.trim().ifEmpty { null },
+                role,
+                password,
+                if (supervised && supervision != null) supervisorIds else emptyList(),
+                onClose,
+            )
+        },
         saveLabel = "Add",
+        error = state.formError,
     ) {
         Text(
             "They sign in with a username and the temporary password you set, then choose their own.",
@@ -388,42 +496,112 @@ private fun AddMemberDialog(actorRole: String?, busy: Boolean, vm: MembersViewMo
         )
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it.take(NAME_MAX) },
+            onValueChange = { name = it.take(NAME_MAX); vm.clearFieldError("name") },
             label = { Text("Name") },
             placeholder = { Text("e.g. Jordan") },
             singleLine = true,
+            isError = nameError != null,
+            supportingText = nameError?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
-        UsernameField(username, usernameOk) { username = it }
-        EmailField(email, emailOk, optional = true) { email = it }
-        DropdownField("Role", roles.map { it to (ROLE_LABELS[it] ?: it) }, role, { role = it })
-        TempPasswordField(password, "Temporary password") { password = it }
+        UsernameField(username, usernameError) { username = it; vm.clearFieldError("username") }
+        EmailField(email, emailError, optional = true) { email = it; vm.clearFieldError("email") }
+        DropdownField("Role", roles.map { it to (ROLE_LABELS[it] ?: it) }, role, { role = it; vm.clearFieldError("role") })
+        roleError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        if (supervised) {
+            FieldLabel("Who supervises them")
+            if (supervision == null) {
+                Text(
+                    "The Head of House chooses who supervises them.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                SupervisorChecks(
+                    supervision.supervisors,
+                    checked = supervisorIds,
+                    enabled = !state.busy,
+                    onToggle = { id ->
+                        supervisorIds = if (id in supervisorIds) supervisorIds - id else supervisorIds + id
+                        vm.clearFieldError("supervisorIds")
+                    },
+                )
+                Text(
+                    supervisorsError ?: SUPERVISION_HINT,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (supervisorsError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        TempPasswordField(password, "Temporary password", passwordError) { password = it; vm.clearFieldError("password") }
     }
 }
 
+/** What every supervisor picker says: only the ticked adults get the controls (web: SUPERVISION_HINT). */
+private const val SUPERVISION_HINT =
+    "Only the adults ticked here can change their phone rules and get alerts about their phone. Only the Head of " +
+        "House can change this, so nobody can add themselves."
+
+/** One tick box per adult who may supervise. */
 @Composable
-private fun UsernameField(value: String, ok: Boolean, onChange: (String) -> Unit) {
+private fun SupervisorChecks(
+    supervisors: List<SupervisionPerson>,
+    checked: List<String>,
+    enabled: Boolean,
+    onToggle: (String) -> Unit,
+) {
+    if (supervisors.isEmpty()) {
+        Text("Nobody in the household can supervise yet.", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+    Column {
+        supervisors.forEach { s ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = enabled) { onToggle(s.id) },
+            ) {
+                Checkbox(checked = s.id in checked, onCheckedChange = { onToggle(s.id) }, enabled = enabled)
+                Text(s.name, modifier = Modifier.weight(1f))
+                Text(
+                    ROLE_LABELS[s.role] ?: s.role,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+/** [error]: what's wrong with it (red, said under it); null shows the hint. */
+@Composable
+private fun UsernameField(value: String, error: String?, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = { onChange(it.take(30)) },
         label = { Text("Username") },
         placeholder = { Text("e.g. jordan") },
         singleLine = true,
-        isError = value.isNotEmpty() && !ok,
-        supportingText = { Text("3-30 letters, numbers, and . _ -") },
+        isError = error != null,
+        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii),
+        supportingText = { Text(error ?: "3 to 30 letters, numbers or . _ - (no spaces).") },
         modifier = Modifier.fillMaxWidth(),
     )
 }
 
+/** [error]: what's wrong with it (red, said under it). */
 @Composable
-private fun EmailField(value: String, ok: Boolean, optional: Boolean, onChange: (String) -> Unit) {
+private fun EmailField(value: String, error: String?, optional: Boolean, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = { onChange(it.take(160)) },
         label = { Text(if (optional) "Email (optional)" else "Email") },
         placeholder = { Text("for password recovery") },
         singleLine = true,
-        isError = !ok,
+        isError = error != null,
+        supportingText = error?.let { { Text(it) } },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
         modifier = Modifier.fillMaxWidth(),
     )
@@ -434,7 +612,8 @@ private fun EmailField(value: String, ok: Boolean, optional: Boolean, onChange: 
  * signed-in user may do to them, as on the web's member row.
  */
 @Composable
-private fun MemberEditor(member: MemberAccount, user: SessionUser, busy: Boolean, vm: MembersViewModel, onClose: () -> Unit) {
+private fun MemberEditor(member: MemberAccount, user: SessionUser, state: MembersViewModel.UiState, vm: MembersViewModel, onClose: () -> Unit) {
+    val busy = state.busy
     val isSelf = member.id == user.id
     val isHead = member.role == "head"
     val manageable = canManageMember(user.role, member.role)
@@ -456,30 +635,38 @@ private fun MemberEditor(member: MemberAccount, user: SessionUser, busy: Boolean
     val usernameChange = username.trim().takeIf { it.isNotEmpty() && it != member.username.orEmpty() }
     // Your own email changes on Profile, which asks for your password first.
     val emailChange = email.trim().takeIf { !isSelf && it.isNotEmpty() && !it.equals(member.email, ignoreCase = true) }
-    val usernameOk = username.isBlank() || USERNAME_RE.matches(username.trim())
-    val emailOk = email.isBlank() || EMAIL_RE.matches(email.trim())
+    // Checked as they type, by the server's own rules; what the server said wins.
+    val nameError = state.fieldErrors["name"]
+    val usernameError = state.fieldErrors["username"] ?: usernameProblem(username)
+    val emailError = state.fieldErrors["email"] ?: emailProblem(email)
+    val passwordError = state.fieldErrors["password"] ?: passwordProblem(newPassword)
+    // Who supervises a child or teen: the Head only (state.supervision is loaded only for them).
+    val kid = state.supervision?.supervised?.firstOrNull { it.id == member.id }
 
     EditorDialog(
         title = member.name,
         saving = busy,
-        saveEnabled = name.isNotBlank() && usernameOk && emailOk &&
+        saveEnabled = name.isNotBlank() && nameError == null && usernameError == null && emailError == null &&
             (nameChange != null || usernameChange != null || emailChange != null),
-        onDismiss = onClose,
+        onDismiss = { vm.clearErrors(); onClose() },
         onSave = { vm.save(member, nameChange, usernameChange, emailChange, isSelf, onClose) },
         deleteLabel = "Remove from household",
         onDelete = if (canRemove) ({ vm.remove(member, onClose) }) else null,
+        error = state.formError,
     ) {
         FieldLabel("Profile")
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it.take(NAME_MAX) },
+            onValueChange = { name = it.take(NAME_MAX); vm.clearFieldError("name") },
             label = { Text("Name") },
             singleLine = true,
+            isError = nameError != null,
+            supportingText = nameError?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
-        UsernameField(username, usernameOk) { username = it }
+        UsernameField(username, usernameError) { username = it; vm.clearFieldError("username") }
         if (!isSelf) {
-            EmailField(email, emailOk, optional = false) { email = it }
+            EmailField(email, emailError, optional = false) { email = it; vm.clearFieldError("email") }
         } else {
             Text(
                 "To change your own email or password, use your Profile.",
@@ -504,6 +691,21 @@ private fun MemberEditor(member: MemberAccount, user: SessionUser, busy: Boolean
             )
         }
 
+        if (kid != null) {
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            val saving = state.savingSupervisors?.takeIf { it.first == member.id }
+            // While saving, show the boxes as they're being saved.
+            val checked = saving?.second ?: kid.supervisorIds
+            FieldLabel("Who supervises them")
+            SupervisorChecks(
+                state.supervision?.supervisors.orEmpty(),
+                checked = checked,
+                enabled = saving == null,
+                onToggle = { id -> vm.setSupervisors(member, if (id in checked) checked - id else checked + id) },
+            )
+            Text(SUPERVISION_HINT, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
         if (canResetPassword) {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             FieldLabel("Reset password")
@@ -512,10 +714,13 @@ private fun MemberEditor(member: MemberAccount, user: SessionUser, busy: Boolean
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TempPasswordField(newPassword, "New temporary password") { newPassword = it }
+            TempPasswordField(newPassword, "New temporary password", passwordError) {
+                newPassword = it
+                vm.clearFieldError("password")
+            }
             OutlinedButton(
                 onClick = { vm.resetPassword(member, newPassword) { newPassword = "" } },
-                enabled = newPassword.length >= MIN_PASSWORD && !busy,
+                enabled = newPassword.isNotEmpty() && passwordError == null && !busy,
             ) { Text("Set password") }
         }
 

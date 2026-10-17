@@ -101,6 +101,12 @@ private val REPEAT_KINDS = listOf(
 )
 private val WEEKDAY_LABELS = listOf("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa")
 
+/** The keys the server reports a task's location under. */
+private val PLACE_KEYS = listOf("roomIds", "floorIds", "roomId", "floorId")
+
+/** The keys the server reports the task's time and points under. */
+private val POINTS_KEYS = listOf("estimatedMinutes", "points", "pointsFollowTime")
+
 /** Amber outline for values set by hand (the web marks them the same way). */
 private val CustomColor = Color(0xFFF59E0B)
 
@@ -120,6 +126,8 @@ internal fun TaskEditor(
     /** Floors and rooms for the Location picker; null while loading (or unreadable). */
     places: Places?,
     saving: Boolean,
+    /** The last save failure: said at the top, and the fields the server named marked. */
+    errors: FormErrors,
     /** False when the user may only delete this task, not change it. */
     canSave: Boolean,
     /** False when the server admin turned Points off: only time shows (points still follow it). */
@@ -234,38 +242,49 @@ internal fun TaskEditor(
         },
         deleteLabel = "Delete task",
         onDelete = onDelete,
+        error = errors.message,
     ) {
         OutlinedTextField(
             value = title,
-            onValueChange = { title = it },
+            onValueChange = { title = it; errors.clear("title") },
             label = { Text("Title") },
             placeholder = { Text("e.g. Take the trash out") },
             singleLine = true,
+            isError = errors["title"] != null,
+            supportingText = errors["title"]?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = notes,
-            onValueChange = { notes = it },
+            onValueChange = { notes = it; errors.clear("notes") },
             label = { Text("Notes") },
             placeholder = { Text("Optional details…") },
             minLines = 2,
+            isError = errors["notes"] != null,
+            supportingText = errors["notes"]?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             modifier = Modifier.fillMaxWidth(),
         )
-        DropdownField("Type", TASK_TYPES, type, onSelect = { type = it })
+        DropdownField("Type", TASK_TYPES, type, onSelect = { type = it; errors.clear("type") }, error = errors["type"])
         FieldLabel("Priority")
-        ChoiceChips(TASK_PRIORITIES, priority) { priority = it }
-        DateField("Due date", dueDate) { dueDate = it; if (it == null) dueTime = null }
+        ChoiceChips(TASK_PRIORITIES, priority) { priority = it; errors.clear("priority") }
+        FieldError(errors["priority"])
+        DateField("Due date", dueDate, errors["dueDate"]) {
+            dueDate = it
+            if (it == null) dueTime = null
+            errors.clear("dueDate")
+        }
         // The web disables the time until a date is picked; here it's hidden.
-        if (dueDate != null) TimeField("Due time", dueTime) { dueTime = it }
+        if (dueDate != null) TimeField("Due time", dueTime) { dueTime = it; errors.clear("dueDate") }
         // Until the lists load, offer the task's current value so it still shows.
         if (rotating) {
             DropdownField(
                 "Whose turn now",
                 rotation.map { it to (memberNames[it] ?: "Member") },
                 currentTurn,
-                onSelect = { assigneeId = it },
+                onSelect = { assigneeId = it; errors.clear("assigneeId") },
+                error = errors["assigneeId"],
             )
         } else {
             DropdownField(
@@ -273,7 +292,8 @@ internal fun TaskEditor(
                 listOf("" to "Unassigned") + (members?.map { it.id to it.name }
                     ?: listOfNotNull(task?.assignee?.let { it.id to (it.name ?: "Member") })),
                 assigneeId,
-                onSelect = { assigneeId = it },
+                onSelect = { assigneeId = it; errors.clear("assigneeId") },
+                error = errors["assigneeId"],
             )
         }
         DropdownField(
@@ -281,13 +301,16 @@ internal fun TaskEditor(
             listOf("" to "None") + (categories?.map { it.id to it.name }
                 ?: listOfNotNull(task?.category?.let { it.id to it.name })),
             categoryId,
-            onSelect = { categoryId = it },
+            onSelect = { categoryId = it; errors.clear("categoryId") },
+            error = errors["categoryId"],
         )
         // Rooms are set up in Settings → Rooms & floors (here or on the website).
         if (places?.isEmpty == false) {
             LocationChips(places, placeValues) { value ->
                 placeValues = if (value in placeValues) placeValues - value else placeValues + value
+                PLACE_KEYS.forEach(errors::clear)
             }
+            FieldError(PLACE_KEYS.firstNotNullOfOrNull { errors[it] })
         }
 
         if (recurring) {
@@ -296,10 +319,12 @@ internal fun TaskEditor(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    DropdownField("Repeats", REPEAT_KINDS, repeatKind, onSelect = { repeatKind = it })
+                    // The server reports anything in the repeat rule under "recurrence".
+                    FieldError(errors["recurrence"])
+                    DropdownField("Repeats", REPEAT_KINDS, repeatKind, onSelect = { repeatKind = it; errors.clear("recurrence") })
                     OutlinedTextField(
                         value = interval,
-                        onValueChange = { v -> interval = v.filter(Char::isDigit) },
+                        onValueChange = { v -> interval = v.filter(Char::isDigit); errors.clear("recurrence") },
                         label = {
                             Text(
                                 when (repeatKind) {
@@ -318,10 +343,11 @@ internal fun TaskEditor(
                         FieldLabel("On days (optional)")
                         DayToggleRow(WEEKDAY_LABELS.indices.toList(), weekdays, { WEEKDAY_LABELS[it] }) { day ->
                             weekdays = if (day in weekdays) weekdays - day else weekdays + day
+                            errors.clear("recurrence")
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { weekdays = setOf(1, 2, 3, 4, 5) }) { Text("Weekdays") }
-                            OutlinedButton(onClick = { weekdays = setOf(0, 6) }) { Text("Weekend") }
+                            OutlinedButton(onClick = { weekdays = setOf(1, 2, 3, 4, 5); errors.clear("recurrence") }) { Text("Weekdays") }
+                            OutlinedButton(onClick = { weekdays = setOf(0, 6); errors.clear("recurrence") }) { Text("Weekend") }
                         }
                     }
                     if (repeatKind == "monthly") {
@@ -329,26 +355,37 @@ internal fun TaskEditor(
                         (1..31).chunked(7).forEach { week ->
                             DayToggleRow(week, monthdays, { it.toString() }, columns = 7) { day ->
                                 monthdays = if (day in monthdays) monthdays - day else monthdays + day
+                                errors.clear("recurrence")
                             }
                         }
                     }
-                    DateField("Ends on (optional)", until) { until = it }
+                    DateField("Ends on (optional)", until) { until = it; errors.clear("recurrence") }
                     RotationSection(
                         members = members ?: task?.rotation?.map { Member(it.id, it.name ?: "Member") }.orEmpty(),
                         rotation = rotation,
                         rollover = rollover,
-                        onToggle = { id -> rotation = if (id in rotation) rotation - id else rotation + id },
-                        onClear = { rotation = emptyList() },
+                        onToggle = { id ->
+                            rotation = if (id in rotation) rotation - id else rotation + id
+                            errors.clear("rotationUserIds")
+                        },
+                        onClear = { rotation = emptyList(); errors.clear("rotationUserIds") },
                     )
+                    FieldError(errors["rotationUserIds"])
                     CycleSection(
                         repeatKind = repeatKind,
                         interval = intervalValue ?: 1,
                         rollover = rollover,
-                        onRollover = { rollover = it },
+                        onRollover = { rollover = it; errors.clear("recurrence") },
                         weekdays = cycleWeekdays,
-                        onWeekday = { d -> cycleWeekdays = if (d in cycleWeekdays) cycleWeekdays - d else cycleWeekdays + d },
+                        onWeekday = { d ->
+                            cycleWeekdays = if (d in cycleWeekdays) cycleWeekdays - d else cycleWeekdays + d
+                            errors.clear("recurrence")
+                        },
                         monthdays = cycleMonthdays,
-                        onMonthday = { d -> cycleMonthdays = if (d in cycleMonthdays) cycleMonthdays - d else cycleMonthdays + d },
+                        onMonthday = { d ->
+                            cycleMonthdays = if (d in cycleMonthdays) cycleMonthdays - d else cycleMonthdays + d
+                            errors.clear("recurrence")
+                        },
                         valid = cycleValid,
                     )
                 }
@@ -359,14 +396,18 @@ internal fun TaskEditor(
             points = points,
             minutesPerPoint = minutesPerPoint,
             showPoints = showPoints,
-            onChange = { points = it },
+            onChange = { points = it; POINTS_KEYS.forEach(errors::clear) },
             onTotalEdit = { what, run ->
                 val r = run(false)
                 if (r.needsConfirm) pendingTotal = what to run else points = r.state
+                POINTS_KEYS.forEach(errors::clear)
             },
         )
+        FieldError(POINTS_KEYS.firstNotNullOfOrNull { errors[it] })
 
         FieldLabel(if (task == null) "Checklist (optional)" else "Checklist")
+        // The server reports anything in the steps under "subtasks", saying which step.
+        FieldError(errors["subtasks"])
         steps.forEachIndexed { index, step ->
             // Keyed by the step, so a row's typed text and focus move with it.
             key(step.key) {
@@ -377,7 +418,7 @@ internal fun TaskEditor(
                     isFirst = index == 0,
                     isLast = index == steps.lastIndex,
                     showPoints = showPoints,
-                    onChange = { steps[index] = it },
+                    onChange = { steps[index] = it; errors.clear("subtasks") },
                     onMinutes = { m -> points = setStepMinutes(points, index, m, minutesPerPoint) },
                     onPoints = { c -> points = setStepPoints(points, index, c) },
                     onFollow = { on -> points = setStepFollow(points, index, on, minutesPerPoint) },

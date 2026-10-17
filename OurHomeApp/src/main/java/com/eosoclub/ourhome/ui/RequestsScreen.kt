@@ -127,20 +127,29 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
+    /** The open editor's (or the accept date picker's) last failure: why, and which fields to mark. */
+    val form = FormErrors()
+
     fun startCreate() {
+        form.clear()
         state.update { it.copy(creating = true, editing = null) }
         loadMembers()
     }
 
     fun startEdit(r: HouseholdRequest) {
+        form.clear()
         state.update { it.copy(editing = r, creating = false) }
         if (r.category == "maintenance") loadMembers()
     }
 
-    fun closeEditor() = state.update { it.copy(editing = null, creating = false) }
+    fun closeEditor() {
+        form.clear()
+        state.update { it.copy(editing = null, creating = false) }
+    }
 
     fun save(id: String?, edit: RequestEdit) = viewModelScope.launch {
         state.update { it.copy(saving = true) }
+        form.clear()
         try {
             val saved = when (edit) {
                 is RequestEdit.Media -> api.saveMediaRequest(id, edit.mediaType, edit.title, edit.year, edit.season)
@@ -156,7 +165,8 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
             )
             refresh()
         } catch (e: Exception) {
-            _messages.send(e.message ?: "Couldn't save request")
+            // Shown in the editor, which sits over the snackbar.
+            form.fail(e, "Couldn't save request")
         } finally {
             state.update { it.copy(saving = false) }
         }
@@ -164,23 +174,31 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
 
     fun delete(r: HouseholdRequest) = viewModelScope.launch {
         state.update { it.copy(saving = true) }
+        form.clear()
         try {
             api.deleteRequest(r.id)
             state.update { s -> s.copy(requests = s.requests.filterNot { it.id == r.id }) }
             closeEditor()
             _messages.send("Request removed")
         } catch (e: Exception) {
-            _messages.send(e.message ?: "Couldn't remove request")
+            form.fail(e, "Couldn't remove request")
         } finally {
             state.update { it.copy(saving = false) }
         }
     }
 
-    fun startAccept(r: HouseholdRequest) = state.update { it.copy(accepting = r) }
-    fun cancelAccept() = state.update { it.copy(accepting = null) }
+    fun startAccept(r: HouseholdRequest) {
+        form.clear()
+        state.update { it.copy(accepting = r) }
+    }
+
+    fun cancelAccept() {
+        form.clear()
+        state.update { it.copy(accepting = null) }
+    }
 
     /** Assignee commits to a done-by date - the request's deadline. */
-    fun accept(r: HouseholdRequest, date: LocalDate) = runBusy(r) {
+    fun accept(r: HouseholdRequest, date: LocalDate) = runBusy(r, inDialog = true) {
         val updated = api.acceptRequest(r.id, dueInstant(date, null)!!)
         replace(updated)
         state.update { it.copy(accepting = null) }
@@ -193,12 +211,15 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         _messages.send(if (r.category == "media") "Added “${r.title}”" else "Marked “${r.title}” done")
     }
 
-    private fun runBusy(r: HouseholdRequest, block: suspend () -> Unit) = viewModelScope.launch {
+    /** [inDialog]: the failure is shown in the open date picker, which covers the snackbar. */
+    private fun runBusy(r: HouseholdRequest, inDialog: Boolean = false, block: suspend () -> Unit) = viewModelScope.launch {
         state.update { it.copy(busy = it.busy + r.id) }
+        if (inDialog) form.clear()
         try {
             block()
         } catch (e: Exception) {
-            _messages.send(e.message ?: "Couldn't update request")
+            if (inDialog) form.fail(e, "Couldn't update request")
+            else _messages.send(e.message ?: "Couldn't update request")
         } finally {
             state.update { it.copy(busy = it.busy - r.id) }
         }
@@ -308,6 +329,7 @@ fun RequestsScreen(
             assignees = state.members?.filterNot { it.id == user.id },
             assigneesError = state.membersError,
             saving = state.saving,
+            errors = vm.form,
             onDismiss = vm::closeEditor,
             onSave = { edit -> vm.save(state.editing?.id, edit) },
             onDelete = state.editing?.let { r -> { vm.delete(r) } },
@@ -318,6 +340,8 @@ fun RequestsScreen(
         AcceptDatePicker(
             rescheduling = r.status == "accepted",
             initial = r.dueAt?.let(::localDate),
+            error = vm.form["dueAt"] ?: vm.form.message,
+            busy = r.id in state.busy,
             onDismiss = vm::cancelAccept,
             onPick = { date -> vm.accept(r, date) },
         )
@@ -471,12 +495,17 @@ private fun MaintenanceCard(
     }
 }
 
-/** The assignee picks their done-by date; past days can't be chosen. */
+/**
+ * The assignee picks their done-by date; past days can't be chosen. Stays
+ * open until it's saved; [error] says why it wasn't (the snackbar is behind).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AcceptDatePicker(
     rescheduling: Boolean,
     initial: LocalDate?,
+    error: String?,
+    busy: Boolean,
     onDismiss: () -> Unit,
     onPick: (LocalDate) -> Unit,
 ) {
@@ -492,7 +521,7 @@ private fun AcceptDatePicker(
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(
-                enabled = state.selectedDateMillis != null,
+                enabled = state.selectedDateMillis != null && !busy,
                 onClick = {
                     state.selectedDateMillis?.let { onPick(Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()) }
                 },
@@ -503,11 +532,12 @@ private fun AcceptDatePicker(
         DatePicker(
             state = state,
             title = {
-                Text(
-                    "When will you have it done?",
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp),
-                )
+                Column(Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp)) {
+                    Text("When will you have it done?", style = MaterialTheme.typography.labelLarge)
+                    if (error != null) {
+                        Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                }
             },
         )
     }
@@ -524,6 +554,8 @@ private fun RequestEditor(
     assignees: List<Member>?,
     assigneesError: String?,
     saving: Boolean,
+    /** The last save failure: said at the top, and the fields the server named marked. */
+    errors: FormErrors,
     onDismiss: () -> Unit,
     onSave: (RequestEdit) -> Unit,
     onDelete: (() -> Unit)?,
@@ -563,45 +595,58 @@ private fun RequestEditor(
         },
         deleteLabel = "Remove request",
         onDelete = onDelete,
+        error = errors.message,
     ) {
+        // Why each is red: the server's word first, then what's checked here.
+        val seasonError = errors["season"] ?: if (!seasonValid) "Enter a season from 1 to 100, or leave it blank." else null
+        val yearError = errors["year"] ?: if (year.isNotEmpty() && yearValue == null) "Enter a 4-digit year from 1870 to 2100." else null
         if (initial == null) {
-            DropdownField("What would you like to request?", CATEGORIES, category, { category = it })
+            DropdownField(
+                "What would you like to request?",
+                CATEGORIES,
+                category,
+                { category = it; errors.clear("category") },
+                error = errors["category"],
+            )
         } else {
             FieldLabel(CATEGORIES.firstOrNull { it.first == category }?.second ?: category)
         }
 
         if (category == "media") {
-            DropdownField("Type of media", MEDIA_TYPES, mediaType, { mediaType = it })
+            DropdownField("Type of media", MEDIA_TYPES, mediaType, { mediaType = it; errors.clear("mediaType") }, error = errors["mediaType"])
         }
         if (category == "media" && mediaType.isNotEmpty()) {
             OutlinedTextField(
                 value = title,
-                onValueChange = { title = it },
+                onValueChange = { title = it; errors.clear("title") },
                 label = { Text("Name") },
                 placeholder = { Text(if (mediaType == "tv") "e.g. Severance" else "e.g. Dune") },
                 singleLine = true,
+                isError = errors["title"] != null,
+                supportingText = errors["title"]?.let { { Text(it) } },
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                 modifier = Modifier.fillMaxWidth(),
             )
             if (mediaType == "tv") {
                 OutlinedTextField(
                     value = season,
-                    onValueChange = { season = it.filter(Char::isDigit).take(3) },
+                    onValueChange = { season = it.filter(Char::isDigit).take(3); errors.clear("season") },
                     label = { Text("Season (optional)") },
-                    supportingText = { Text("Leave blank to request the whole show.") },
+                    supportingText = { Text(seasonError ?: "Leave blank to request the whole show.") },
                     singleLine = true,
-                    isError = !seasonValid,
+                    isError = seasonError != null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
             OutlinedTextField(
                 value = year,
-                onValueChange = { year = it.filter(Char::isDigit).take(4) },
+                onValueChange = { year = it.filter(Char::isDigit).take(4); errors.clear("year") },
                 label = { Text(yearLabel) },
                 placeholder = { Text("YYYY") },
                 singleLine = true,
-                isError = year.isNotEmpty() && yearValue == null,
+                isError = yearError != null,
+                supportingText = yearError?.let { { Text(it) } },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -610,18 +655,22 @@ private fun RequestEditor(
         if (category == "maintenance") {
             OutlinedTextField(
                 value = title,
-                onValueChange = { title = it },
+                onValueChange = { title = it; errors.clear("title") },
                 label = { Text("What needs doing?") },
                 placeholder = { Text("e.g. Fix the leaky kitchen faucet") },
                 singleLine = true,
+                isError = errors["title"] != null,
+                supportingText = errors["title"]?.let { { Text(it) } },
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
                 value = details,
-                onValueChange = { details = it },
+                onValueChange = { details = it; errors.clear("details") },
                 label = { Text("Details (optional)") },
                 minLines = 2,
+                isError = errors["details"] != null,
+                supportingText = errors["details"]?.let { { Text(it) } },
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -637,8 +686,9 @@ private fun RequestEditor(
                     "Who should do it?",
                     assignees.map { it.id to it.name },
                     assigneeId,
-                    { assigneeId = it },
+                    { assigneeId = it; errors.clear("assigneeId") },
                     placeholder = "Choose someone…",
+                    error = errors["assigneeId"],
                 )
                 if (initial?.status == "accepted" && assigneeId != initial.assignee?.id) {
                     Text(

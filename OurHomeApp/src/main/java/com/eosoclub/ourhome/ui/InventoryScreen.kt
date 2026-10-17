@@ -131,20 +131,31 @@ class InventoryViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
-    fun startEdit(item: InventoryItem) = state.update { it.copy(editing = item) }
+    /** The open editor's last save failure: why, and which fields to mark. */
+    val form = FormErrors()
 
-    fun cancelEdit() = state.update { it.copy(editing = null) }
+    fun startEdit(item: InventoryItem) {
+        form.clear()
+        state.update { it.copy(editing = item) }
+    }
+
+    fun cancelEdit() {
+        form.clear()
+        state.update { it.copy(editing = null) }
+    }
 
     /** [place]: a picker value, or null to leave it (no rooms to pick from). */
     fun save(item: InventoryItem, name: String, unit: String?, quantity: Double, lowThreshold: Double, reorderDays: Int?, place: String?) =
         viewModelScope.launch {
             state.update { it.copy(saving = true) }
+            form.clear()
             try {
                 val updated = api.updateInventoryItem(item.id, name, unit, quantity, lowThreshold, reorderDays, place)
                 replace(item.id) { updated }
                 state.update { it.copy(editing = null) }
             } catch (e: Exception) {
-                _messages.send(e.message ?: "Couldn't save ${item.name}")
+                // Shown in the editor, which sits over the snackbar.
+                form.fail(e, "Couldn't save ${item.name}")
             } finally {
                 state.update { it.copy(saving = false) }
             }
@@ -152,12 +163,13 @@ class InventoryViewModel(private val api: ApiClient) : ViewModel() {
 
     fun delete(item: InventoryItem) = viewModelScope.launch {
         state.update { it.copy(saving = true) }
+        form.clear()
         try {
             api.deleteInventoryItem(item.id)
             state.update { s -> s.copy(items = s.items.filterNot { it.id == item.id }, editing = null) }
             _messages.send("Deleted ${item.name}")
         } catch (e: Exception) {
-            _messages.send(e.message ?: "Couldn't delete ${item.name}")
+            form.fail(e, "Couldn't delete ${item.name}")
         } finally {
             state.update { it.copy(saving = false) }
         }
@@ -190,6 +202,7 @@ fun InventoryScreen(
             item = item,
             places = places,
             saving = state.saving,
+            errors = vm.form,
             canSave = access.canEdit(item.createdById, userId),
             onDismiss = vm::cancelEdit,
             onSave = { name, unit, qty, low, days, place -> vm.save(item, name, unit, qty, low, days, place) },
@@ -396,6 +409,8 @@ private fun InventoryItemEditor(
     /** Null (none set up, or not loaded) hides the "Kept in" picker. */
     places: Places?,
     saving: Boolean,
+    /** The last save failure: said at the top, and the fields the server named marked. */
+    errors: FormErrors,
     /** False when the user may only delete this item, not change it. */
     canSave: Boolean,
     onDismiss: () -> Unit,
@@ -414,6 +429,11 @@ private fun InventoryItemEditor(
     val lowValue = low.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0 }
     val daysValue = days.toIntOrNull()
     val daysValid = days.isBlank() || daysValue in 1..3650
+    // Why each is red: the server's word first, then what's checked here.
+    val quantityError = errors["quantity"] ?: if (qty == null) "Enter 0 or more." else null
+    val lowError = errors["lowThreshold"] ?: if (lowValue == null) "Enter 0 or more." else null
+    val daysError = errors["reorderIntervalDays"] ?: if (!daysValid) "Enter 1 to 3650 days, or leave it blank." else null
+    val placeError = PLACE_KEYS.firstNotNullOfOrNull { errors[it] }
 
     EditorDialog(
         title = if (canSave) "Edit item" else "Item",
@@ -423,51 +443,68 @@ private fun InventoryItemEditor(
         onSave = { onSave(name.trim(), unit.trim().ifEmpty { null }, qty!!, lowValue!!, daysValue, place.takeIf { places != null }) },
         deleteLabel = "Delete item",
         onDelete = onDelete,
+        error = errors.message,
     ) {
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it },
+            onValueChange = { name = it; errors.clear("name") },
             label = { Text("Name") },
             singleLine = true,
+            isError = errors["name"] != null,
+            supportingText = errors["name"]?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = unit,
-            onValueChange = { unit = it },
+            onValueChange = { unit = it; errors.clear("unit") },
             label = { Text("Unit") },
             placeholder = { Text("e.g. rolls, lbs") },
             singleLine = true,
+            isError = errors["unit"] != null,
+            supportingText = errors["unit"]?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = quantity,
-            onValueChange = { quantity = it },
+            onValueChange = { quantity = it; errors.clear("quantity") },
             label = { Text("Quantity on hand") },
             singleLine = true,
-            isError = qty == null,
+            isError = quantityError != null,
+            supportingText = quantityError?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = low,
-            onValueChange = { low = it },
+            onValueChange = { low = it; errors.clear("lowThreshold") },
             label = { Text("Low-stock threshold") },
-            supportingText = { Text("Flagged as low at or below this amount.") },
+            supportingText = { Text(lowError ?: "Flagged as low at or below this amount.") },
             singleLine = true,
-            isError = lowValue == null,
+            isError = lowError != null,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = days,
-            onValueChange = { days = it.filter(Char::isDigit).take(4) },
+            onValueChange = { days = it.filter(Char::isDigit).take(4); errors.clear("reorderIntervalDays") },
             label = { Text("Reorder every (days)") },
-            supportingText = { Text("Optional. Drives the “runs out” forecast.") },
+            supportingText = { Text(daysError ?: "Optional. Drives the “runs out” forecast.") },
             singleLine = true,
-            isError = !daysValid,
+            isError = daysError != null,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
         )
-        if (places != null) DropdownField("Kept in", places.choices(none = "Not set"), place, { place = it })
+        if (places != null) {
+            DropdownField(
+                "Kept in",
+                places.choices(none = "Not set"),
+                place,
+                { place = it; PLACE_KEYS.forEach(errors::clear) },
+                error = placeError,
+            )
+        }
     }
 }
+
+/** The keys the server reports an item's place under. */
+private val PLACE_KEYS = listOf("roomId", "floorId")
