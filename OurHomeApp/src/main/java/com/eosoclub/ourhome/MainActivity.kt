@@ -114,6 +114,8 @@ class MainActivity : ComponentActivity() {
                 NfcAdapter.FLAG_READER_NFC_F or NfcAdapter.FLAG_READER_NFC_V,
             null,
         )
+        // Back from allowing notifications: Stay connected's notification says how it is now.
+        StayConnected.refreshIfStale(this)
     }
 
     override fun onPause() {

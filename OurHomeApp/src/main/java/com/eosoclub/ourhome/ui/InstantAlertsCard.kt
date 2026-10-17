@@ -16,6 +16,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -81,6 +82,11 @@ internal fun InstantAlertsCard(session: SessionManager, showMessage: (String) ->
     // Re-read on return from Android's battery question, Device admin prompt, or settings.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         refreshLocalState()
+    }
+    // An alert arrived while this is open (a test, for instance): say so straight away.
+    val received by Push.received.collectAsStateWithLifecycle()
+    LaunchedEffect(received) {
+        if (received > 0) lastPush = Push.lastReceived(context)
     }
     fun open(intent: Intent) {
         try {

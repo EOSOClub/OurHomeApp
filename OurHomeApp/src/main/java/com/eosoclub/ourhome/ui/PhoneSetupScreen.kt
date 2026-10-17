@@ -54,6 +54,7 @@ import com.eosoclub.ourhome.location.Geofences
 import com.eosoclub.ourhome.notifications.BatteryAccess
 import com.eosoclub.ourhome.notifications.CloseGuard
 import com.eosoclub.ourhome.notifications.PhoneCheckIn
+import com.eosoclub.ourhome.notifications.RequestReminders
 import com.eosoclub.ourhome.notifications.UsageReport
 import kotlinx.coroutines.CancellationException
 
@@ -146,7 +147,11 @@ internal fun PhoneSetupScreen(
 
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         recheck()
-        if (!granted) showMessage("Notifications are still off. Use Open notification settings to turn them on.")
+        if (granted) {
+            RequestReminders.notificationsAllowed(context)
+        } else {
+            showMessage("Notifications are still off. Use Open notification settings to turn them on.")
+        }
     }
     val askLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         recheck()

@@ -95,6 +95,21 @@ object RequestReminders {
             .enqueueUniqueWork(NOW_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
     }
 
+    /**
+     * Notifications were just allowed. The first check runs at sign-in, often
+     * while Android is still asking, so it couldn't post and yet counted what
+     * was waiting as shown. This runs it again like the hourly check (which
+     * posts what's waiting even if it was counted), instead of an hour later.
+     */
+    fun notificationsAllowed(context: Context) {
+        val request = OneTimeWorkRequestBuilder<Worker>()
+            .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .build()
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(NOW_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+    }
+
     fun cancel(context: Context) {
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
         WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK_NAME)

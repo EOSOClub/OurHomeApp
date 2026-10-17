@@ -662,6 +662,8 @@ private fun HouseholdMap(
 @Composable
 private fun MapLabels(labels: List<MapLabel>, modifier: Modifier) {
     val gap = with(LocalDensity.current) { 10.dp.roundToPx() }
+    // Half a person's dot, with its white ring (under the gap, so a label beside it fits).
+    val dot = with(LocalDensity.current) { 9.dp.roundToPx() }
     Layout(
         content = {
             labels.forEach { label ->
@@ -680,11 +682,55 @@ private fun MapLabels(labels: List<MapLabel>, modifier: Modifier) {
         modifier = modifier,
     ) { measurables, constraints ->
         val placeables = measurables.map { it.measure(Constraints()) }
-        layout(constraints.maxWidth, constraints.maxHeight) {
+        val width = constraints.maxWidth
+        val height = constraints.maxHeight
+        // Where earlier labels went, so a later one doesn't cover them. People's dots
+        // go in first, so no label hides the dot it or another label is about.
+        val placed = labels.filter { it.beside }.map { label ->
+            val px = label.x.roundToInt()
+            val py = label.y.roundToInt()
+            intArrayOf(px - dot, py - dot, px + dot, py + dot)
+        }.toMutableList()
+        layout(width, height) {
             placeables.forEachIndexed { i, placeable ->
                 val label = labels[i]
-                val x = if (label.beside) label.x.roundToInt() + gap else (label.x - placeable.width / 2f).roundToInt()
-                val y = if (label.beside) (label.y - placeable.height / 2f).roundToInt() else label.y.roundToInt() - placeable.height - gap
+                val w = placeable.width
+                val h = placeable.height
+                val px = label.x.roundToInt()
+                val py = label.y.roundToInt()
+                var x = if (label.beside) px + gap else px - w / 2
+                var y = if (label.beside) py - h / 2 else py - h - gap
+                // Its point is on screen: keep the whole label on screen too, clear of
+                // earlier labels. A point panned off screen takes its label with it.
+                val onScreen = label.x in 0f..width.toFloat() && label.y in 0f..height.toFloat()
+                if (onScreen && w <= width && h <= height) {
+                    fun fits(cx: Int, cy: Int) = cx >= 0 && cy >= 0 && cx + w <= width && cy + h <= height &&
+                        placed.none { r -> cx < r[2] && cx + w > r[0] && cy < r[3] && cy + h > r[1] }
+                    // A person's label: right of their dot, else left, below or above it.
+                    if (label.beside) {
+                        listOf(
+                            px + gap to py - h / 2,
+                            px - gap - w to py - h / 2,
+                            px - w / 2 to py + gap,
+                            px - w / 2 to py - h - gap,
+                        ).firstOrNull { (cx, cy) -> fits(cx, cy) }?.let { (cx, cy) -> x = cx; y = cy }
+                    }
+                    x = x.coerceIn(0, width - w)
+                    y = y.coerceIn(0, height - h)
+                    // Still covering an earlier label: move just below it.
+                    var moved = true
+                    while (moved) {
+                        moved = false
+                        for (r in placed) {
+                            if (x < r[2] && x + w > r[0] && y < r[3] && y + h > r[1]) {
+                                y = r[3] + gap / 2
+                                moved = true
+                            }
+                        }
+                        if (y + h > height) break
+                    }
+                    placed += intArrayOf(x, y, x + w, y + h)
+                }
                 placeable.place(x, y)
             }
         }

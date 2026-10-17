@@ -18,6 +18,7 @@ import android.net.Network
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -139,6 +140,31 @@ object StayConnected {
     /** The service is running in this process (set by the service itself). */
     @Volatile
     internal var running = false
+
+    /**
+     * The service's notification couldn't be updated because notifications
+     * weren't allowed yet (it starts at sign-in, before the member is asked).
+     * Once they're allowed, Android shows the notification as it was first
+     * posted, "Reconnecting", even though it connected since.
+     */
+    @Volatile
+    internal var notificationStale = false
+
+    /**
+     * OurHome came to the front (after Android's permission prompt or its
+     * settings, for instance): a stale notification is posted again with
+     * whether it's connected now. Restarting a running service only re-posts
+     * its notification; the connection carries on.
+     */
+    fun refreshIfStale(context: Context) {
+        if (!running || !notificationStale || !RequestReminders.canNotify(context)) return
+        notificationStale = false
+        try {
+            context.startService(Intent(context, StayConnectedService::class.java))
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "couldn't refresh the notification", e)
+        }
+    }
 
     /**
      * Starts the service when it's on. A running one is left alone: starting
@@ -400,6 +426,9 @@ internal class StreamConnection(
 class StayConnectedService : Service() {
     private var connection: StreamConnection? = null
 
+    /** When its notification was last posted (elapsedRealtime; see [show]). */
+    private var postedAt = 0L
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -409,6 +438,7 @@ class StayConnectedService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Every start must go foreground again, even when already running.
+        if (!RequestReminders.canNotify(this)) StayConnected.notificationStale = true
         if (!enterForeground(notification(StayConnected.connected.value))) return START_NOT_STICKY
         // Off, or the close guard holds the connection (no Stop button that way).
         if (!StayConnected.isOn(this) || CloseGuard.service != null) {
@@ -436,6 +466,7 @@ class StayConnectedService : Service() {
             0
         }
         ServiceCompat.startForeground(this, StayConnected.NOTIFICATION_ID, notification, type)
+        postedAt = SystemClock.elapsedRealtime()
         true
     } catch (e: Exception) {
         Log.w(TAG, "couldn't go foreground; not connecting", e)
@@ -456,12 +487,21 @@ class StayConnectedService : Service() {
         super.onDestroy()
     }
 
-    /** Updates the notification, unless the member swiped it away: then it stays away. */
+    /**
+     * Updates the notification, unless the member swiped it away: then it stays away.
+     * Missing only counts as swiped a few seconds after it was posted: Android may
+     * not list it straight away, and the connection can come up before that (it did
+     * on a fast network, leaving "Reconnecting" up while connected).
+     */
     private fun show(notification: Notification) {
-        if (!RequestReminders.canNotify(this)) return
+        if (!RequestReminders.canNotify(this)) {
+            StayConnected.notificationStale = true
+            return
+        }
         val showing = getSystemService(NotificationManager::class.java).activeNotifications
             .any { it.id == StayConnected.NOTIFICATION_ID }
-        if (!showing) return
+        if (!showing && SystemClock.elapsedRealtime() - postedAt > SWIPE_GRACE_MS) return
+        postedAt = SystemClock.elapsedRealtime()
         try {
             NotificationManagerCompat.from(this).notify(StayConnected.NOTIFICATION_ID, notification)
         } catch (e: SecurityException) {
@@ -500,5 +540,8 @@ class StayConnectedService : Service() {
 
     private companion object {
         const val TAG = "StayConnected"
+
+        /** Longer than Android takes to list a new notification, shorter than anyone swipes. */
+        const val SWIPE_GRACE_MS = 3_000L
     }
 }

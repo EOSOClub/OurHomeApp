@@ -26,6 +26,9 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -85,6 +88,11 @@ object Push {
         if (now - at >= REREGISTER_MS) register(context)
     }
 
+    private val _received = MutableStateFlow(0L)
+
+    /** Changes each time a message reaches this phone, so Profile can show it at once. */
+    val received: StateFlow<Long> = _received.asStateFlow()
+
     /** When the last message reached this phone (epoch ms) and which way; null before the first. */
     fun lastReceived(context: Context): Pair<Long, Via>? {
         val prefs = prefs(context)
@@ -104,10 +112,12 @@ object Push {
             Log.i(TAG, "$type already handled (arrived again by ${via.label})")
             return
         }
+        val now = System.currentTimeMillis()
         prefs(context).edit {
-            putLong(KEY_LAST_AT, System.currentTimeMillis())
+            putLong(KEY_LAST_AT, now)
             putString(KEY_LAST_VIA, via.wire)
         }
+        _received.value = now
         when (type) {
             "sync" -> {
                 Log.i(TAG, "sync push (${data["reason"] ?: "unknown"}) by ${via.label}; checking now")

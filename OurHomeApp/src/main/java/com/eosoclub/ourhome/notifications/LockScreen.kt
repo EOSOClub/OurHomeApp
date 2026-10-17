@@ -14,7 +14,12 @@ import com.eosoclub.ourhome.R
 //    NotificationCompat.Action.Builder#setAuthenticationRequired(true) so it
 //    can't run from a locked screen.
 
-/** Hides the details of this notification on a secure lock screen. */
+/**
+ * Marks this notification private, with a general public version for a secure
+ * lock screen. Android shows that version only when the member has turned off
+ * Settings > Notifications > Notifications on lock screen > Show sensitive
+ * content (on by default); otherwise the full text shows. Checked 2026-10-16.
+ */
 fun NotificationCompat.Builder.lockScreenSafe(
     context: Context,
     channelId: String,

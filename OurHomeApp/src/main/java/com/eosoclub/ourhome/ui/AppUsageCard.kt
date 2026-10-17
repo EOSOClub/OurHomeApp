@@ -32,7 +32,7 @@ internal fun AppUsageCard(session: SessionManager) {
 
     SectionCard("Your app usage is shared", "An adult who looks after you turned this on, and only they can turn it off.") {
         Text(
-            "This phone sends how long you spend in each app, about once an hour. Only the adults who look after " +
+            "This phone sends how long you spend in each app, about every 15 minutes. Only the adults who look after " +
                 "you can see it, and only the last two weeks are kept. Nothing is blocked or limited.",
             style = MaterialTheme.typography.bodyMedium,
         )

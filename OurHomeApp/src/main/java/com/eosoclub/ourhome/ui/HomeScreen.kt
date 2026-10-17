@@ -193,23 +193,24 @@ fun HomeScreen(
     }
     // What this phone must have on while an adult looks after this member
     // (Set up this phone), asked again like looksAfter. Null until known, and
-    // on older servers. The first answer opens the checklist by itself when
-    // something is missing, once per app start; a temporary password goes
-    // first (Profile), and the menu offers it any time.
+    // on older servers. The checklist opens by itself when something is
+    // missing, once per app start; the menu offers it any time.
     val currentContext = LocalContext.current
     var phoneSetup by remember { mutableStateOf<PhoneSetup?>(null) }
     var setupOffered by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(tab, menuOpen) {
         runCatching { session.api.phoneSetup() }
-            .onSuccess { setup ->
-                phoneSetup = setup
-                if (!setupOffered) {
-                    setupOffered = true
-                    val missing = PhoneSetupDevice.steps(currentContext, setup).any { !it.done }
-                    if (missing && overlay == null && user.mustChangePassword != true) overlay = Overlay.PhoneSetup
-                }
-            }
+            .onSuccess { phoneSetup = it }
             .onFailure { if (it is CancellationException) throw it }
+    }
+    // Offered the first time nothing is in the way: a temporary password goes
+    // first (Profile), so a newly added child gets the checklist as soon as
+    // they leave Profile with their own password, not on the next app start.
+    LaunchedEffect(phoneSetup, overlay, user.mustChangePassword) {
+        val setup = phoneSetup ?: return@LaunchedEffect
+        if (setupOffered || overlay != null || user.mustChangePassword == true) return@LaunchedEffect
+        setupOffered = true
+        if (PhoneSetupDevice.steps(currentContext, setup).any { !it.done }) overlay = Overlay.PhoneSetup
     }
     // Keep both badges and the permissions current as the user moves around.
     LaunchedEffect(tab) {
@@ -262,7 +263,11 @@ fun HomeScreen(
     // Android 13+ needs runtime consent for the request reminders.
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (!granted) showMessage("Notifications are off - you won't get request reminders.")
+        if (granted) {
+            RequestReminders.notificationsAllowed(context)
+        } else {
+            showMessage("Notifications are off - you won't get request reminders.")
+        }
     }
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= 33 && !RequestReminders.canNotify(context)) {
