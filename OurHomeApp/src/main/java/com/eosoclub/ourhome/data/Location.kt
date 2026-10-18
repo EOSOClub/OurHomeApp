@@ -217,6 +217,8 @@ data class LookedAfter(
     val rules: PhoneRules? = null,
     /** How far their phone got with Set up this phone; null from older servers. */
     val setup: LookedAfterSetup? = null,
+    /** My last ring of their phone and what it said back; null when I haven't rung it lately. */
+    val ring: LookedAfterRing? = null,
 ) {
     val required: Boolean get() = sharing == "required"
 
@@ -226,6 +228,38 @@ data class LookedAfter(
             "required" -> null
             "on" -> "Shares their location"
             else -> "Not sharing their location"
+        }
+}
+
+/**
+ * A ring of a supervised child's phone and what their phone said back (web
+ * lib/ring.ts). [phase]: "sending" (no word yet) | "ringing" | "stopped" (Stop
+ * tapped) | "rang_out" (30 seconds, no Stop) | "rang" (no word on how it
+ * ended) | "no_answer" (it never said it rang). [stoppedAfterSec]: only for
+ * "stopped", when the phone also said it started.
+ */
+@Serializable
+data class LookedAfterRing(
+    val sentAt: String,
+    val phase: String,
+    val stoppedAfterSec: Int? = null,
+) {
+    /** Still going: the screen looks again every few seconds. */
+    val active: Boolean get() = phase == "sending" || phase == "ringing"
+
+    /** Ended, as their phone said: they may ring again at once. */
+    val ended: Boolean get() = phase == "stopped" || phase == "rang_out"
+
+    /** After "You rang 2 minutes ago: ". */
+    val outcome: String
+        get() = when (phase) {
+            "sending" -> "waiting for their phone to say it's ringing"
+            "ringing" -> "ringing on their phone now"
+            "stopped" -> stoppedAfterSec?.let { "Stop was tapped on their phone after $it ${if (it == 1) "second" else "seconds"}" }
+                ?: "Stop was tapped on their phone"
+            "rang_out" -> "it rang for 30 seconds and nobody tapped Stop"
+            "rang" -> "it rang on their phone"
+            else -> "their phone didn't say it rang. It may be off or out of signal, or need the latest OurHome app."
         }
 }
 

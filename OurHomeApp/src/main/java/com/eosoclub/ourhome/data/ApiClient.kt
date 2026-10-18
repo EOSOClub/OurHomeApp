@@ -1150,6 +1150,24 @@ class ApiClient(
             ),
         )
 
+    /** Apps new on this phone since it last looked: package name to the name it shows. 409 = usage isn't shared. */
+    suspend fun reportNewApps(apps: Map<String, String>) =
+        callUnit(
+            post(
+                "/api/phone/usage/new-apps",
+                buildJsonObject {
+                    putJsonArray("apps") {
+                        apps.forEach { (app, label) ->
+                            addJsonObject {
+                                put("app", app)
+                                put("label", label.take(100))
+                            }
+                        }
+                    }
+                },
+            ),
+        )
+
     /** Asks a supervised child's phone to send its app usage now; false when the server skipped it. */
     suspend fun refreshUsage(supervisedId: String): Boolean =
         call(
@@ -1157,7 +1175,17 @@ class ApiClient(
             UsageRefresh.serializer(),
         ).asked
 
-    /** An app's icon (PNG) next to a supervised child's usage, or null when the server has none. */
+    /** Every stored day of a supervised child's app usage, with all its apps (409 while it isn't shared). */
+    suspend fun usageHistory(supervisedId: String): UsageHistory =
+        call(
+            get("/api/supervision/usage/history?supervisedId=" + java.net.URLEncoder.encode(supervisedId, "UTF-8")),
+            UsageHistory.serializer(),
+        )
+
+    /** This member's own app usage, every stored day with all its apps (409 while it isn't shared). */
+    suspend fun myUsageHistory(): UsageHistory = call(get("/api/phone/usage/history"), UsageHistory.serializer())
+
+    /** An app's icon (PNG) next to a supervised child's usage or the member's own, or null when the server has none. */
     suspend fun usageIcon(app: String): ByteArray? = withContext(Dispatchers.IO) {
         val path = "/api/supervision/usage/icon?app=" + java.net.URLEncoder.encode(app, "UTF-8")
         http.newCall(get(path)).execute().use { res ->
@@ -1218,6 +1246,18 @@ class ApiClient(
     /** Rings a supervised child's phone loudly, even on silent. 409 = still ringing, or no phone reached. */
     suspend fun ringPhone(targetId: String) =
         callUnit(post("/api/supervision/ring", buildJsonObject { put("targetId", targetId) }))
+
+    /** This phone, rung by an adult: [state] "ringing", then "stopped" (Stop tapped) or "rang_out", for the ring push's [ringId]. */
+    suspend fun reportRing(ringId: String, state: String) =
+        callUnit(
+            post(
+                "/api/phone/ring",
+                buildJsonObject {
+                    put("ringId", ringId)
+                    put("state", state)
+                },
+            ),
+        )
 
     // --- Permissions -------------------------------------------------------
 

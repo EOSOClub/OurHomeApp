@@ -38,9 +38,14 @@ import kotlinx.coroutines.launch
  * sound on the alarm stream at full volume, so it rings even on silent, and
  * vibrates, for [RING_MS] or until Stop. The volume goes back afterwards.
  *
- * Stop works from the lock screen: it only quiets the phone and changes no
- * data. Who is ringing shows once the phone is unlocked (the push carries only
+ * Stop works from the lock screen: it only quiets the phone (and says so to
+ * the adult who rang); it changes no household data. Who is ringing shows once
+ * the phone is unlocked (the push carries only
  * their id; the name comes from the server).
+ *
+ * The phone tells the server it's ringing, then that Stop was tapped or that
+ * it rang out ([report]), so the adult who rang sees how it went. Pushes from
+ * servers before that carry no ring id, and nothing is sent.
  */
 object Ring {
     private const val TAG = "Ring"
@@ -49,17 +54,36 @@ object Ring {
     internal const val ACTION_START = "com.eosoclub.ourhome.RING_START"
     internal const val ACTION_STOP = "com.eosoclub.ourhome.RING_STOP"
     internal const val EXTRA_RINGER_ID = "ringerId"
+    internal const val EXTRA_RING_ID = "ringId"
     internal const val RING_MS = 30_000L
 
-    fun start(context: Context, ringerId: String?) {
+    /** Outlives [RingService], which stops as soon as the ring ends. */
+    private val reports = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    fun start(context: Context, ringerId: String?, ringId: String?) {
         val intent = Intent(context, RingService::class.java)
             .setAction(ACTION_START)
             .putExtra(EXTRA_RINGER_ID, ringerId)
+            .putExtra(EXTRA_RING_ID, ringId)
         try {
             context.startForegroundService(intent)
         } catch (e: ForegroundServiceStartNotAllowedException) {
             // The push arrived at normal priority (Android lowered it): no way to start.
             Log.w(TAG, "Android didn't allow ringing from the background", e)
+        }
+    }
+
+    /**
+     * Tells the server what this phone did with ring [ringId]: "ringing", then
+     * "stopped" (Stop tapped) or "rang_out". Once, best effort: the adult who
+     * rang sees "it rang on their phone" if the ending never arrives.
+     */
+    internal fun report(context: Context, ringId: String?, state: String) {
+        if (ringId == null) return
+        val api = (context.applicationContext as OurHomeApp).session.api
+        reports.launch {
+            runCatching { api.reportRing(ringId, state) }
+                .onFailure { Log.w(TAG, "couldn't tell the server the ring is $state", it) }
         }
     }
 
@@ -81,6 +105,9 @@ class RingService : Service() {
     private var player: MediaPlayer? = null
     private var savedAlarmVolume: Int? = null
 
+    /** The ring playing now, to say how it ended; null once said (or from an older server). */
+    private var ringId: String? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -88,7 +115,9 @@ class RingService : Service() {
             Ring.ACTION_START -> {
                 if (!enterForeground(notification(null))) return START_NOT_STICKY
                 startSound()
-                // A second ring while ringing starts the time again.
+                // A second ring while ringing starts the time again, and is the one reported.
+                ringId = intent.getStringExtra(Ring.EXTRA_RING_ID)
+                Ring.report(this, ringId, "ringing")
                 timer?.cancel()
                 timer = scope.launch {
                     intent.getStringExtra(Ring.EXTRA_RINGER_ID)?.let { id ->
@@ -98,9 +127,11 @@ class RingService : Service() {
                         if (name != null) show(notification(name))
                     }
                     delay(Ring.RING_MS)
-                    finish()
+                    ended("rang_out")
                 }
             }
+            // Someone tapped Stop.
+            Ring.ACTION_STOP -> ended("stopped")
             else -> finish()
         }
         // Not restarted by Android after being killed: a ring is only for now.
@@ -173,6 +204,13 @@ class RingService : Service() {
             runCatching { getSystemService(AudioManager::class.java).setStreamVolume(AudioManager.STREAM_ALARM, volume, 0) }
         }
         savedAlarmVolume = null
+    }
+
+    /** The ring ended as [state] says ("stopped" / "rang_out"): tell the server, then go quiet. */
+    private fun ended(state: String) {
+        Ring.report(this, ringId, state)
+        ringId = null
+        finish()
     }
 
     private fun finish() {

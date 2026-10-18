@@ -10,6 +10,7 @@ import android.os.Process
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
+import androidx.core.content.edit
 import androidx.core.graphics.drawable.toBitmap
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -24,12 +25,14 @@ import androidx.work.WorkerParameters
 import com.eosoclub.ourhome.OurHomeApp
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.ApiException
+import com.eosoclub.ourhome.data.NEW_APPS_PER_REPORT
 import com.eosoclub.ourhome.data.USAGE_ICONS_PER_UPLOAD
 import com.eosoclub.ourhome.data.USAGE_ICON_MAX_BYTES
 import com.eosoclub.ourhome.data.UnauthorizedException
 import com.eosoclub.ourhome.data.UsageDay
 import com.eosoclub.ourhome.data.UsageEvent
 import com.eosoclub.ourhome.data.foregroundMillis
+import com.eosoclub.ourhome.data.newApps
 import com.eosoclub.ourhome.data.usageDay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -53,6 +56,10 @@ import java.util.concurrent.TimeUnit
  * After each report the server lists the apps it has no icon for; those are
  * sent once, as small PNGs, so supervisors see the icon next to the minutes.
  *
+ * Each run also compares the apps that can be opened with the last run's,
+ * and tells the server about new ones, so supervisors are told (Android
+ * doesn't tell a background app about installs). That needs no Usage access.
+ *
  * Usage access is a special permission the member allows in Android's
  * settings (Profile shows how). On Android 15 an app installed outside Play
  * first needs "Allow restricted settings" in its App info.
@@ -62,6 +69,10 @@ object UsageReport {
     private const val WORK_NAME = "usage-report"
     private const val NOW_WORK_NAME = "usage-report-now"
     private const val INTERVAL_MINUTES = 15L
+
+    /** The apps seen on the last look, for spotting new ones. */
+    private const val PREFS = "new_app_watch"
+    private const val KEY_KNOWN = "known_apps"
 
     /** Icon size sent to the server, in pixels. */
     private const val ICON_PX = 96
@@ -83,10 +94,15 @@ object UsageReport {
         WorkManager.getInstance(context).enqueueUniqueWork(NOW_WORK_NAME, ExistingWorkPolicy.KEEP, request)
     }
 
-    /** Signed out, or usage no longer shared: no more reports. */
+    /**
+     * Signed out, or usage no longer shared: no more reports. The apps seen are
+     * forgotten too, so sharing turned on again later starts with a fresh look
+     * instead of reporting everything installed in between.
+     */
     fun cancel(context: Context) {
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
         WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK_NAME)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { clear() }
     }
 
     class Worker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
@@ -121,6 +137,7 @@ object UsageReport {
             return
         }
         schedule(context)
+        if (!reportNewApps(context, api)) return
         if (!hasAccess(context)) {
             Log.i(TAG, "usage is shared but Usage access isn't allowed; nothing to send")
             return
@@ -145,6 +162,49 @@ object UsageReport {
             }
             Log.i(TAG, "sent ${icons.size} app icon(s)")
         }.onFailure { Log.w(TAG, "app icons not sent", it) }
+    }
+
+    /**
+     * Tells the server about apps that can be opened now but couldn't on the
+     * last look; the first look only remembers them. False when usage is no
+     * longer shared (409). Anything else that goes wrong is tried again next
+     * time: what was seen is only stored once the server has it.
+     */
+    private suspend fun reportNewApps(context: Context, api: ApiClient): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val known = prefs.getStringSet(KEY_KNOWN, null)?.toSet()
+        val current = withContext(Dispatchers.IO) { openableApps(context) }
+        val fresh = newApps(known, current)
+        if (fresh.isNotEmpty()) {
+            try {
+                fresh.entries.chunked(NEW_APPS_PER_REPORT).forEach { batch ->
+                    api.reportNewApps(batch.associate { it.key to it.value })
+                }
+                Log.i(TAG, "reported ${fresh.size} new app(s)")
+            } catch (e: ApiException) {
+                if (e.status == 409) {
+                    cancel(context)
+                    return false
+                }
+                Log.w(TAG, "new apps not reported", e)
+                return true
+            } catch (e: java.io.IOException) {
+                Log.w(TAG, "new apps not reported", e)
+                return true
+            }
+        }
+        // An app removed since drops out, so installing it again is news again.
+        prefs.edit { putStringSet(KEY_KNOWN, current.keys) }
+        return true
+    }
+
+    /** Every app with a launcher icon (package name to its name), OurHome itself left out. */
+    private fun openableApps(context: Context): Map<String, String> {
+        val pm = context.packageManager
+        return pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+            .map { it.activityInfo.applicationInfo }
+            .filter { it.packageName != context.packageName }
+            .associate { info -> info.packageName to runCatching { pm.getApplicationLabel(info).toString() }.getOrDefault(info.packageName) }
     }
 
     /** [apps]' launcher icons as small PNGs, base64; apps gone from the phone, or too big, are left out. */

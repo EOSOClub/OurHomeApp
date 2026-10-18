@@ -134,7 +134,7 @@ object Push {
             }
             "live_check_stop" -> LiveChecks.stop(context)
             // A supervising adult ringing this phone (Ring); same high-priority rule.
-            "ring" -> Ring.start(context, data["ringerId"])
+            "ring" -> Ring.start(context, data["ringerId"], data["ringId"])
             // A supervising adult is looking at this member's app usage: send it now.
             "usage_refresh" -> UsageReport.sendNow(context)
             // "Send me a test notification" on Profile.

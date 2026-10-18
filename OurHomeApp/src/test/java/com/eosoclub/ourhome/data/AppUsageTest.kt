@@ -87,4 +87,48 @@ class AppUsageTest {
         )
         assertEquals(emptyList<String>(), json.decodeFromString(UsageReportResult.serializer(), """{"saved":true}""").missingIcons)
     }
+
+    @Test
+    fun `new apps are the ones not seen last time, and the first look reports none`() {
+        val now = mapOf("com.roblox.client" to "Roblox", "com.google.android.youtube" to "YouTube")
+        assertEquals(emptyMap<String, String>(), newApps(null, now))
+        assertEquals(mapOf("com.roblox.client" to "Roblox"), newApps(setOf("com.google.android.youtube", "com.gone"), now))
+        assertEquals(emptyMap<String, String>(), newApps(now.keys, now))
+        // The supervisor's phone alerts on them with the household's other alerts.
+        assertEquals(true, "new_app" in HOUSEHOLD_REMINDER_TYPES)
+    }
+
+    private fun day(day: String, minutes: Int) = UsageHistoryDay(day, minutes)
+
+    @Test
+    fun `the chart shows the seven days up to today, with nothing for days the phone didn't send`() {
+        val chart = chartDays(listOf(day("2026-10-18", 90), day("2026-10-16", 0), day("2026-10-05", 300)), "2026-10-18")
+        assertEquals((12..18).map { "2026-10-$it" }, chart.map { it.day })
+        // A reported zero is a day too; a missing day isn't.
+        assertEquals(listOf(null, null, null, null, 0, null, 90), chart.map { it.minutes })
+        assertEquals(45, averageMinutes(chart))
+        assertEquals(null, averageMinutes(chart.take(3)))
+    }
+
+    @Test
+    fun `the chart ends at the phone's day when it is already tomorrow for the viewer`() {
+        val chart = chartDays(listOf(day("2026-11-01", 10)), "2026-10-31")
+        assertEquals("2026-10-26", chart.first().day)
+        assertEquals(ChartDay("2026-11-01", 10), chart.last())
+        assertEquals("Sun", weekdayLabel("2026-10-18"))
+        assertEquals("Mon", weekdayLabel("2026-10-12"))
+    }
+
+    @Test
+    fun `reads a usage history with every app`() {
+        val history = json.decodeFromString(
+            UsageHistory.serializer(),
+            """{"days":[{"day":"2026-10-12","totalMinutes":40,"updatedAt":"2026-10-12T17:00:00Z",
+                "apps":[{"app":"com.roblox.client","label":"Roblox","minutes":30,"icon":true}]}]}""",
+        )
+        assertEquals(
+            UsageHistoryDay("2026-10-12", 40, listOf(UsageTopApp("Roblox", 30, "com.roblox.client", true)), "2026-10-12T17:00:00Z"),
+            history.days.single(),
+        )
+    }
 }

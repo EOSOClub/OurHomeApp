@@ -12,6 +12,23 @@ class LocationTest {
     private val costco = MapPlace("c", "Costco", "store", 41.9, -87.7, 500, listOf("groceries"))
 
     @Test
+    fun `a ring says what their phone said back, in the website's words`() {
+        val ring = { phase: String, sec: Int? -> LookedAfterRing("2026-10-18T20:00:00Z", phase, sec) }
+        assertEquals("waiting for their phone to say it's ringing", ring("sending", null).outcome)
+        assertEquals("ringing on their phone now", ring("ringing", null).outcome)
+        assertEquals("Stop was tapped on their phone after 8 seconds", ring("stopped", 8).outcome)
+        assertEquals("Stop was tapped on their phone after 1 second", ring("stopped", 1).outcome)
+        assertEquals("Stop was tapped on their phone", ring("stopped", null).outcome)
+        assertEquals("it rang for 30 seconds and nobody tapped Stop", ring("rang_out", null).outcome)
+        assertEquals("it rang on their phone", ring("rang", null).outcome)
+        assertTrue(ring("no_answer", null).outcome.startsWith("their phone didn't say it rang."))
+        assertEquals(listOf("sending", "ringing"), listOf("sending", "ringing", "stopped", "rang_out", "rang", "no_answer").filter { ring(it, null).active })
+        assertEquals(listOf("stopped", "rang_out"), listOf("sending", "ringing", "stopped", "rang_out", "rang", "no_answer").filter { ring(it, null).ended })
+        // Older servers send no ring.
+        assertEquals(null, LookedAfter(id = "mia", name = "Mia").ring)
+    }
+
+    @Test
     fun `a looked-after phone names its problems, and nothing when all is well`() {
         assertEquals(null, LookedAfterPhone("2026-10-12T10:00:00Z").problemText)
         assertEquals("Phone hasn't checked in", LookedAfterPhone("x", problems = listOf("quiet")).problemText)

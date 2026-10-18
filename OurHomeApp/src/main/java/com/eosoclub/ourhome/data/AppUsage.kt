@@ -6,7 +6,8 @@ import kotlinx.serialization.Serializable
 // an adult who looks after this member has turned sharing it on, the phone
 // measures how long each app was on screen (notifications/UsageReport) and
 // sends today and yesterday every 15 minutes, and at once when a supervisor
-// opens "People you look after". Pure parts live here.
+// opens "People you look after". The member sees their own numbers too, on
+// Profile. Pure parts live here.
 
 /** GET /api/phone/usage: whether this member's app usage is shared. */
 @Serializable
@@ -25,6 +26,18 @@ const val USAGE_ICON_MAX_BYTES = 32 * 1024
 
 /** Icons per upload (web reportUsageIconsSchema). */
 const val USAGE_ICONS_PER_UPLOAD = 20
+
+/** Most new apps sent at once (web reportNewAppsSchema). */
+const val NEW_APPS_PER_REPORT = 50
+
+/**
+ * The apps in [current] (package name to the name it shows) that weren't in
+ * [known], the apps seen last time. Nothing when there was no last time: the
+ * first look only remembers what's there, so turning sharing on (or a fresh
+ * install of OurHome) doesn't report every app as new.
+ */
+fun newApps(known: Set<String>?, current: Map<String, String>): Map<String, String> =
+    if (known == null) emptyMap() else current.filterKeys { it !in known }
 
 /** One app coming to the screen ([foreground]) or leaving it, from Android's usage events. */
 data class UsageEvent(val app: String, val foreground: Boolean, val atMillis: Long)
@@ -114,3 +127,55 @@ fun usageDayLabel(day: String, today: String): String {
 /** [app]: the package name (empty from an older server); [icon]: whether the server has its icon. */
 @Serializable
 data class UsageTopApp(val label: String, val minutes: Int, val app: String = "", val icon: Boolean = false)
+
+/** Apps the server keeps per day (web USAGE_TOP_APPS). */
+const val USAGE_TOP_APPS = 20
+
+/**
+ * GET /api/supervision/usage/history (a supervisor) or /api/phone/usage/history
+ * (the member themself): every stored day, newest first, with all its apps.
+ */
+@Serializable
+data class UsageHistory(val days: List<UsageHistoryDay> = emptyList())
+
+@Serializable
+data class UsageHistoryDay(
+    val day: String,
+    val totalMinutes: Int,
+    val apps: List<UsageTopApp> = emptyList(),
+    val updatedAt: String = "",
+)
+
+/** Days in the usage chart: a week, ending today (web USAGE_CHART_DAYS). */
+const val USAGE_CHART_DAYS = 7
+
+/** One bar of the chart; [minutes] is null when their phone sent nothing that day. */
+data class ChartDay(val day: String, val minutes: Int?)
+
+/**
+ * The chart's days, oldest first: the week ending at the viewer's [today], or
+ * at the newest reported day when that's later (a phone a time zone ahead).
+ * Web: chartDays.
+ */
+fun chartDays(days: List<UsageHistoryDay>, today: String): List<ChartDay> {
+    val byDay = days.associate { it.day to it.totalMinutes }
+    val newest = days.map { it.day }.plus(today).max()
+    val end = runCatching { java.time.LocalDate.parse(newest) }.getOrNull() ?: return emptyList()
+    return (USAGE_CHART_DAYS - 1 downTo 0).map { back ->
+        val day = end.minusDays(back.toLong()).toString()
+        ChartDay(day, byDay[day])
+    }
+}
+
+/** The average day over the chart days their phone reported, in whole minutes; null when none (web: averageMinutes). */
+fun averageMinutes(chart: List<ChartDay>): Int? {
+    val reported = chart.mapNotNull { it.minutes }
+    if (reported.isEmpty()) return null
+    return Math.round(reported.sum().toDouble() / reported.size).toInt()
+}
+
+/** A chart bar's short day name: "Mon" (web: weekdayLabel). */
+fun weekdayLabel(day: String): String =
+    runCatching {
+        java.time.LocalDate.parse(day).dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.US)
+    }.getOrDefault(day)

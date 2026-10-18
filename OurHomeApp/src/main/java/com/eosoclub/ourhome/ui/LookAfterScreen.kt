@@ -1,16 +1,8 @@
 package com.eosoclub.ourhome.ui
 
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
-import com.eosoclub.ourhome.data.UsageTopApp
-import com.eosoclub.ourhome.data.formatMinutes
+import com.eosoclub.ourhome.data.UsageHistory
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -60,23 +52,35 @@ private const val LOOK_AFTER_REFRESH_MS = 60_000L
 /** After asking the phones for fresh usage, look again this long after (they answer in seconds). */
 private val AFTER_USAGE_REFRESH_MS = listOf(10_000L, 15_000L)
 
+/** After ringing, look this often for what their phone says, at most [RING_LOOKS] times (the web page does the same). */
+private const val RING_REFRESH_MS = 3_000L
+private const val RING_LOOKS = 40
+
 class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
+    private val iconCache = UsageIcons(api, viewModelScope)
+
     /** App icons by package name, loaded once each; null = the server has none. */
-    val icons = MutableStateFlow<Map<String, ImageBitmap?>>(emptyMap())
-    private val iconsAsked = mutableSetOf<String>()
+    val icons = iconCache.icons
     private var usageAsked = false
 
     /** Loads [app]'s icon unless it was already asked for. */
-    fun loadIcon(app: String) {
-        if (!iconsAsked.add(app)) return
-        viewModelScope.launch {
-            val bitmap = runCatching {
-                api.usageIcon(app)?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
-            }.getOrNull()
-            icons.update { it + (app to bitmap) }
-            // A failed load may try again on the next visit.
-            if (bitmap == null) iconsAsked.remove(app)
-        }
+    fun loadIcon(app: String) = iconCache.load(app)
+
+    /** Opens or closes the week's chart and every app under [personId]'s latest day. */
+    fun toggleUsageHistory(personId: String) {
+        val open = personId !in state.value.usageOpen
+        state.update { it.copy(usageOpen = if (open) it.usageOpen + personId else it.usageOpen - personId) }
+        if (open) loadUsageHistory(personId)
+    }
+
+    private fun loadUsageHistory(personId: String) = viewModelScope.launch {
+        runCatching { api.usageHistory(personId) }
+            .onSuccess { history ->
+                state.update {
+                    it.copy(usageHistory = it.usageHistory + (personId to history), usageHistoryFailed = it.usageHistoryFailed - personId)
+                }
+            }
+            .onFailure { state.update { it.copy(usageHistoryFailed = it.usageHistoryFailed + personId) } }
     }
 
     /**
@@ -107,6 +111,10 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
         val savingUsage: Pair<String, Boolean>? = null,
         /** Which of whose phone rules is being saved, and to what. */
         val savingRule: Triple<String, PhoneRule, Boolean>? = null,
+        /** Whose week of app usage is open, their loaded history, and whose failed to load. */
+        val usageOpen: Set<String> = emptySet(),
+        val usageHistory: Map<String, UsageHistory> = emptyMap(),
+        val usageHistoryFailed: Set<String> = emptySet(),
         val loaded: Boolean = false,
         val loading: Boolean = true,
         val error: String? = null,
@@ -118,7 +126,8 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
      *  put the old values back (a switch flicking back). */
     private var edits = 0
 
-    fun load() = viewModelScope.launch {
+    /** [withHistory]: also reload the open weeks of app usage (not while only following a ring). */
+    fun load(withHistory: Boolean = true) = viewModelScope.launch {
         val editsAtStart = edits
         state.update { it.copy(loading = true) }
         state.load(
@@ -133,15 +142,29 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
             },
             onError = { s, message -> s.copy(loading = false, error = message ?: "Couldn't load the people you look after") },
         )
+        if (!withHistory) return@launch
+        // An open week stays current with the rest of the page, while their usage is still shared.
+        val sharing = state.value.lookAfter?.people?.filter { it.appUsage.shared }?.map { it.id }.orEmpty()
+        state.value.usageOpen.filter { it in sharing }.forEach { loadUsageHistory(it) }
     }
 
-    /** Rings [person]'s phone; [onDone] gets the message to show. */
+    /**
+     * Rings [person]'s phone; [onDone] gets the message to show. Then follows
+     * the ring every few seconds, while their phone hasn't said how it ended.
+     */
     fun ring(person: LookedAfter, onDone: (String) -> Unit) = viewModelScope.launch {
         try {
             api.ringPhone(person.id)
             onDone("Ringing ${person.name}'s phone")
         } catch (e: Exception) {
             onDone(e.message ?: "Couldn't ring their phone")
+            return@launch
+        }
+        for (look in 1..RING_LOOKS) {
+            load(withHistory = false).join()
+            val ring = state.value.lookAfter?.people?.firstOrNull { it.id == person.id }?.ring
+            if (ring?.active != true) break
+            delay(RING_REFRESH_MS)
         }
     }
 
@@ -240,16 +263,22 @@ internal fun LookAfterScreen(api: ApiClient, showMessage: (String) -> Unit, modi
                     onRule = { rule, required -> vm.setRule(person, rule, required, showMessage) },
                     icons = icons,
                     loadIcon = vm::loadIcon,
+                    usageOpen = person.id in state.usageOpen,
+                    usageHistory = state.usageHistory[person.id],
+                    usageHistoryFailed = person.id in state.usageHistoryFailed,
+                    onToggleUsage = { vm.toggleUsageHistory(person.id) },
                 )
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp))
             }
             item {
                 LookAfterNote(
-                    "Ring rings their phone loudly for up to 30 seconds, even on silent. Location required keeps " +
+                    "Ring rings their phone loudly for up to 30 seconds, even on silent. You see when it starts " +
+                        "ringing, and whether someone tapped Stop. Location required keeps " +
                         "their location sharing on, and lets you check where they are on the Map without them allowing it. " +
                         "They always see when you check. Share app usage shows how long they spend in each app; " +
                         "their phone needs Usage access for it. Their phone sends it every 15 minutes, and opening " +
-                        "this page asks it for the latest numbers. Require Keep Our Home running stops OurHome " +
+                        "this page asks it for the latest numbers. They see the same numbers on their Profile. While " +
+                        "it's shared, you're also told when a new app turns up on their phone. Require Keep Our Home running stops OurHome " +
                         "being closed on their phone, Require Prevent uninstall stops it being removed without " +
                         "your PIN, and Require Unrestricted battery stops battery saving from holding back rings " +
                         "and alerts. Each one you require is a step in Set up this phone on their phone, and " +
@@ -298,6 +327,11 @@ private fun LookedAfterRow(
     onRule: (PhoneRule, Boolean) -> Unit,
     icons: Map<String, ImageBitmap?>,
     loadIcon: (String) -> Unit,
+    /** Whether the week's chart and every app show under their latest day, and what loaded for it. */
+    usageOpen: Boolean,
+    usageHistory: UsageHistory?,
+    usageHistoryFailed: Boolean,
+    onToggleUsage: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -329,6 +363,14 @@ private fun LookedAfterRow(
                 alerts?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                // My last ring of their phone and what it said back.
+                person.ring?.let { ring ->
+                    Text(
+                        "You rang ${relativeTime(ring.sentAt)}: ${ring.outcome}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (ring.phase == "no_answer") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             if (canRing) TextButton(onClick = onRing) { Text("Ring") }
         }
@@ -349,7 +391,22 @@ private fun LookedAfterRow(
                 fontWeight = if (latest != null) FontWeight.Medium else null,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            latest?.top?.forEach { app -> UsageAppRow(app, icons, loadIcon) }
+            when {
+                latest == null -> Unit
+                !usageOpen -> latest.top.forEach { app -> UsageAppRow(app, icons, loadIcon) }
+                usageHistory != null -> UsageHistoryView(usageHistory, icons, loadIcon)
+                usageHistoryFailed -> Text(
+                    "Couldn't load their app usage.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                else -> Text("Loading...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (latest != null) {
+                TextButton(onClick = onToggleUsage) {
+                    Text(if (usageOpen) "Show less" else "All apps and the last 7 days")
+                }
+            }
         }
         // Only from servers that send the rules.
         person.rules?.let { rules ->
@@ -368,46 +425,5 @@ private fun LookedAfterRow(
         }
         // How far their phone got with Set up this phone (only from servers that send it).
         SetupProgress(person)
-    }
-}
-
-/** One of their top apps: its icon (or first letter until their phone sent it), name and time. */
-@Composable
-private fun UsageAppRow(app: UsageTopApp, icons: Map<String, ImageBitmap?>, loadIcon: (String) -> Unit) {
-    if (app.icon && app.app.isNotEmpty()) LaunchedEffect(app.app) { loadIcon(app.app) }
-    val icon = icons[app.app]
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, end = 8.dp),
-    ) {
-        if (icon != null) {
-            Image(icon, contentDescription = null, modifier = Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)))
-        } else {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(20.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            ) {
-                Text(
-                    app.label.take(1).uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        Text(
-            app.label,
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(start = 8.dp),
-        )
-        Text(
-            formatMinutes(app.minutes),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
