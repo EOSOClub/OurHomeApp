@@ -7,6 +7,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -469,7 +471,10 @@ fun HomeScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        val modifier = Modifier.padding(padding)
+        // Edge to edge, Android no longer shrinks the window for the keyboard,
+        // so every screen ends above it here; its scrolling then keeps the
+        // focused field in view. The bars' padding counts towards the keyboard's.
+        val modifier = Modifier.padding(padding).consumeWindowInsets(padding).imePadding()
         when (overlay) {
             Overlay.Notifications -> NotificationsScreen(
                 notifications,
