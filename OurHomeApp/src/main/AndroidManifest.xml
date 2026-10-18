@@ -85,6 +85,15 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- A setup link's "Open Our Home" button (web /get-app/<token>):
+                 ourhome://setup?username=&server= fills in the sign-in screen
+                 (data/ChildSetup.kt setupPrefill). Nothing else is done with it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ourhome" android:host="setup" />
+            </intent-filter>
         </activity>
 
         <!-- Tags scanned while the app isn't open. Invisible: it looks the tag up,

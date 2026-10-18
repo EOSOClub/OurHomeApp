@@ -215,6 +215,8 @@ data class LookedAfter(
     val appUsage: LookedAfterUsage = LookedAfterUsage(),
     /** The protections their phone must have on; null from older servers (no switches then). */
     val rules: PhoneRules? = null,
+    /** How far their phone got with Set up this phone; null from older servers. */
+    val setup: LookedAfterSetup? = null,
 ) {
     val required: Boolean get() = sharing == "required"
 
@@ -284,6 +286,21 @@ data class PhoneRules(
     val preventUninstall: Boolean = true,
     val batteryUnrestricted: Boolean = true,
 )
+
+/**
+ * A supervised child's Set up this phone, from their phone's check-ins (web
+ * LookAfterDTO setup): [passwordChosen] (off their temporary one), then each
+ * step their supervisors require, in the app's order.
+ */
+@Serializable
+data class LookedAfterSetup(
+    val passwordChosen: Boolean = false,
+    val steps: List<LookedAfterSetupStep> = emptyList(),
+)
+
+/** [step]: a [SetupStep.key]. [done]: null when their app is too old to say. */
+@Serializable
+data class LookedAfterSetupStep(val step: String, val done: Boolean? = null)
 
 /** The [PhoneRules] the web knows, by its key, with the switch's label. */
 enum class PhoneRule(val key: String, val label: String) {

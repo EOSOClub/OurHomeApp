@@ -28,7 +28,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.eosoclub.ourhome.data.AppSettings
 import com.eosoclub.ourhome.data.AuthState
 import com.eosoclub.ourhome.data.SessionManager
+import com.eosoclub.ourhome.data.SetupPrefill
 import com.eosoclub.ourhome.data.ThemeMode
+import com.eosoclub.ourhome.data.setupPrefill
 import com.eosoclub.ourhome.nfc.NfcScans
 import com.eosoclub.ourhome.nfc.ScanHandoff
 import com.eosoclub.ourhome.nfc.TagFormat
@@ -50,14 +52,18 @@ class MainActivity : ComponentActivity() {
     // A tab a notification asked to open ("requests"); consumed by HomeScreen.
     private val openTab = MutableStateFlow<String?>(null)
 
+    // What a setup link's Open Our Home button filled in; consumed by LoginScreen.
+    private val prefill = MutableStateFlow<SetupPrefill?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val app = application as OurHomeApp
         if (savedInstanceState == null) {
             openTab.value = intent.getStringExtra(RequestReminders.EXTRA_OPEN_TAB)
             emitScanFrom(intent)
+            prefillFrom(intent, app.session)
         }
-        val app = application as OurHomeApp
         setContent {
             val mode by app.settings.themeMode.collectAsStateWithLifecycle()
             val dark = when (mode) {
@@ -74,7 +80,14 @@ class MainActivity : ComponentActivity() {
             }
             OurHomeTheme(dark = dark) {
                 Surface(color = MaterialTheme.colorScheme.background) {
-                    Root(app.session, app.settings, openTab, onTabOpened = { openTab.value = null })
+                    Root(
+                        app.session,
+                        app.settings,
+                        openTab,
+                        onTabOpened = { openTab.value = null },
+                        prefill = prefill,
+                        onPrefillUsed = { prefill.value = null },
+                    )
                 }
             }
         }
@@ -86,6 +99,19 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         intent.getStringExtra(RequestReminders.EXTRA_OPEN_TAB)?.let { openTab.value = it }
         emitScanFrom(intent)
+        prefillFrom(intent, (application as OurHomeApp).session)
+    }
+
+    /**
+     * A setup link's ourhome://setup?username=&server=: fills in the sign-in
+     * screen. Only while signed out; any web page can open this link, so it
+     * never signs in or changes a server already set (setupPrefill).
+     */
+    private fun prefillFrom(intent: Intent, session: SessionManager) {
+        val uri = intent.data ?: return
+        if (intent.action != Intent.ACTION_VIEW || uri.scheme != "ourhome" || uri.host != "setup") return
+        if (session.state.value is AuthState.SignedIn) return
+        prefill.value = setupPrefill(uri.getQueryParameter("username"), uri.getQueryParameter("server"), session.baseUrl)
     }
 
     /** A tag handed over by QuickScanActivity or a quick-scan notification tap. */
@@ -132,8 +158,15 @@ private fun Root(
     settings: AppSettings,
     openTab: StateFlow<String?>,
     onTabOpened: () -> Unit,
+    prefill: StateFlow<SetupPrefill?>,
+    onPrefillUsed: () -> Unit,
 ) {
     val state by session.state.collectAsStateWithLifecycle()
+    val pendingPrefill by prefill.collectAsStateWithLifecycle()
+    // A link that arrived while the saved sign-in was still being checked: not for this session.
+    LaunchedEffect(state is AuthState.SignedIn, pendingPrefill) {
+        if (state is AuthState.SignedIn && pendingPrefill != null) onPrefillUsed()
+    }
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         if (session.state.value == AuthState.Checking) session.restore()
@@ -167,7 +200,7 @@ private fun Root(
         }
         is AuthState.SignedOut -> {
             ClearUserScope()
-            LoginScreen(session, s.message)
+            LoginScreen(session, s.message, pendingPrefill, onPrefillUsed)
         }
         // Each account gets its own screen state (see UserScopes).
         is AuthState.SignedIn -> UserScope(s.user.id) {

@@ -7,14 +7,16 @@ package com.eosoclub.ourhome.data
  * - Keep Our Home running comes last: once it's on, App info, Device admin
  *   and Accessibility pages close on this phone, so nothing that needs them
  *   (Allow restricted settings is in App info) can be done after it.
+ * [key]: the web's name for it (lib/phoneHealth.ts PHONE_SETUP_STEPS), as a
+ * supervisor's setup progress names it.
  */
-enum class SetupStep {
-    Notifications,
-    Location,
-    Battery,
-    UsageAccess,
-    PreventUninstall,
-    KeepRunning,
+enum class SetupStep(val key: String, val title: String) {
+    Notifications("notifications", "Allow notifications"),
+    Location("location", "Allow location all the time"),
+    Battery("batteryUnrestricted", "Allow unrestricted battery"),
+    UsageAccess("usageAccess", "Allow usage access"),
+    PreventUninstall("preventUninstall", "Prevent uninstall"),
+    KeepRunning("keepRunning", "Keep Our Home running"),
 }
 
 /** What this phone has on right now, as the checklist reads it. */

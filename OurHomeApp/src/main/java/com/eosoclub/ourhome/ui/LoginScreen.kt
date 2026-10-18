@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,10 +34,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import com.eosoclub.ourhome.R
 import com.eosoclub.ourhome.data.SessionManager
+import com.eosoclub.ourhome.data.SetupPrefill
 import kotlinx.coroutines.launch
 
+/**
+ * [prefill]: what a setup link's Open Our Home button filled in (a new child's
+ * phone); [onPrefillUsed] once it's in the fields.
+ */
 @Composable
-fun LoginScreen(session: SessionManager, initialMessage: String?) {
+fun LoginScreen(
+    session: SessionManager,
+    initialMessage: String?,
+    prefill: SetupPrefill? = null,
+    onPrefillUsed: () -> Unit = {},
+) {
     var server by rememberSaveable { mutableStateOf(session.baseUrl) }
     var username by rememberSaveable { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -44,7 +55,20 @@ fun LoginScreen(session: SessionManager, initialMessage: String?) {
     var showServer by rememberSaveable { mutableStateOf(session.baseUrl.isBlank()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(initialMessage) }
+    // Under the fields while set up from a link: what to type, or why its server wasn't used.
+    var setupNote by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(prefill) {
+        val p = prefill ?: return@LaunchedEffect
+        username = p.username
+        p.server?.let { server = it; showServer = true }
+        if (p.note != null) showServer = true
+        error = null
+        setupNote = p.note ?: "Your username is filled in. Sign in with the temporary password from the adult " +
+            "setting up your phone, then choose your own."
+        onPrefillUsed()
+    }
 
     fun submit() {
         if (server.isBlank()) {
@@ -109,6 +133,7 @@ fun LoginScreen(session: SessionManager, initialMessage: String?) {
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        setupNote?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = ::submit, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
             if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)

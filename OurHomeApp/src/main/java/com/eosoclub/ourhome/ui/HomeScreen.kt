@@ -312,7 +312,9 @@ fun HomeScreen(
         if (user.mustChangePassword == true) overlay = Overlay.Profile
     }
 
-    BackHandler(enabled = overlay != null) { overlay = null }
+    // Set up a child opens from Household, so Back goes there.
+    val closeOverlay = { overlay = if (overlay == Overlay.AddChild) Overlay.Members else null }
+    BackHandler(enabled = overlay != null) { closeOverlay() }
     BackHandler(enabled = overlay == null && tab != Tab.Home) { tab = Tab.Home }
 
     Scaffold(
@@ -322,7 +324,7 @@ fun HomeScreen(
                 TopAppBar(
                     title = { Text(current.label) },
                     navigationIcon = {
-                        IconButton(onClick = { overlay = null }) {
+                        IconButton(onClick = closeOverlay) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     },
@@ -504,7 +506,17 @@ fun HomeScreen(
             Overlay.LookAfter -> LookAfterScreen(session.api, showMessage, modifier)
             Overlay.PhoneSetup -> PhoneSetupScreen(session.api, showMessage, onClose = { overlay = null }, modifier)
             Overlay.Settings -> SettingsScreen(session.api, session.baseUrl, isHead = user.role == "head", features, showMessage, modifier)
-            Overlay.Members -> MembersScreen(session, user, showMessage, modifier)
+            Overlay.Members -> MembersScreen(session, user, showMessage, onSetUpChild = { overlay = Overlay.AddChild }, modifier)
+            Overlay.AddChild -> AddChildScreen(
+                session.api,
+                user.id,
+                baseUrl = session.baseUrl,
+                locationOn = features.location,
+                showMessage = showMessage,
+                onOpenLookAfter = { overlay = Overlay.LookAfter },
+                onDone = { overlay = Overlay.Members },
+                modifier = modifier,
+            )
             null -> TabContent(
                 tab,
                 session,
@@ -557,6 +569,7 @@ private enum class Overlay(val label: String) {
     PhoneSetup("Set up this phone"),
     Settings("Settings"),
     Members("Household"),
+    AddChild("Set up a child"),
 }
 
 @Composable

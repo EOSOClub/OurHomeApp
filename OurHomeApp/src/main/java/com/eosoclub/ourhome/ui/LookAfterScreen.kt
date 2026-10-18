@@ -279,7 +279,8 @@ private fun LookAfterNote(text: String) {
 
 /**
  * One child or teen: their phone, Ring, the Location required and Share app
- * usage switches, and a switch per protection their phone must have on.
+ * usage switches, a switch per protection their phone must have on, and how
+ * far their phone got with Set up this phone.
  */
 @Composable
 private fun LookedAfterRow(
@@ -365,6 +366,8 @@ private fun LookedAfterRow(
                 }
             }
         }
+        // How far their phone got with Set up this phone (only from servers that send it).
+        SetupProgress(person)
     }
 }
 

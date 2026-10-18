@@ -359,16 +359,6 @@ private fun RestrictedHint(step: SetupStep, restrictedInstall: Boolean, onAppInf
     OutlinedButton(onClick = onAppInfo) { Text("App info") }
 }
 
-private val SetupStep.title: String
-    get() = when (this) {
-        SetupStep.Notifications -> "Allow notifications"
-        SetupStep.Location -> "Allow location all the time"
-        SetupStep.Battery -> "Allow unrestricted battery"
-        SetupStep.UsageAccess -> "Allow usage access"
-        SetupStep.PreventUninstall -> "Prevent uninstall"
-        SetupStep.KeepRunning -> "Keep Our Home running"
-    }
-
 private fun notificationSettings(context: Context): Intent =
     Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
 

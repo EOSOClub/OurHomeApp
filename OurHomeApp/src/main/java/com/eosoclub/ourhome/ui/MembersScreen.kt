@@ -228,15 +228,17 @@ class MembersViewModel(private val session: SessionManager) : ViewModel() {
 }
 
 /** A readable temporary password (12 letters and digits), as the web generates. */
-private fun generatePassword(): String = UUID.randomUUID().toString().replace("-", "").take(12)
+internal fun generatePassword(): String = UUID.randomUUID().toString().replace("-", "").take(12)
 
-private const val NAME_MAX = 80
+internal const val NAME_MAX = 80
 
 @Composable
 fun MembersScreen(
     session: SessionManager,
     user: SessionUser,
     showMessage: (String) -> Unit,
+    /** Opens Set up a child (offered to the Head of House). */
+    onSetUpChild: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val vm = viewModel { MembersViewModel(session) }
@@ -290,6 +292,17 @@ fun MembersScreen(
 
             if (assignableRoles(user.role).isNotEmpty()) {
                 Button(onClick = { vm.dismissAdded(); vm.clearErrors(); adding = true }) { Text("Add a member") }
+            }
+            // Only the Head of House chooses supervisors (state.supervision is loaded only for them).
+            if (state.supervision != null) {
+                Column {
+                    Text(
+                        "Adding a child or teen? Set up a child also walks you through their phone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = onSetUpChild) { Text("Set up a child") }
+                }
             }
             state.added?.let { added ->
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
@@ -429,7 +442,7 @@ private fun RenameDialog(current: String, busy: Boolean, onSave: (String) -> Uni
  * [error]: what's wrong with it (red, said under it); null shows the hint.
  */
 @Composable
-private fun TempPasswordField(password: String, label: String, error: String?, onChange: (String) -> Unit) {
+internal fun TempPasswordField(password: String, label: String, error: String?, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = password,
         onValueChange = { onChange(it.take(128)) },
@@ -538,13 +551,13 @@ private fun AddMemberDialog(actorRole: String?, state: MembersViewModel.UiState,
 }
 
 /** What every supervisor picker says: only the ticked adults get the controls (web: SUPERVISION_HINT). */
-private const val SUPERVISION_HINT =
+internal const val SUPERVISION_HINT =
     "Only the adults ticked here can change their phone rules and get alerts about their phone. Only the Head of " +
         "House can change this, so nobody can add themselves."
 
 /** One tick box per adult who may supervise. */
 @Composable
-private fun SupervisorChecks(
+internal fun SupervisorChecks(
     supervisors: List<SupervisionPerson>,
     checked: List<String>,
     enabled: Boolean,
@@ -577,7 +590,7 @@ private fun SupervisorChecks(
 
 /** [error]: what's wrong with it (red, said under it); null shows the hint. */
 @Composable
-private fun UsernameField(value: String, error: String?, onChange: (String) -> Unit) {
+internal fun UsernameField(value: String, error: String?, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = { onChange(it.take(30)) },
@@ -593,7 +606,7 @@ private fun UsernameField(value: String, error: String?, onChange: (String) -> U
 
 /** [error]: what's wrong with it (red, said under it). */
 @Composable
-private fun EmailField(value: String, error: String?, optional: Boolean, onChange: (String) -> Unit) {
+internal fun EmailField(value: String, error: String?, optional: Boolean, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = { onChange(it.take(160)) },

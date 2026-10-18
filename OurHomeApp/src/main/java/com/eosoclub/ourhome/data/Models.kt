@@ -26,6 +26,8 @@ data class AppRelease(
     val versionName: String,
     val versionCode: Long,
     val appId: String,
+    /** The server address built in; empty = the app asks at sign-in (and from older servers). */
+    val server: String = "",
     val builtAt: String,
     val sizeBytes: Long,
     val sha256: String,

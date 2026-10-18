@@ -711,6 +711,7 @@ class ApiClient(
 
     /** Adds someone with a temporary password they must change; a blank [email] gets a placeholder. */
     /** [supervisorIds]: who supervises a new child or teen (Head of House only; empty sends none). */
+    /** [setup]: their phone's choices (Set up a child; only from one of their supervisors). */
     suspend fun createMember(
         name: String,
         username: String,
@@ -718,6 +719,7 @@ class ApiClient(
         role: String,
         password: String,
         supervisorIds: List<String> = emptyList(),
+        setup: ChildSetupChoices? = null,
     ): MemberAccount =
         call(
             post(
@@ -729,10 +731,25 @@ class ApiClient(
                     put("role", role)
                     put("password", password)
                     if (supervisorIds.isNotEmpty()) putJsonArray("supervisorIds") { supervisorIds.forEach { add(it) } }
+                    setup?.let { choices ->
+                        putJsonObject("setup") {
+                            put("locationRequired", choices.locationRequired)
+                            put("shareAppUsage", choices.shareAppUsage)
+                            putJsonObject("rules") {
+                                put("keepRunning", choices.rules.keepRunning)
+                                put("preventUninstall", choices.rules.preventUninstall)
+                                put("batteryUnrestricted", choices.rules.batteryUnrestricted)
+                            }
+                        }
+                    }
                 },
             ),
             MemberAccount.serializer(),
         )
+
+    /** A new setup link (QR code) for a child's or teen's phone, replacing the last (Head of House only). */
+    suspend fun createSetupLink(memberId: String): SetupLink =
+        call(post("/api/members/setup-link", buildJsonObject { put("memberId", memberId) }), SetupLink.serializer())
 
     /** Who supervises each child and teen (Head of House only; 403 for anyone else). */
     suspend fun supervision(): Supervision = call(get("/api/supervision"), Supervision.serializer())
