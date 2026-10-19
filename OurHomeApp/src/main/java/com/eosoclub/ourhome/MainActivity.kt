@@ -39,6 +39,7 @@ import com.eosoclub.ourhome.location.Geofences
 import com.eosoclub.ourhome.notifications.Push
 import com.eosoclub.ourhome.notifications.RequestReminders
 import com.eosoclub.ourhome.notifications.StayConnected
+import com.eosoclub.ourhome.ui.ChoosePasswordScreen
 import com.eosoclub.ourhome.ui.ClearUserScope
 import com.eosoclub.ourhome.ui.HomeScreen
 import com.eosoclub.ourhome.ui.UserScope
@@ -204,7 +205,10 @@ private fun Root(
         }
         // Each account gets its own screen state (see UserScopes).
         is AuthState.SignedIn -> UserScope(s.user.id) {
-            HomeScreen(session, settings, s.user, openTab, onTabOpened)
+            // A temporary password is replaced before anything else (web: the
+            // /change-password gate); Home follows once it's done.
+            if (s.user.mustChangePassword == true) ChoosePasswordScreen(session, s.user)
+            else HomeScreen(session, settings, s.user, openTab, onTabOpened)
         }
     }
 }

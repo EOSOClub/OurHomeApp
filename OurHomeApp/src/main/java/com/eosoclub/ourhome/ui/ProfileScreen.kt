@@ -1,5 +1,6 @@
 package com.eosoclub.ourhome.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
@@ -18,11 +19,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedTextField
@@ -30,12 +35,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -107,6 +115,10 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
         val release: AppRelease? = null,
         /** 0..1 while an update downloads, else null. */
         val downloadProgress: Float? = null,
+        /** An adult shares this member's app usage, so Phone and sharing says so while closed. */
+        val usageShared: Boolean = false,
+        /** A live check is running on this member: Phone and sharing opens to show it (its notification opens Profile). */
+        val checkOnMe: Boolean = false,
     )
 
     private val api = session.api
@@ -121,7 +133,17 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
         val release = runCatching { api.appRelease() }.getOrNull()
         // An older server lists id + name only (no role): no directory then.
         val members = runCatching { api.householdMembers() }.getOrNull()?.takeIf { list -> list.any { it.role != null } }
-        state.update { it.copy(release = release, members = members ?: it.members) }
+        val usageShared = runCatching { api.myUsageSharing().shared }.getOrNull()
+        // Refused with Location off for the household: then there's no check.
+        val checkOnMe = runCatching { api.liveChecks().onMe != null }.getOrDefault(false)
+        state.update {
+            it.copy(
+                release = release,
+                members = members ?: it.members,
+                usageShared = usageShared ?: it.usageShared,
+                checkOnMe = checkOnMe,
+            )
+        }
     }
 
     /** Downloads the offered update with this session, checks it, then opens Android's installer. */
@@ -210,7 +232,6 @@ class ProfileViewModel(private val session: SessionManager) : ViewModel() {
 @Composable
 fun ProfileScreen(
     session: SessionManager,
-    mustChangePassword: Boolean,
     showMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
     /** The Location feature is on for the household. */
@@ -243,39 +264,44 @@ fun ProfileScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            if (mustChangePassword) {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                    Text(
-                        "Your account was set up with a temporary password. Please choose your own below.",
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.padding(16.dp),
-                    )
-                }
-            }
             AccountCard(profile)
             profile.profile?.let { about ->
-                // Keyed on the saved values so the form resets to them after a save.
-                key(about) {
-                    AboutMeCard(profile.name, about, saving = state.savingAbout, errors = vm.aboutForm, onSave = vm::saveAboutMe)
-                }
+                AboutMeCard(profile.name, about, saving = state.savingAbout, errors = vm.aboutForm, onSave = vm::saveAboutMe)
             }
             state.members?.takeIf { it.size > 1 }?.let { HouseholdCard(it, profile.id) }
-            if (showLocation) LocationCard(session, showMessage)
-            AppUsageCard(session)
-            InstantAlertsCard(session, showMessage)
+            // The long phone blocks, closed so a newly set up phone isn't a wall of
+            // switches (each section shows only when it applies to this member).
+            CollapsibleCard(
+                "Phone and sharing",
+                phoneSubtitle(showLocation, state.usageShared),
+                group = true,
+                openWhen = showLocation && state.checkOnMe,
+            ) {
+                if (showLocation) LocationCard(session, showMessage)
+                AppUsageCard(session)
+                InstantAlertsCard(session, showMessage)
+            }
             state.release?.let { release ->
                 val context = LocalContext.current
                 AppUpdateCard(release, state.downloadProgress) { vm.downloadAndInstall(context.applicationContext) }
             }
-            // Keyed on the saved values so the form resets to them after a save.
-            key(profile.name, profile.username, profile.email) {
-                EditProfileCard(profile, saving = state.savingProfile, errors = vm.profileForm, onSave = vm::saveProfile)
-            }
-            key(state.passwordFormKey) {
-                ChangePasswordCard(changing = state.changingPassword, errors = vm.passwordForm, onChange = vm::changePassword)
-            }
+            EditProfileCard(profile, saving = state.savingProfile, errors = vm.profileForm, onSave = vm::saveProfile)
+            ChangePasswordCard(state.passwordFormKey, changing = state.changingPassword, errors = vm.passwordForm, onChange = vm::changePassword)
         }
     }
+}
+
+/**
+ * What Phone and sharing holds, so a closed block still says what's inside,
+ * app usage included when an adult shares it.
+ */
+internal fun phoneSubtitle(showLocation: Boolean, usageShared: Boolean): String {
+    val parts = listOfNotNull(
+        "location".takeIf { showLocation },
+        "app usage".takeIf { usageShared },
+        "alerts",
+    )
+    return parts.joinToString(", ").replaceFirstChar { it.uppercase() } + " and keeping Our Home running."
 }
 
 @Composable
@@ -315,8 +341,22 @@ private fun Stat(label: String, value: Int) {
     }
 }
 
+/** True inside a [CollapsibleCard] group: a [SectionCard] then sits under a divider instead of in a card of its own. */
+private val LocalGroupedSection = staticCompositionLocalOf { false }
+
 @Composable
 internal fun SectionCard(title: String, subtitle: String, content: @Composable ColumnScope.() -> Unit) {
+    if (LocalGroupedSection.current) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            HorizontalDivider()
+            Column {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            content()
+        }
+        return
+    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column {
@@ -324,6 +364,54 @@ internal fun SectionCard(title: String, subtitle: String, content: @Composable C
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             content()
+        }
+    }
+}
+
+/**
+ * A card whose body folds away under its title: tap the title row to open or
+ * close it. For long blocks; short ones stay a plain [SectionCard]. Starts
+ * closed unless [startOpen]; stays as left across a rotation. It opens by
+ * itself whenever [openWhen] turns true (something inside needs seeing).
+ * With [group], the [SectionCard]s inside sit under dividers in this one card.
+ */
+@Composable
+internal fun CollapsibleCard(
+    title: String,
+    subtitle: String,
+    startOpen: Boolean = false,
+    group: Boolean = false,
+    openWhen: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var open by rememberSaveable { mutableStateOf(startOpen) }
+    LaunchedEffect(openWhen) { if (openWhen) open = true }
+    Card(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = if (open) "Close" else "Open") { open = !open }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(
+                if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        AnimatedVisibility(open) {
+            Column(
+                Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(if (group) 16.dp else 12.dp),
+            ) {
+                CompositionLocalProvider(LocalGroupedSection provides group) { content() }
+            }
         }
     }
 }
@@ -384,6 +472,21 @@ private fun AboutMeCard(
     errors: FormErrors,
     onSave: (PublicProfile) -> Unit,
 ) {
+    CollapsibleCard("About me", "Make your profile yours. Everyone in the household can see this.") {
+        // Keyed on the saved values so the form resets to them after a save
+        // (inside the card, so a save doesn't close it).
+        key(p) { AboutMeForm(name, p, saving, errors, onSave) }
+    }
+}
+
+@Composable
+private fun AboutMeForm(
+    name: String,
+    p: PublicProfile,
+    saving: Boolean,
+    errors: FormErrors,
+    onSave: (PublicProfile) -> Unit,
+) {
     var emoji by remember { mutableStateOf(p.avatarEmoji.orEmpty()) }
     var color by remember { mutableStateOf(p.profileColor) }
     var bio by remember { mutableStateOf(p.bio.orEmpty()) }
@@ -401,7 +504,7 @@ private fun AboutMeCard(
     )
     val dirty = next != p
 
-    SectionCard("About me", "Make your profile yours. Everyone in the household can see this.") {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             ProfileAvatar(name, next.avatarEmoji, color, size = 56.dp)
             Text(name, style = MaterialTheme.typography.titleMedium)
@@ -488,7 +591,7 @@ private fun AboutMeCard(
 /** Everyone's about-me, read-only (web: HouseholdCard). */
 @Composable
 private fun HouseholdCard(members: List<Member>, userId: String) {
-    SectionCard("Household", "What everyone has shared about themselves.") {
+    CollapsibleCard("Household", "What everyone has shared about themselves.") {
         members.forEach { m ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 ProfileAvatar(m.name, m.avatarEmoji, m.profileColor)
@@ -521,6 +624,19 @@ private fun EditProfileCard(
     errors: FormErrors,
     onSave: (name: String?, username: String?, email: String?, currentPassword: String?) -> Unit,
 ) {
+    CollapsibleCard("Edit profile", "Your display name, sign-in username, and recovery email.") {
+        // Keyed on the saved values so the form resets to them after a save.
+        key(p.name, p.username, p.email) { EditProfileForm(p, saving, errors, onSave) }
+    }
+}
+
+@Composable
+private fun EditProfileForm(
+    p: ProfileOverview,
+    saving: Boolean,
+    errors: FormErrors,
+    onSave: (name: String?, username: String?, email: String?, currentPassword: String?) -> Unit,
+) {
     var name by remember { mutableStateOf(p.name) }
     var username by remember { mutableStateOf(p.username.orEmpty()) }
     var email by remember { mutableStateOf(p.email) }
@@ -542,7 +658,7 @@ private fun EditProfileCard(
     val canSave = (nameDirty || usernameDirty || emailDirty) && nameError == null && usernameError == null &&
         emailError == null && (!emailDirty || emailPassword.isNotEmpty()) && !saving
 
-    SectionCard("Edit profile", "Your display name, sign-in username, and recovery email.") {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(
             value = name,
             onValueChange = { name = it; errors.clear("name") },
@@ -597,8 +713,21 @@ private fun EditProfileCard(
 
 @Composable
 private fun ChangePasswordCard(
+    /** Bumped after a successful change, so the fields clear. */
+    formKey: Int,
     changing: Boolean,
     /** The last failure: a wrong current password or a refused new one is marked on its field. */
+    errors: FormErrors,
+    onChange: (current: String, new: String, signOutOthers: Boolean) -> Unit,
+) {
+    CollapsibleCard("Change password", "Enter your current password, then choose a new one.") {
+        key(formKey) { ChangePasswordForm(changing, errors, onChange) }
+    }
+}
+
+@Composable
+private fun ChangePasswordForm(
+    changing: Boolean,
     errors: FormErrors,
     onChange: (current: String, new: String, signOutOthers: Boolean) -> Unit,
 ) {
@@ -612,7 +741,7 @@ private fun ChangePasswordCard(
     val currentError = errors["currentPassword"]
     val newError = errors["newPassword"] ?: passwordProblem(new)
 
-    SectionCard("Change password", "Enter your current password, then choose a new one.") {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         PasswordField(
             "Current password",
             current,

@@ -205,12 +205,12 @@ fun HomeScreen(
             .onSuccess { phoneSetup = it }
             .onFailure { if (it is CancellationException) throw it }
     }
-    // Offered the first time nothing is in the way: a temporary password goes
-    // first (Profile), so a newly added child gets the checklist as soon as
-    // they leave Profile with their own password, not on the next app start.
-    LaunchedEffect(phoneSetup, overlay, user.mustChangePassword) {
+    // Offered the first time nothing is in the way. A temporary password is
+    // replaced before Home shows (ChoosePasswordScreen), so a newly added child
+    // goes from choosing their password straight into this checklist.
+    LaunchedEffect(phoneSetup, overlay) {
         val setup = phoneSetup ?: return@LaunchedEffect
-        if (setupOffered || overlay != null || user.mustChangePassword == true) return@LaunchedEffect
+        if (setupOffered || overlay != null) return@LaunchedEffect
         setupOffered = true
         if (PhoneSetupDevice.steps(currentContext, setup).any { !it.done }) overlay = Overlay.PhoneSetup
     }
@@ -307,11 +307,6 @@ fun HomeScreen(
             if (canChangeTags) showAction(text, "Change room") { scan.open(req.ref, showSettings = true) }
             else showMessage(text)
         }
-    }
-
-    // Accounts given a temporary password land on Profile to choose their own.
-    LaunchedEffect(Unit) {
-        if (user.mustChangePassword == true) overlay = Overlay.Profile
     }
 
     // Set up a child opens from Household, so Back goes there.
@@ -499,7 +494,6 @@ fun HomeScreen(
             )
             Overlay.Profile -> ProfileScreen(
                 session,
-                user.mustChangePassword == true,
                 showMessage,
                 modifier,
                 showLocation = features.location,

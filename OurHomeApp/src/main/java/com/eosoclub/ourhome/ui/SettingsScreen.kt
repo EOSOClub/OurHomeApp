@@ -430,7 +430,7 @@ private fun PlacesCard(places: Places, busy: Boolean, vm: SettingsViewModel) {
     fun roomsOn(floorId: String?) = places.rooms.filter { (it.floorId?.takeIf { id -> id in floorIds }) == floorId }
     val loose = roomsOn(null)
 
-    SectionCard(
+    CollapsibleCard(
         "Rooms & floors",
         "Where tasks are done and stock is kept. Tasks and items can belong to a room or a whole floor; the Tasks and Stock tabs group them in this order. Tap one to rename or remove it.",
     ) {
@@ -562,7 +562,7 @@ private fun CategoriesCard(categories: List<CategoryAdmin>, busy: Boolean, vm: S
     // null = closed; a category with a blank id = new.
     var editing by remember { mutableStateOf<CategoryAdmin?>(null) }
 
-    SectionCard("Categories", "Labels with a colour for tasks, shopping, and inventory. Tap one to edit it.") {
+    CollapsibleCard("Categories", "Labels with a colour for tasks, shopping, and inventory. Tap one to edit it.") {
         Button(onClick = { editing = CategoryAdmin(id = "", name = "", kind = "task", color = "#38bdf8") }) { Text("New category") }
         if (categories.isEmpty()) {
             Text("No categories yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -683,10 +683,12 @@ private fun PaperlessCard(status: PaperlessStatus, busy: Boolean, syncing: Boole
     val conn = status.connection
     val uriHandler = LocalUriHandler.current
 
-    SectionCard(
+    CollapsibleCard(
         "Paperless bill import",
         "Documents tagged bill or bill-payment in Paperless-ngx become bills and payments here, checked every 15 minutes. " +
             "Payments are matched to an unpaid bill; one with no bill to pay is listed below instead.",
+        // A failed check opens it, so the error isn't missed.
+        openWhen = status.lastError != null,
     ) {
         when {
             conn == null && !status.canEdit -> Text(
@@ -872,7 +874,7 @@ private fun HomeAssistantCard(
     var name by remember { mutableStateOf("") }
     var revoking by remember { mutableStateOf<Integration?>(null) }
 
-    SectionCard(
+    CollapsibleCard(
         "Home Assistant connection",
         "Create a token, then have Home Assistant POST scans to the address below with an Authorization: Bearer header.",
     ) {
@@ -991,7 +993,7 @@ private fun NfcTagsCard(tags: List<NfcTag>, items: List<InventoryItem>, places: 
     val rooms = places?.rooms.orEmpty()
     val errors = vm.tagForm
 
-    SectionCard(
+    CollapsibleCard(
         "NFC tags",
         "Bind a tag id (e.g. one Home Assistant scans) to an inventory item, or make it a location tag that opens a room's tasks. To set up a physical tag, scan it with this phone instead.",
     ) {
