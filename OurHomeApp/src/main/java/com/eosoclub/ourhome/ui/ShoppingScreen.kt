@@ -1,5 +1,32 @@
 package com.eosoclub.ourhome.ui
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import com.eosoclub.ourhome.data.ApiException
+import com.eosoclub.ourhome.data.CategoryRef
+import com.eosoclub.ourhome.data.LinkPreview
+import com.eosoclub.ourhome.data.ShoppingItemFields
+import com.eosoclub.ourhome.data.ProductLink
+import com.eosoclub.ourhome.data.productLink
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.style.TextOverflow
+import java.math.BigDecimal
+import java.util.Locale
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -63,6 +90,10 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
         val loading: Boolean = true,
         val error: String? = null,
         val editing: ShoppingItem? = null,
+        /** The New item form is open, starting from this name (the add bar's text). */
+        val creating: String? = null,
+        /** The household's shopping categories, for the item forms. */
+        val categories: List<CategoryRef> = emptyList(),
         val saving: Boolean = false,
         // The list editor: creating a new list, or renaming/deleting [editingList].
         val creatingList: Boolean = false,
@@ -78,6 +109,8 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
         state.load({ api.shoppingLists() }, { s, v -> s.copy(lists = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
+        // Only the forms' Category choice needs these; without them it offers None.
+        runCatching { api.categories("shopping") }.onSuccess { c -> state.update { it.copy(categories = c) } }
     }
 
     fun select(listId: String) = state.update { it.copy(selectedId = listId) }
@@ -119,17 +152,52 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
         state.update { it.copy(editing = item) }
     }
 
-    fun cancelEdit() {
+    /** Opens the New item form ("More options" under the add bar), starting from [name]. */
+    fun startCreate(name: String) {
         form.clear()
-        state.update { it.copy(editing = null) }
+        state.update { it.copy(creating = name) }
     }
 
-    fun save(item: ShoppingItem, name: String, quantity: Int, priority: String, notes: String?, recurring: Boolean) =
+    fun cancelEdit() {
+        form.clear()
+        state.update { it.copy(editing = null, creating = null) }
+    }
+
+    /** [onCreated] runs only when it worked (it empties the add bar). */
+    fun create(fields: ShoppingItemFields, onCreated: () -> Unit) = viewModelScope.launch {
+        val list = state.value.selected ?: return@launch
+        state.update { it.copy(saving = true) }
+        form.clear()
+        try {
+            val item = api.addShoppingItem(list.id, fields)
+            editItems(list.id) { it + item }
+            state.update { it.copy(creating = null) }
+            onCreated()
+        } catch (e: Exception) {
+            // Shown in the form, which sits over the snackbar.
+            form.fail(e, "Couldn't add item")
+        } finally {
+            state.update { it.copy(saving = false) }
+        }
+    }
+
+    /** "Fetch details" in the item forms. */
+    suspend fun linkPreview(url: String): LinkPreview = api.shoppingLinkPreview(url)
+
+    // Pictures already loaded, so scrolling the list back doesn't fetch them again.
+    private val pictures = mutableMapOf<String, ImageBitmap>()
+
+    /** The product picture a link's details found, or null if it can't be loaded. */
+    suspend fun picture(url: String): ImageBitmap? = pictures[url] ?: api.remoteImage(url)?.let { bytes ->
+        withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
+    }?.also { pictures[url] = it }
+
+    fun save(item: ShoppingItem, fields: ShoppingItemFields) =
         viewModelScope.launch {
             state.update { it.copy(saving = true) }
             form.clear()
             try {
-                val updated = api.updateShoppingItem(item.id, name, quantity, priority, notes, recurring)
+                val updated = api.updateShoppingItem(item.id, fields)
                 editItems(item.listId) { items -> items.map { if (it.id == item.id) updated else it } }
                 state.update { it.copy(editing = null) }
             } catch (e: Exception) {
@@ -260,15 +328,37 @@ fun ShoppingScreen(
         )
     }
 
+    // Here, not in the add bar, so the New item form can empty it once the item is added.
+    var addText by rememberSaveable { mutableStateOf("") }
+
     state.editing?.let { item ->
         ShoppingItemEditor(
             item = item,
+            initialName = item.name,
+            categories = state.categories,
             saving = state.saving,
             errors = vm.form,
             canSave = access.canEdit(item.createdById, userId),
             onDismiss = vm::cancelEdit,
-            onSave = { name, qty, priority, notes, recurring -> vm.save(item, name, qty, priority, notes, recurring) },
+            onSave = { fields -> vm.save(item, fields) },
             onDelete = if (access.canDelete(item.createdById, userId)) ({ vm.delete(item) }) else null,
+            fetchPreview = vm::linkPreview,
+            loadPicture = vm::picture,
+        )
+    }
+    state.creating?.let { name ->
+        ShoppingItemEditor(
+            item = null,
+            initialName = name,
+            categories = state.categories,
+            saving = state.saving,
+            errors = vm.form,
+            canSave = access.create,
+            onDismiss = vm::cancelEdit,
+            onSave = { fields -> vm.create(fields) { addText = "" } },
+            onDelete = null,
+            fetchPreview = vm::linkPreview,
+            loadPicture = vm::picture,
         )
     }
 
@@ -318,18 +408,27 @@ fun ShoppingScreen(
                         TextButton(onClick = vm::startCreateList) { Text("Create a list") }
                     }
                 }
-                else -> ListContent(selected, vm, access, userId)
+                else -> ListContent(selected, vm, access, userId, addText, onAddText = { addText = it })
             }
         }
     }
 }
 
 @Composable
-private fun ListContent(list: ShoppingList, vm: ShoppingViewModel, access: PageAccess, userId: String) {
+private fun ListContent(
+    list: ShoppingList,
+    vm: ShoppingViewModel,
+    access: PageAccess,
+    userId: String,
+    addText: String,
+    onAddText: (String) -> Unit,
+) {
     val open = list.items.filter { !it.purchased }
     val bought = list.items.filter { it.purchased }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        if (access.create) item(key = "add") { AddItemRow(vm.addForm, onAdd = vm::add) }
+        if (access.create) item(key = "add") {
+            AddItemRow(addText, onAddText, vm.addForm, onAdd = vm::add, onMoreOptions = { vm.startCreate(addText.trim()) })
+        }
         items(open, key = { it.id }) { ItemRow(it, vm, access, userId) }
         if (bought.isNotEmpty()) {
             item(key = "bought-header") {
@@ -350,16 +449,24 @@ private fun ListContent(list: ShoppingList, vm: ShoppingViewModel, access: PageA
     }
 }
 
-/** The text is cleared only once the item is added, so a refused name stays to fix (marked red). */
+/**
+ * The text is cleared only once the item is added, so a refused name stays to fix (marked red).
+ * "More options" opens the New item form with every field, starting from the typed name.
+ */
 @Composable
-private fun AddItemRow(errors: FormErrors, onAdd: (String, () -> Unit) -> Unit) {
-    var text by rememberSaveable { mutableStateOf("") }
+private fun AddItemRow(
+    text: String,
+    onText: (String) -> Unit,
+    errors: FormErrors,
+    onAdd: (String, () -> Unit) -> Unit,
+    onMoreOptions: () -> Unit,
+) {
     fun submit() {
-        if (text.isNotBlank()) onAdd(text.trim()) { text = "" }
+        if (text.isNotBlank()) onAdd(text.trim()) { onText("") }
     }
     OutlinedTextField(
         value = text,
-        onValueChange = { text = it; errors.clear("name") },
+        onValueChange = { onText(it); errors.clear("name") },
         placeholder = { Text("Add an item") },
         singleLine = true,
         isError = errors["name"] != null,
@@ -369,8 +476,9 @@ private fun AddItemRow(errors: FormErrors, onAdd: (String, () -> Unit) -> Unit) 
         trailingIcon = {
             IconButton(onClick = ::submit, enabled = text.isNotBlank()) { Icon(Icons.Filled.Add, "Add item") }
         },
-        modifier = Modifier.fillMaxWidth().padding(16.dp, 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp),
     )
+    TextButton(onClick = onMoreOptions, modifier = Modifier.padding(start = 4.dp)) { Text("More options") }
 }
 
 @Composable
@@ -384,6 +492,18 @@ private fun ItemRow(item: ShoppingItem, vm: ShoppingViewModel, access: PageAcces
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Checkbox(checked = item.purchased, onCheckedChange = { vm.toggle(item) }, enabled = canToggle)
+        // The picture "Fetch details" found, as on the web's row; nothing until it loads.
+        item.imageUrl?.let { url ->
+            val picture by produceState<ImageBitmap?>(null, url) { value = vm.picture(url) }
+            picture?.let {
+                Image(
+                    it,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.padding(end = 12.dp).size(40.dp).clip(RoundedCornerShape(4.dp)).background(Color.White),
+                )
+            }
+        }
         Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
             Text(
                 if (item.quantity > 1) "${item.name} ×${item.quantity}" else item.name,
@@ -391,19 +511,52 @@ private fun ItemRow(item: ShoppingItem, vm: ShoppingViewModel, access: PageAcces
                 textDecoration = if (item.purchased) TextDecoration.LineThrough else null,
                 color = if (item.purchased) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
             )
-            val meta = listOfNotNull(
-                item.notes?.takeIf { it.isNotBlank() },
-                "Recurring".takeIf { item.recurring },
-                item.priority.takeIf { it == "high" }?.let { "High priority" },
-            )
-            if (meta.isNotEmpty()) {
-                Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // One line under the name, notes last so only they get cut short. Tapping a
+            // cut-short line shows all of it (the row's own tap ticks the item off).
+            itemDetails(item)?.let { details ->
+                var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
+                var cutShort by remember(details) { mutableStateOf(false) }
+                Text(
+                    details,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (expanded) Int.MAX_VALUE else 1,
+                    overflow = TextOverflow.Ellipsis,
+                    onTextLayout = { if (!expanded) cutShort = it.hasVisualOverflow },
+                    // Only when there's more to show: a disabled clickable still swallows the
+                    // tap, and a short line's tap must tick the row like the rest of it.
+                    modifier = if (cutShort || expanded) Modifier.clickable { expanded = !expanded } else Modifier,
+                )
             }
+            item.url?.takeIf { it.isNotBlank() }?.let { ItemLink(productLink(it)) }
         }
         if (canOpenEditor) {
             IconButton(onClick = { vm.startEdit(item) }) {
                 Icon(Icons.Filled.Edit, contentDescription = "Edit ${item.name}", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+        }
+    }
+}
+
+/** The item's product link: "View on Amazon" (and the product id) or the shop's address; opens in the browser. */
+@Composable
+private fun ItemLink(link: ProductLink) {
+    val uriHandler = LocalUriHandler.current
+    Row(
+        Modifier.padding(top = 2.dp).clickable { runCatching { uriHandler.openUri(link.href) } },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            link.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        link.asin?.let {
+            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -507,32 +660,70 @@ private fun ShoppingListEditor(
 
 private val SHOPPING_PRIORITIES = listOf("low", "medium", "high")
 
+/** The New item form ([item] null) or an item's editor: every field of the web's forms. */
 @Composable
 private fun ShoppingItemEditor(
-    item: ShoppingItem,
+    item: ShoppingItem?,
+    /** The item's name, or the add bar's text for a new one. */
+    initialName: String,
+    categories: List<CategoryRef>,
     saving: Boolean,
     /** The last save failure: said at the top, and the fields the server named marked. */
     errors: FormErrors,
     /** False when the user may only delete this item, not change it. */
     canSave: Boolean,
     onDismiss: () -> Unit,
-    onSave: (name: String, quantity: Int, priority: String, notes: String?, recurring: Boolean) -> Unit,
+    onSave: (ShoppingItemFields) -> Unit,
     onDelete: (() -> Unit)?,
+    fetchPreview: suspend (String) -> LinkPreview,
+    loadPicture: suspend (String) -> ImageBitmap?,
 ) {
-    var name by remember { mutableStateOf(item.name) }
-    var quantity by remember { mutableStateOf(item.quantity.toString()) }
-    var priority by remember { mutableStateOf(item.priority) }
-    var notes by remember { mutableStateOf(item.notes.orEmpty()) }
-    var recurring by remember { mutableStateOf(item.recurring) }
+    var name by remember { mutableStateOf(initialName) }
+    var quantity by remember { mutableStateOf((item?.quantity ?: 1).toString()) }
+    var priority by remember { mutableStateOf(item?.priority ?: "medium") }
+    var categoryId by remember { mutableStateOf(item?.category?.id.orEmpty()) }
+    var price by remember { mutableStateOf(item?.estimatedPrice?.let(::priceText).orEmpty()) }
+    var notes by remember { mutableStateOf(item?.notes.orEmpty()) }
+    var url by remember { mutableStateOf(item?.url.orEmpty()) }
+    var imageUrl by remember { mutableStateOf(item?.imageUrl) }
+    var recurring by remember { mutableStateOf(item?.recurring ?: false) }
     val qty = quantity.toIntOrNull()?.takeIf { it in 1..999 }
     val quantityError = errors["quantity"] ?: if (qty == null) "Enter a number from 1 to 999." else null
+    // Blank is fine (no price); anything else must be a price the server takes.
+    val priceValue = priceOrNull(price)
+    val priceInvalid = price.isNotBlank() && priceValue == null
+    val priceError = errors["estimatedPrice"] ?: if (priceInvalid) "Enter a price like 4.99." else null
+    // The item's own category stays choosable even if the list didn't load.
+    val categoryOptions = listOf("" to "None") +
+        (categories + listOfNotNull(item?.category)).distinctBy { it.id }.map { it.id to it.name }
 
     EditorDialog(
-        title = if (canSave) "Edit item" else "Item",
+        title = when {
+            item == null -> "New item"
+            canSave -> "Edit item"
+            else -> "Item"
+        },
         saving = saving,
-        saveEnabled = canSave && name.isNotBlank() && qty != null,
+        saveEnabled = canSave && name.isNotBlank() && qty != null && !priceInvalid,
         onDismiss = onDismiss,
-        onSave = { onSave(name.trim(), qty!!, priority, notes.trim().ifEmpty { null }, recurring) },
+        onSave = {
+            val link = url.trim().ifEmpty { null }
+            onSave(
+                ShoppingItemFields(
+                    name = name.trim(),
+                    quantity = qty!!,
+                    priority = priority,
+                    categoryId = categoryId.ifEmpty { null },
+                    estimatedPrice = priceValue,
+                    notes = notes.trim().ifEmpty { null },
+                    url = link,
+                    // A cleared link drops its picture too, as on the web.
+                    imageUrl = imageUrl.takeIf { link != null },
+                    recurring = recurring,
+                ),
+            )
+        },
+        saveLabel = if (item == null) "Add" else "Save",
         deleteLabel = "Delete item",
         onDelete = onDelete,
         error = errors.message,
@@ -560,6 +751,44 @@ private fun ShoppingItemEditor(
         FieldLabel("Priority")
         ChoiceChips(SHOPPING_PRIORITIES, priority) { priority = it; errors.clear("priority") }
         FieldError(errors["priority"])
+        DropdownField(
+            "Category",
+            categoryOptions,
+            categoryId,
+            onSelect = { categoryId = it; errors.clear("categoryId") },
+            error = errors["categoryId"],
+        )
+        OutlinedTextField(
+            value = price,
+            onValueChange = { price = it.filter { c -> c.isDigit() || c == '.' }.take(10); errors.clear("estimatedPrice") },
+            label = { Text("Est. price") },
+            placeholder = { Text("0.00") },
+            prefix = { Text("$") },
+            singleLine = true,
+            isError = priceError != null,
+            supportingText = priceError?.let { { Text(it) } },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        ProductLinkField(
+            url = url,
+            imageUrl = imageUrl,
+            error = errors["url"] ?: errors["imageUrl"],
+            onUrlChange = {
+                url = it
+                imageUrl = null
+                errors.clear("url")
+                errors.clear("imageUrl")
+            },
+            fetchPreview = fetchPreview,
+            // Fills only what's still empty, as on the web.
+            onPreview = { preview ->
+                preview.imageUrl?.let { imageUrl = it }
+                if (preview.title != null && name.isBlank()) name = preview.title
+                if (preview.price != null && price.isBlank()) price = priceText(preview.price)
+            },
+            loadPicture = loadPicture,
+        )
         OutlinedTextField(
             value = notes,
             onValueChange = { notes = it; errors.clear("notes") },
@@ -581,5 +810,102 @@ private fun ShoppingItemEditor(
             Switch(checked = recurring, onCheckedChange = { recurring = it; errors.clear("recurring") })
         }
         FieldError(errors["recurring"])
+    }
+}
+
+/** A row's line under the name: the price of one, Recurring, High priority, then the notes (last, so only they get cut short). */
+internal fun itemDetails(item: ShoppingItem): String? = listOfNotNull(
+    item.estimatedPrice?.let { "$" + String.format(Locale.US, "%.2f", it) },
+    "Recurring".takeIf { item.recurring },
+    "High priority".takeIf { item.priority == "high" },
+    item.notes?.takeIf { it.isNotBlank() },
+).takeIf { it.isNotEmpty() }?.joinToString(" · ")
+
+/** A price as typed, without trailing zeros: 4.5, 12, 3.99. */
+internal fun priceText(price: Double): String = BigDecimal(price.toString()).stripTrailingZeros().toPlainString()
+
+/** The typed price the server takes (0 to 1,000,000), or null for blank or anything else. */
+internal fun priceOrNull(text: String): Double? = text.trim().toDoubleOrNull()?.takeIf { it >= 0 && it <= 1_000_000 }
+
+/**
+ * The web's LinkField: a product link, and "Fetch details" to read the page's
+ * title, picture and price ([onPreview] decides what to use). A link the server
+ * calls invalid is marked red; a page it couldn't read is just a note.
+ */
+@Composable
+private fun ProductLinkField(
+    url: String,
+    imageUrl: String?,
+    /** What the server said is wrong with the link when saving. */
+    error: String?,
+    onUrlChange: (String) -> Unit,
+    fetchPreview: suspend (String) -> LinkPreview,
+    onPreview: (LinkPreview) -> Unit,
+    loadPicture: suspend (String) -> ImageBitmap?,
+) {
+    val scope = rememberCoroutineScope()
+    var fetching by remember { mutableStateOf(false) }
+    var note by remember { mutableStateOf<String?>(null) }
+    var fetchError by remember { mutableStateOf<String?>(null) }
+    val shownError = error ?: fetchError
+
+    fun fetch() = scope.launch {
+        fetching = true
+        note = null
+        fetchError = null
+        try {
+            val preview = fetchPreview(url.trim())
+            onPreview(preview)
+            if (preview.title == null && preview.imageUrl == null && preview.price == null) {
+                note = "Couldn't read that link - fill the details in manually."
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val linkError = (e as? ApiException)?.fieldErrors?.get("url")
+            if (linkError != null) fetchError = linkError else note = e.message ?: "Failed to fetch link details."
+        } finally {
+            fetching = false
+        }
+    }
+
+    OutlinedTextField(
+        value = url,
+        onValueChange = {
+            onUrlChange(it)
+            note = null
+            fetchError = null
+        },
+        label = { Text("Link") },
+        placeholder = { Text("Paste an Amazon (or other) product link") },
+        singleLine = true,
+        isError = shownError != null,
+        supportingText = (shownError ?: note)?.let { { Text(it) } },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        OutlinedButton(onClick = { fetch() }, enabled = !fetching && url.isNotBlank()) {
+            if (fetching) {
+                CircularProgressIndicator(Modifier.padding(end = 8.dp).size(16.dp), strokeWidth = 2.dp)
+            }
+            Text("Fetch details")
+        }
+        if (imageUrl != null) {
+            val picture by produceState<ImageBitmap?>(null, imageUrl) { value = loadPicture(imageUrl) }
+            picture?.let {
+                Image(
+                    it,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)).background(Color.White),
+                )
+            }
+            Text(
+                "Preview image attached",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

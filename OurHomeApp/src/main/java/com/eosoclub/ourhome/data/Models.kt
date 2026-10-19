@@ -334,10 +334,30 @@ data class ShoppingItem(
     val quantity: Int = 1,
     val priority: String = "medium",
     val notes: String? = null,
+    /** A product page, and the picture "Fetch details" found on it. */
+    val url: String? = null,
+    val imageUrl: String? = null,
     val estimatedPrice: Double? = null,
     val recurring: Boolean = false,
     val purchased: Boolean = false,
     val category: CategoryRef? = null,
+)
+
+/** What "Fetch details" read from a product page; any part may be missing. */
+@Serializable
+data class LinkPreview(val title: String? = null, val imageUrl: String? = null, val price: Double? = null)
+
+/** Everything the add and edit forms send for a shopping item (the web's fields). */
+data class ShoppingItemFields(
+    val name: String,
+    val quantity: Int,
+    val priority: String,
+    val categoryId: String?,
+    val estimatedPrice: Double?,
+    val notes: String?,
+    val url: String?,
+    val imageUrl: String?,
+    val recurring: Boolean,
 )
 
 @Serializable

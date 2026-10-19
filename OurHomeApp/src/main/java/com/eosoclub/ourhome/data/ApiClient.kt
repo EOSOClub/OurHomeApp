@@ -422,6 +422,48 @@ class ApiClient(
             ShoppingItem.serializer(),
         )
 
+    /** Adds an item with every field the web's add form has; empty ones are left out, as on the web. */
+    suspend fun addShoppingItem(listId: String, fields: ShoppingItemFields): ShoppingItem =
+        call(
+            post(
+                "/api/shopping/items",
+                buildJsonObject {
+                    put("listId", listId)
+                    put("name", fields.name)
+                    put("quantity", fields.quantity)
+                    put("priority", fields.priority)
+                    put("recurring", fields.recurring)
+                    fields.categoryId?.let { put("categoryId", it) }
+                    fields.estimatedPrice?.let { put("estimatedPrice", it) }
+                    fields.notes?.let { put("notes", it) }
+                    fields.url?.let { put("url", it) }
+                    fields.imageUrl?.let { put("imageUrl", it) }
+                },
+            ),
+            ShoppingItem.serializer(),
+        )
+
+    /** Reads a product page's title, picture and price for the item forms' "Fetch details". */
+    suspend fun shoppingLinkPreview(url: String): LinkPreview =
+        call(post("/api/shopping/items/preview", buildJsonObject { put("url", url) }), LinkPreview.serializer())
+
+    // A store's picture is fetched straight from the store, without the server's cookies or Origin.
+    private val outside = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    /** A product picture from [url] (any site), or null if it can't be had; at most 5 MB. */
+    suspend fun remoteImage(url: String): ByteArray? = withContext(Dispatchers.IO) {
+        runCatching {
+            outside.newCall(Request.Builder().url(url).get().build()).execute().use { res ->
+                val body = res.body
+                if (!res.isSuccessful || body.contentLength() > 5_000_000) null
+                else body.bytes().takeIf { it.size <= 5_000_000 }
+            }
+        }.getOrNull()
+    }
+
     suspend fun setPurchased(itemId: String, purchased: Boolean): ShoppingItem =
         call(
             post(
@@ -431,24 +473,22 @@ class ApiClient(
             ShoppingItem.serializer(),
         )
 
-    suspend fun updateShoppingItem(
-        itemId: String,
-        name: String,
-        quantity: Int,
-        priority: String,
-        notes: String?,
-        recurring: Boolean,
-    ): ShoppingItem =
+    /** Saves every field, as the web's edit form does: a null clears it. */
+    suspend fun updateShoppingItem(itemId: String, fields: ShoppingItemFields): ShoppingItem =
         call(
             post(
                 "/api/shopping/items/update",
                 buildJsonObject {
                     put("itemId", itemId)
-                    put("name", name)
-                    put("quantity", quantity)
-                    put("priority", priority)
-                    put("notes", notes)
-                    put("recurring", recurring)
+                    put("name", fields.name)
+                    put("quantity", fields.quantity)
+                    put("priority", fields.priority)
+                    put("categoryId", fields.categoryId)
+                    put("estimatedPrice", fields.estimatedPrice)
+                    put("notes", fields.notes)
+                    put("url", fields.url)
+                    put("imageUrl", fields.imageUrl)
+                    put("recurring", fields.recurring)
                 },
             ),
             ShoppingItem.serializer(),
