@@ -45,6 +45,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -66,6 +69,7 @@ import com.eosoclub.ourhome.data.TaskCompletion
 import com.eosoclub.ourhome.data.centi
 import com.eosoclub.ourhome.data.formatPoints
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
@@ -160,7 +164,8 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
             val pts = if (showPoints && task.points > 0) " ·${formatPoints(task.points.centi())} pts" else ""
             val text = when {
                 updated.doneThisCycle -> "Done for this cycle$pts"
-                task.recurrence != null && updated.status != "completed" -> "Done - next one scheduled$pts"
+                task.recurrence != null && updated.status != "completed" ->
+                    updated.opensAt?.let { "Done - next one opens ${shortDate(it)}$pts" } ?: "Done - next one scheduled$pts"
                 else -> "Completed “${task.title}”$pts"
             }
             val completionId = updated.completionId
@@ -597,6 +602,15 @@ private fun TaskCard(
     onEdit: (() -> Unit)?,
 ) {
     val notes = task.notes?.takeIf { it.isNotBlank() }
+    // Done for this occurrence: the next one can't be completed before it
+    // opens. The clock moves on then, so the button comes back without a refresh.
+    var now by remember { mutableStateOf(Instant.now()) }
+    val waitsUntil = task.waitsUntil(now)
+    LaunchedEffect(waitsUntil) {
+        if (waitsUntil == null) return@LaunchedEffect
+        delay((waitsUntil.toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(0))
+        now = Instant.now()
+    }
     Card(Modifier.fillMaxWidth().animateContentSize()) {
         Row(
             Modifier
@@ -608,6 +622,7 @@ private fun TaskCard(
                 Text(task.title, style = MaterialTheme.typography.titleMedium)
                 val due = task.dueDate?.let { dueLabel(it) }.takeUnless { task.doneThisCycle }
                 val meta = listOfNotNull(
+                    waitsUntil?.let { "Done · next opens ${shortDate(it.toString())}" },
                     if (task.doneThisCycle) "Reopens ${task.cycleEndsAt?.let { shortDate(it) }}" else due?.first,
                     task.points.takeIf { showPoints && it > 0 }?.let { "${formatPoints(it.centi())} pts" },
                     task.priority.takeIf { it == "high" || it == "urgent" }?.replaceFirstChar(Char::uppercase),
@@ -633,9 +648,9 @@ private fun TaskCard(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.rotate(if (expanded) 180f else 0f).padding(horizontal = 4.dp),
             )
-            FilledTonalIconButton(onClick = onComplete, enabled = !busy && !task.doneThisCycle) {
+            FilledTonalIconButton(onClick = onComplete, enabled = !busy && !task.doneThisCycle && waitsUntil == null) {
                 if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                else Icon(Icons.Filled.Check, contentDescription = "Complete")
+                else Icon(Icons.Filled.Check, contentDescription = if (waitsUntil != null) "Done for now" else "Complete")
             }
         }
         if (expanded) {

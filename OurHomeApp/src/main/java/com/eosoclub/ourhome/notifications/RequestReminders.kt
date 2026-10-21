@@ -33,6 +33,8 @@ import com.eosoclub.ourhome.data.UnauthorizedException
 import com.eosoclub.ourhome.data.can
 import com.eosoclub.ourhome.data.awaitingAcceptanceBy
 import com.eosoclub.ourhome.data.canApproveMedia
+import com.eosoclub.ourhome.data.defaultRequestModules
+import com.eosoclub.ourhome.data.handledKinds
 import com.eosoclub.ourhome.data.defaultAccess
 import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.summary
@@ -216,8 +218,17 @@ object RequestReminders {
                 // Requests turned off by the server admin: its API refuses, so
                 // don't ask (that would fail the checks below too); the empty
                 // list clears any request alerts still showing.
-                val requests = if (Features.from(me?.features).requests) api.requests() else emptyList()
-                val waiting = awaitingAcceptanceBy(requests, user.id, canApproveMedia(access, user.role))
+                val requestsOn = Features.from(me?.features).requests
+                val requests = if (requestsOn) api.requests() else emptyList()
+                // Who handles which kind comes from the head's request types; a
+                // server from before them handled media by the Approve switch.
+                val modules = if (requestsOn) {
+                    runCatching { api.requestModules() }
+                        .getOrElse { defaultRequestModules(access.requests.create, canApproveMedia(access, user.role)) }
+                } else {
+                    emptyList()
+                }
+                val waiting = awaitingAcceptanceBy(requests, user.id, handledKinds(modules))
                 Log.i(TAG, "${waiting.size} request(s) awaiting acceptance (${if (fromPush) "push" else "hourly"})")
                 update(applicationContext, waiting, onlyIfNew = fromPush)
                 DeadlineReminders.check(applicationContext, requests, user.id)

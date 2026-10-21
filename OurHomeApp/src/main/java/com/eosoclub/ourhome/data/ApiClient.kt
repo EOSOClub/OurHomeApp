@@ -693,6 +693,13 @@ class ApiClient(
     suspend fun requests(): List<HouseholdRequest> =
         call(get("/api/requests"), ListSerializer(HouseholdRequest.serializer()))
 
+    /**
+     * The kinds of request that are on, as this member sees them. A server from
+     * before request types refuses it: callers fall back to [defaultRequestModules].
+     */
+    suspend fun requestModules(): List<RequestModule> =
+        call(get("/api/requests/modules"), ListSerializer(RequestModule.serializer()))
+
     /** Creates a media request, or with [id] replaces the caller's own. */
     suspend fun saveMediaRequest(id: String?, mediaType: String, title: String, year: Int, season: Int?) =
         saveRequest(id) {
@@ -725,8 +732,9 @@ class ApiClient(
         )
 
     /**
-     * Accepts a request: maintenance needs the assignee's done-by [dueAt] (or
-     * moves it); media is accepted by the head with no date.
+     * Accepts a request: maintenance takes the assignee's done-by [dueAt] (or
+     * moves it; null only where the head made the date optional); media is
+     * accepted by the head with no date.
      */
     suspend fun acceptRequest(id: String, dueAt: Instant? = null): HouseholdRequest =
         call(
@@ -736,6 +744,13 @@ class ApiClient(
 
     suspend fun completeRequest(id: String): HouseholdRequest =
         call(post("/api/requests/complete", buildJsonObject { put("id", id) }), HouseholdRequest.serializer())
+
+    /** Declines a request (where the head allows it), with an optional [reply] for the requester. */
+    suspend fun declineRequest(id: String, reply: String?): HouseholdRequest =
+        call(
+            post("/api/requests/decline", buildJsonObject { put("id", id); put("reply", reply) }),
+            HouseholdRequest.serializer(),
+        )
 
     /** Id + name of everyone in the household; readable by any member. */
     suspend fun householdMembers(): List<Member> =

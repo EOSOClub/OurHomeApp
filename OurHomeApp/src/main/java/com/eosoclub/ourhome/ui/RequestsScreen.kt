@@ -15,7 +15,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -56,9 +58,11 @@ import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.HouseholdRequest
 import com.eosoclub.ourhome.data.Member
 import com.eosoclub.ourhome.data.Permission
+import com.eosoclub.ourhome.data.RequestModule
 import com.eosoclub.ourhome.data.SessionUser
 import com.eosoclub.ourhome.data.UserRef
 import com.eosoclub.ourhome.data.can
+import com.eosoclub.ourhome.data.defaultRequestModules
 import com.eosoclub.ourhome.data.effectiveStatus
 import com.eosoclub.ourhome.data.mediaStatus
 import kotlinx.coroutines.channels.Channel
@@ -70,15 +74,15 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-// Mirrors REQUEST_CATEGORIES / MEDIA_TYPES / MAINTENANCE_STATUSES in the web
-// app's src/lib/enums.ts.
-private val CATEGORIES = listOf("media" to "Media", "maintenance" to "Maintenance")
+// Mirrors MEDIA_TYPES / MAINTENANCE_STATUSES in the web app's src/lib/enums.ts.
+// Which kinds of request are on, and their names, come from the server
+// ([RequestModule], set by the head in Settings → Request types).
 private val MEDIA_TYPES = listOf("movie" to "Movie", "tv" to "TV show")
 private val MEDIA_SECTIONS = listOf("movie" to "Movies", "tv" to "TV shows")
-// Media is one step: waiting → added. ([mediaStatus] folds the older flow's
-// "accepted" into waiting.)
-private val MEDIA_STATUS_ORDER = listOf("pending", "completed")
-private val MEDIA_STATUS_LABELS = mapOf("pending" to "Waiting", "completed" to "Added")
+// Media is one step: waiting → added, or declined where the head allows it.
+// ([mediaStatus] folds the older flow's "accepted" into waiting.)
+private val MEDIA_STATUS_ORDER = listOf("pending", "completed", "declined")
+private val MEDIA_STATUS_LABELS = mapOf("pending" to "Waiting", "completed" to "Added", "declined" to "Declined")
 private val MAINTENANCE_SECTIONS = listOf(
     "pending" to "Waiting for acceptance",
     "accepted" to "In progress",
@@ -100,11 +104,20 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         val editing: HouseholdRequest? = null,
         val creating: Boolean = false,
         val accepting: HouseholdRequest? = null,
+        val declining: HouseholdRequest? = null,
+        /** An own declined request waiting for "Remove?" to be confirmed. */
+        val removing: HouseholdRequest? = null,
         val saving: Boolean = false,
         val busy: Set<String> = emptySet(),
         // Null until loaded; for "who should do it?".
         val members: List<Member>? = null,
         val membersError: String? = null,
+        /**
+         * The kinds of request that are on, as this member sees them. Null until
+         * loaded, or from a server from before request types: callers then use
+         * [defaultRequestModules].
+         */
+        val modules: List<RequestModule>? = null,
     )
 
     val state = MutableStateFlow(UiState())
@@ -113,6 +126,10 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
+        launch {
+            // Kept from the last load when this one fails; null stays null on an older server.
+            runCatching { api.requestModules() }.onSuccess { m -> state.update { it.copy(modules = m) } }
+        }
         state.load({ api.requests() }, { s, v -> s.copy(requests = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
     }
 
@@ -197,18 +214,52 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         state.update { it.copy(accepting = null) }
     }
 
-    /** Assignee commits to a done-by date - the request's deadline. */
-    fun accept(r: HouseholdRequest, date: LocalDate) = runBusy(r, inDialog = true) {
-        val updated = api.acceptRequest(r.id, dueInstant(date, null)!!)
+    /**
+     * Assignee commits to a done-by date - the request's deadline. [date] null:
+     * accepted without one, where the head made the date optional.
+     */
+    fun accept(r: HouseholdRequest, date: LocalDate?) = runBusy(r, inDialog = true) {
+        val updated = api.acceptRequest(r.id, date?.let { dueInstant(it, null) })
         replace(updated)
         state.update { it.copy(accepting = null) }
-        _messages.send("Done by ${formatDate(updated.dueAt!!)} - got it")
+        _messages.send(updated.dueAt?.let { "Done by ${formatDate(it)} - got it" } ?: "Accepted “${r.title}”")
     }
 
     /** Maintenance: the assignee marks it done. Media: an approver marks it added (one step). */
     fun complete(r: HouseholdRequest) = runBusy(r) {
         replace(api.completeRequest(r.id))
         _messages.send(if (r.category == "media") "Added “${r.title}”" else "Marked “${r.title}” done")
+    }
+
+    fun startDecline(r: HouseholdRequest) {
+        form.clear()
+        state.update { it.copy(declining = r) }
+    }
+
+    fun cancelDecline() {
+        form.clear()
+        state.update { it.copy(declining = null) }
+    }
+
+    /** Whoever handles it says no, with an optional [reply] the requester sees. */
+    fun decline(r: HouseholdRequest, reply: String?) = runBusy(r, inDialog = true) {
+        replace(api.declineRequest(r.id, reply))
+        state.update { it.copy(declining = null) }
+        _messages.send("Declined “${r.title}”")
+    }
+
+    /** A declined request can't be edited, only removed: asks first. */
+    fun askRemove(r: HouseholdRequest?) = state.update { it.copy(removing = r) }
+
+    /** No editor is open, so a failure goes to the snackbar. */
+    fun confirmRemove() {
+        val r = state.value.removing ?: return
+        state.update { it.copy(removing = null) }
+        runBusy(r) {
+            api.deleteRequest(r.id)
+            state.update { s -> s.copy(requests = s.requests.filterNot { it.id == r.id }) }
+            _messages.send("Request removed")
+        }
     }
 
     /** [inDialog]: the failure is shown in the open date picker, which covers the snackbar. */
@@ -234,9 +285,12 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
 fun RequestsScreen(
     api: ApiClient,
     user: SessionUser,
-    /** Requests "Add" in the head's permissions grid (Members → Permissions). */
+    /**
+     * Requests "Add" in the head's permissions grid (Members → Permissions).
+     * Only used with a server from before request types; newer ones say per kind.
+     */
     canSubmit: Boolean,
-    /** Requests "Approve" in that grid: marks media requests added. */
+    /** Requests "Approve" in that grid: marks media requests added. Same fallback. */
     canApproveMedia: Boolean,
     showMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -244,6 +298,10 @@ fun RequestsScreen(
     val vm = viewModel { RequestsViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
     val canWrite = can(user.role, Permission.RequestsWrite)
+    // The kinds that are on (Settings → Request types on the website).
+    val modules = state.modules ?: defaultRequestModules(canSubmit, canApproveMedia)
+    val mediaModule = modules.firstOrNull { it.id == "media" }
+    val maintenanceModule = modules.firstOrNull { it.id == "maintenance" }
 
     LaunchedEffect(Unit) { vm.refresh() }
     LaunchedEffect(Unit) { vm.messages.collect(showMessage) }
@@ -253,18 +311,24 @@ fun RequestsScreen(
             isRefreshing = state.loading && state.requests.isNotEmpty(),
             onRefresh = { vm.refresh() },
         ) {
-            if (LoadState(state.loading, state.error, state.requests.isEmpty(), "No requests yet.", vm::refresh)) {
+            val empty = if (modules.isEmpty()) {
+                "No request types are on. The Head of House chooses them on the website, in Settings → Request types."
+            } else {
+                "No requests yet."
+            }
+            if (LoadState(state.loading, state.error, state.requests.isEmpty(), empty, vm::refresh)) {
                 return@PullToRefreshBox
             }
-            val maintenance = state.requests.filter { it.category == "maintenance" }
-            val media = state.requests.filter { it.category == "media" }
+            // The server only sends requests of kinds that are on.
+            val maintenance = if (maintenanceModule != null) state.requests.filter { it.category == "maintenance" } else emptyList()
+            val media = if (mediaModule != null) state.requests.filter { it.category == "media" } else emptyList()
             LazyColumn(
                 contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 96.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
-                if (maintenance.isNotEmpty()) {
-                    categoryHeader("Maintenance")
+                if (maintenanceModule != null && maintenance.isNotEmpty()) {
+                    categoryHeader(maintenanceModule.label)
                     MAINTENANCE_SECTIONS.forEach { (status, label) ->
                         val items = maintenance.filter { it.status == status }
                             .let { list -> if (status == "accepted") list.sortedBy { it.dueAt } else list }
@@ -274,6 +338,7 @@ fun RequestsScreen(
                             MaintenanceCard(
                                 r = r,
                                 me = user.id,
+                                requireDueDate = maintenanceModule.requireDueDate,
                                 busy = r.id in state.busy,
                                 onAccept = { vm.startAccept(r) },
                                 onComplete = { vm.complete(r) },
@@ -282,12 +347,14 @@ fun RequestsScreen(
                         }
                     }
                 }
-                if (media.isNotEmpty()) {
-                    categoryHeader("Media")
+                if (mediaModule != null && media.isNotEmpty()) {
+                    categoryHeader(mediaModule.label)
                     MEDIA_SECTIONS.forEach { (type, label) ->
-                        // Waiting first, added last.
+                        // Waiting first, then added, then declined.
                         val items = media.filter { it.mediaType == type }
                             .sortedBy { MEDIA_STATUS_ORDER.indexOf(it.mediaStatus) }
+                        // A kind the head stopped offering still shows while it has requests.
+                        if (items.isEmpty() && type !in mediaModule.mediaTypes) return@forEach
                         sectionHeader("media-$type", label, items.size)
                         if (items.isEmpty()) {
                             item(key = "empty-$type") {
@@ -300,20 +367,26 @@ fun RequestsScreen(
                         }
                         items(items, key = { it.id }) { r ->
                             val isOwn = r.requester.id == user.id
+                            val declined = r.mediaStatus == "declined"
                             MediaCard(
                                 r = r,
+                                me = user.id,
                                 isOwn = isOwn,
-                                canManage = canApproveMedia,
+                                canManage = mediaModule.handles,
+                                canDecline = mediaModule.handles && mediaModule.allowDecline,
                                 busy = r.id in state.busy,
                                 onMarkAdded = { vm.complete(r) },
-                                onEdit = if (isOwn && canWrite) ({ vm.startEdit(r) }) else null,
+                                onDecline = { vm.startDecline(r) },
+                                // A declined request can't be edited, only removed.
+                                onEdit = if (isOwn && canWrite && !declined) ({ vm.startEdit(r) }) else null,
+                                onRemove = if (isOwn && canWrite && declined) ({ vm.askRemove(r) }) else null,
                             )
                         }
                     }
                 }
             }
         }
-        if (canSubmit) {
+        if (modules.any { it.canAsk }) {
             ExtendedFloatingActionButton(
                 onClick = { vm.startCreate() },
                 icon = { Icon(Icons.Filled.Add, contentDescription = null) },
@@ -324,9 +397,16 @@ fun RequestsScreen(
     }
 
     if (state.creating || state.editing != null) {
+        // Who may be asked: the head's list from the server; a server from
+        // before request types lets anyone else be asked.
+        val allowed = maintenanceModule?.assigneeIds?.toSet()?.takeIf { state.modules != null }
+        val initial = state.editing
         RequestEditor(
-            initial = state.editing,
-            assignees = state.members?.filterNot { it.id == user.id },
+            initial = initial,
+            modules = modules,
+            assignees = state.members?.filter {
+                it.id != user.id && (allowed == null || it.id in allowed || it.id == initial?.assignee?.id)
+            },
             assigneesError = state.membersError,
             saving = state.saving,
             errors = vm.form,
@@ -339,11 +419,32 @@ fun RequestsScreen(
     state.accepting?.let { r ->
         AcceptDatePicker(
             rescheduling = r.status == "accepted",
+            requireDueDate = maintenanceModule?.requireDueDate ?: true,
             initial = r.dueAt?.let(::localDate),
             error = vm.form["dueAt"] ?: vm.form.message,
             busy = r.id in state.busy,
             onDismiss = vm::cancelAccept,
             onPick = { date -> vm.accept(r, date) },
+        )
+    }
+
+    state.declining?.let { r ->
+        DeclineDialog(
+            r = r,
+            error = vm.form["reply"] ?: vm.form.message,
+            busy = r.id in state.busy,
+            onDismiss = vm::cancelDecline,
+            onDecline = { reply -> vm.decline(r, reply) },
+        )
+    }
+
+    state.removing?.let { r ->
+        AlertDialog(
+            onDismissRequest = { vm.askRemove(null) },
+            title = { Text("Remove this request?") },
+            text = { Text("“${r.title}” will be removed for everyone.") },
+            confirmButton = { TextButton(onClick = vm::confirmRemove) { Text("Remove") } },
+            dismissButton = { TextButton(onClick = { vm.askRemove(null) }) { Text("Cancel") } },
         )
     }
 }
@@ -377,11 +478,18 @@ private fun who(person: UserRef?, me: String) = when {
 @Composable
 private fun MediaCard(
     r: HouseholdRequest,
+    me: String,
     isOwn: Boolean,
+    /** Handles media: marks it added. */
     canManage: Boolean,
+    /** Handles media and the head allows declining. */
+    canDecline: Boolean,
     busy: Boolean,
     onMarkAdded: () -> Unit,
+    onDecline: () -> Unit,
     onEdit: (() -> Unit)?,
+    /** Own declined request: removing is all that's left. */
+    onRemove: (() -> Unit)?,
 ) {
     val status = r.mediaStatus
     // Highlight requests waiting on *you* (an approver).
@@ -403,6 +511,14 @@ private fun MediaCard(
                         SuggestionChip(onClick = {}, label = { Text(MEDIA_STATUS_LABELS[status] ?: status) })
                         r.season?.let { SuggestionChip(onClick = {}, label = { Text("Season $it") }) }
                     }
+                    if (status == "declined") {
+                        val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
+                        Text(
+                            "Declined$by" + r.reply?.let { ": $it" }.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Text(
                         "Requested by ${if (isOwn) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
                         style = MaterialTheme.typography.bodySmall,
@@ -412,12 +528,18 @@ private fun MediaCard(
                 if (onEdit != null) {
                     IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit ${r.title}") }
                 }
+                if (onRemove != null) {
+                    IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${r.title}") }
+                }
             }
             if (canManage && status == "pending") {
-                Row(
-                    horizontalArrangement = Arrangement.End,
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 ) {
+                    if (canDecline) {
+                        TextButton(onClick = onDecline, enabled = !busy) { Text("Decline") }
+                    }
                     Button(onClick = onMarkAdded, enabled = !busy) { Text(if (busy) "Saving…" else "Mark as added") }
                 }
             }
@@ -429,6 +551,8 @@ private fun MediaCard(
 private fun MaintenanceCard(
     r: HouseholdRequest,
     me: String,
+    /** Accepting needs a done-by date (the head's choice). */
+    requireDueDate: Boolean,
     busy: Boolean,
     onAccept: () -> Unit,
     onComplete: () -> Unit,
@@ -486,7 +610,10 @@ private fun MaintenanceCard(
                     if (r.status == "pending") {
                         Button(onClick = onAccept, enabled = !busy) { Text("Accept") }
                     } else {
-                        TextButton(onClick = onAccept, enabled = !busy) { Text("Change date") }
+                        // Accepted without a date (the head made it optional): one can still be set.
+                        TextButton(onClick = onAccept, enabled = !busy) {
+                            Text(if (r.dueAt != null || requireDueDate) "Change date" else "Set a date")
+                        }
                         OutlinedButton(onClick = onComplete, enabled = !busy) { Text(if (busy) "Saving…" else "Mark done") }
                     }
                 }
@@ -498,16 +625,19 @@ private fun MaintenanceCard(
 /**
  * The assignee picks their done-by date; past days can't be chosen. Stays
  * open until it's saved; [error] says why it wasn't (the snackbar is behind).
+ * Without [requireDueDate] (the head's choice) "No date" accepts without one.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AcceptDatePicker(
     rescheduling: Boolean,
+    requireDueDate: Boolean,
     initial: LocalDate?,
     error: String?,
     busy: Boolean,
     onDismiss: () -> Unit,
-    onPick: (LocalDate) -> Unit,
+    /** null: no date. */
+    onPick: (LocalDate?) -> Unit,
 ) {
     val todayUtcMillis = LocalDate.now().atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
     val state = rememberDatePickerState(
@@ -527,13 +657,23 @@ private fun AcceptDatePicker(
                 },
             ) { Text(if (rescheduling) "Save date" else "Accept") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+                if (!requireDueDate) {
+                    TextButton(enabled = !busy, onClick = { onPick(null) }) { Text("No date") }
+                }
+            }
+        },
     ) {
         DatePicker(
             state = state,
             title = {
                 Column(Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp)) {
-                    Text("When will you have it done?", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        if (requireDueDate) "When will you have it done?" else "When will you have it done? (optional)",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
                     if (error != null) {
                         Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
@@ -543,14 +683,57 @@ private fun AcceptDatePicker(
     }
 }
 
+/** Whoever handles the request says no, with an optional reason the requester sees. */
+@Composable
+private fun DeclineDialog(
+    r: HouseholdRequest,
+    error: String?,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onDecline: (String?) -> Unit,
+) {
+    var reply by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Decline request") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("“${r.title}” from ${r.requester.name ?: "someone"}")
+                OutlinedTextField(
+                    value = reply,
+                    onValueChange = { reply = it.take(500) },
+                    label = { Text("Reason (optional)") },
+                    placeholder = { Text("e.g. We already have it on another service") },
+                    supportingText = { Text(error ?: "Everyone in the household sees it.") },
+                    isError = error != null,
+                    minLines = 2,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = !busy, onClick = { onDecline(reply.trim().ifEmpty { null }) }) {
+                Text(if (busy) "Saving…" else "Decline")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 /**
  * Step-by-step form, matching the web: request type, then either media
  * (type → name, season, year) or maintenance (what → details → who).
- * The category is fixed once a request exists.
+ * The category is fixed once a request exists. What it offers comes from the
+ * head's request types ([modules]): the kinds this member may ask for, the
+ * kinds of media and the person picked to start with. A request being edited
+ * keeps its own kind even if the head has since stopped offering it.
  */
 @Composable
 private fun RequestEditor(
     initial: HouseholdRequest?,
+    modules: List<RequestModule>,
+    /** Who may be asked (never the member); null while loading. */
     assignees: List<Member>?,
     assigneesError: String?,
     saving: Boolean,
@@ -560,13 +743,28 @@ private fun RequestEditor(
     onSave: (RequestEdit) -> Unit,
     onDelete: (() -> Unit)?,
 ) {
-    var category by remember { mutableStateOf(initial?.category.orEmpty()) }
-    var mediaType by remember { mutableStateOf(initial?.mediaType.orEmpty()) }
+    val askable = modules.filter { it.canAsk }
+    val mediaModule = modules.firstOrNull { it.id == "media" }
+    val maintenanceModule = modules.firstOrNull { it.id == "maintenance" }
+    val mediaTypes = MEDIA_TYPES.filter { (t, _) ->
+        mediaModule == null || t in mediaModule.mediaTypes || t == initial?.mediaType
+    }
+    /** What picking a kind fills in to start with: the only media type, the default person. */
+    fun startingMediaType(c: String) =
+        if (c == "media") mediaModule?.mediaTypes?.singleOrNull().orEmpty() else ""
+    fun startingAssignee(c: String) =
+        if (c == "maintenance") maintenanceModule?.defaultAssigneeId.orEmpty() else ""
+    // Creating with only one kind to ask for: it's already picked.
+    val firstCategory = initial?.category ?: askable.singleOrNull()?.id.orEmpty()
+
+    var category by remember { mutableStateOf(firstCategory) }
+    var mediaType by remember { mutableStateOf(initial?.mediaType ?: startingMediaType(firstCategory)) }
     var title by remember { mutableStateOf(initial?.title.orEmpty()) }
     var year by remember { mutableStateOf(initial?.year?.toString().orEmpty()) }
     var season by remember { mutableStateOf(initial?.season?.toString().orEmpty()) }
     var details by remember { mutableStateOf(initial?.details.orEmpty()) }
-    var assigneeId by remember { mutableStateOf(initial?.assignee?.id.orEmpty()) }
+    var assigneeId by remember { mutableStateOf(initial?.assignee?.id ?: startingAssignee(firstCategory)) }
+    val categoryModule = modules.firstOrNull { it.id == category }
 
     val yearValue = year.takeIf { it.length == 4 }?.toIntOrNull()?.takeIf { it in 1870..2100 }
     val seasonValue = season.toIntOrNull()
@@ -603,17 +801,26 @@ private fun RequestEditor(
         if (initial == null) {
             DropdownField(
                 "What would you like to request?",
-                CATEGORIES,
+                askable.map { it.id to it.label },
                 category,
-                { category = it; errors.clear("category") },
+                {
+                    category = it
+                    errors.clear("category")
+                    if (mediaType.isEmpty()) mediaType = startingMediaType(it)
+                    if (assigneeId.isEmpty()) assigneeId = startingAssignee(it)
+                },
                 error = errors["category"],
             )
         } else {
-            FieldLabel(CATEGORIES.firstOrNull { it.first == category }?.second ?: category)
+            FieldLabel(categoryModule?.label ?: category.replaceFirstChar(Char::uppercase))
+        }
+        // The head's note for this kind (Settings → Request types).
+        categoryModule?.note?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         if (category == "media") {
-            DropdownField("Type of media", MEDIA_TYPES, mediaType, { mediaType = it; errors.clear("mediaType") }, error = errors["mediaType"])
+            DropdownField("Type of media", mediaTypes, mediaType, { mediaType = it; errors.clear("mediaType") }, error = errors["mediaType"])
         }
         if (category == "media" && mediaType.isNotEmpty()) {
             OutlinedTextField(
@@ -680,7 +887,7 @@ private fun RequestEditor(
                     color = if (assigneesError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else if (assignees.isEmpty()) {
-                Text("There's no one else in the household to ask yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("There's no one you can ask yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 DropdownField(
                     "Who should do it?",

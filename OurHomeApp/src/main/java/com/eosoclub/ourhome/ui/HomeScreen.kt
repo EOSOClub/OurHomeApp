@@ -85,6 +85,8 @@ import com.eosoclub.ourhome.nfc.NfcScans
 import com.eosoclub.ourhome.data.awaitingAcceptanceBy
 import com.eosoclub.ourhome.data.canApproveMedia
 import com.eosoclub.ourhome.data.deadlineAlerts
+import com.eosoclub.ourhome.data.defaultRequestModules
+import com.eosoclub.ourhome.data.handledKinds
 import com.eosoclub.ourhome.data.isOpen
 import com.eosoclub.ourhome.location.Geofences
 import com.eosoclub.ourhome.notifications.AppUpdateAlerts
@@ -223,7 +225,10 @@ fun HomeScreen(
 
     // Waiting for my acceptance, plus my own maintenance due today or overdue -
     // the tab badge counts them and the dashboard's "Needs you" lists them.
-    val waitingRequests = awaitingAcceptanceBy(requestsState.requests, user.id, canApproveMedia(access, user.role))
+    // Which kinds I handle: the head's request types, or on an older server the Approve switch.
+    val requestModules = requestsState.modules
+        ?: defaultRequestModules(access.requests.create, canApproveMedia(access, user.role))
+    val waitingRequests = awaitingAcceptanceBy(requestsState.requests, user.id, handledKinds(requestModules))
         .map { WaitingRequest(it, if (it.category == "media") "Mark added" else "Accept", urgent = false) } +
         deadlineAlerts(requestsState.requests, user.id)
             .filter { !it.forRequester && it.state != DeadlineState.DueTomorrow }

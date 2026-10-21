@@ -1,6 +1,7 @@
 package com.eosoclub.ourhome.data
 
 import kotlinx.serialization.Serializable
+import java.time.Instant
 
 // Mirrors the web app's DTOs (src/server/services/*Service.ts `*ToDTO`).
 // Only fields the app uses are declared; the JSON parser ignores the rest.
@@ -293,6 +294,9 @@ data class Task(
     /** Current cycle window; completed inside it = done for this cycle. */
     val cycleStartedAt: String? = null,
     val cycleEndsAt: String? = null,
+    /** Repeating without cycles: done for this occurrence, it can't be completed
+     *  again before this time. Null or past = open; null from older servers. */
+    val opensAt: String? = null,
     val category: CategoryRef? = null,
     /** Its first place (Places.kt); both null = the whole house. */
     override val room: PlaceRef? = null,
@@ -314,6 +318,13 @@ data class Task(
 ) : Placed {
     /** Completed inside its cycle: waits for the next cycle start. */
     val doneThisCycle: Boolean get() = status == "completed" && cycleEndsAt != null
+
+    /** When the next occurrence opens, while it's still ahead of [now]; null = it can be completed. */
+    fun waitsUntil(now: Instant): Instant? {
+        if (status != "pending" && status != "in_progress") return null
+        val opens = opensAt?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: return null
+        return opens.takeIf { it.isAfter(now) }
+    }
 
     /** The editor's starting points state. */
     fun pointsState(): PointsState = PointsState(
@@ -538,13 +549,51 @@ data class HouseholdRequest(
     // maintenance
     val details: String? = null,
     val assignee: UserRef? = null,
-    /** "pending" | "accepted" | "completed" for maintenance; null for media. */
+    /**
+     * "pending" | "accepted" | "completed", or "declined" (media, where the head
+     * allows declining). Null on media from before statuses.
+     */
     val status: String? = null,
     /** Done-by date the assignee committed to - the deadline. */
     val dueAt: String? = null,
     val completedAt: String? = null,
+    val declinedAt: String? = null,
+    /** Media: who marked it added or declined it. */
+    val decidedBy: UserRef? = null,
+    /** Media: what they said (a decline's reason). */
+    val reply: String? = null,
     val requester: UserRef,
     val createdAt: String,
+)
+
+/**
+ * A kind of request that's on in this household, as the signed-in member sees
+ * it (RequestModuleView, `GET /api/requests/modules`). The head turns kinds on
+ * and configures them on the website (Settings → Request types).
+ */
+@Serializable
+data class RequestModule(
+    /** "media" | "maintenance". */
+    val id: String,
+    /** "approve" (handlers mark it done or decline it) | "assign" (one person accepts it). */
+    val workflow: String,
+    /** The head's name for it. */
+    val label: String,
+    /** Shown on the form once it's picked. */
+    val note: String? = null,
+    /** May ask for it: the Requests "Add" switch and the head's roles for it. */
+    val canAsk: Boolean = false,
+    /** Approve workflow: marks these done (and declines, where allowed). */
+    val handles: Boolean = false,
+    val allowDecline: Boolean = false,
+    /** Media: the kinds offered ("movie", "tv"). */
+    val mediaTypes: List<String> = emptyList(),
+    /** Assign workflow: who this member may ask. */
+    val assigneeIds: List<String> = emptyList(),
+    /** Assign workflow: picked to start with. */
+    val defaultAssigneeId: String? = null,
+    /** Assign workflow: accepting needs a done-by date. */
+    val requireDueDate: Boolean = true,
 )
 
 @Serializable

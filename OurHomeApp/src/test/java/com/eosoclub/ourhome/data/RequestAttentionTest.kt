@@ -72,19 +72,38 @@ class RequestAttentionTest {
         createdAt = "2026-10-01T12:00:00Z",
     )
 
-    @Test fun `open media waits on approvers only, including old accepted rows`() {
-        val all = listOf(media(null), media("pending"), media("accepted"), media("completed"))
+    @Test fun `open media waits on those who handle it only, including old accepted rows`() {
+        val all = listOf(media(null), media("pending"), media("accepted"), media("completed"), media("declined"))
         assertEquals(
             listOf("m-null", "m-pending", "m-accepted"),
-            awaitingAcceptanceBy(all, me, approvesMedia = true).map { it.id },
+            awaitingAcceptanceBy(all, me, handles = setOf("media")).map { it.id },
         )
-        assertTrue(awaitingAcceptanceBy(all, me, approvesMedia = false).isEmpty())
+        assertTrue(awaitingAcceptanceBy(all, me, handles = emptySet()).isEmpty())
     }
 
-    @Test fun `media is one step - waiting or added`() {
+    @Test fun `media is one step - waiting, added or declined`() {
         assertEquals("pending", media("accepted").mediaStatus)
         assertEquals("pending", media(null).mediaStatus)
         assertEquals("completed", media("completed").mediaStatus)
+        assertEquals("declined", media("declined").mediaStatus)
+        assertEquals(false, media("declined").isOpen)
+    }
+
+    @Test fun `handled kinds come from the modules`() {
+        val modules = listOf(
+            RequestModule(id = "media", workflow = "approve", label = "Media", handles = true),
+            RequestModule(id = "maintenance", workflow = "assign", label = "Maintenance", handles = true),
+        )
+        assertEquals(setOf("media"), handledKinds(modules))
+        assertEquals(emptySet<String>(), handledKinds(modules.map { it.copy(handles = false) }))
+    }
+
+    @Test fun `an older server gets the old two kinds`() {
+        val modules = defaultRequestModules(canSubmit = true, approvesMedia = false)
+        assertEquals(listOf("media", "maintenance"), modules.map { it.id })
+        assertTrue(modules.all { it.canAsk })
+        assertEquals(emptySet<String>(), handledKinds(modules))
+        assertEquals(setOf("media"), handledKinds(defaultRequestModules(canSubmit = false, approvesMedia = true)))
     }
 
     @Test fun `media approval comes from the grid, and the head always has it`() {
@@ -99,6 +118,6 @@ class RequestAttentionTest {
         val mine = maintenance(null, status = "pending")
         val accepted = maintenance(today, status = "accepted")
         val theirs = maintenance(null, assignee = other, status = "pending")
-        assertEquals(listOf(mine), awaitingAcceptanceBy(listOf(mine, accepted, theirs), me, approvesMedia = true))
+        assertEquals(listOf(mine), awaitingAcceptanceBy(listOf(mine, accepted, theirs), me, handles = setOf("media")))
     }
 }

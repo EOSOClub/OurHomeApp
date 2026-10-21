@@ -10,37 +10,61 @@ import java.time.ZoneId
 /** Media requests made before statuses existed have none; treat that as pending. */
 val HouseholdRequest.effectiveStatus: String get() = status ?: "pending"
 
-val HouseholdRequest.isOpen: Boolean get() = effectiveStatus != "completed"
+/** Not done yet: neither completed nor declined. */
+val HouseholdRequest.isOpen: Boolean get() = effectiveStatus != "completed" && effectiveStatus != "declined"
 
 /**
  * A media request's status in the one-step flow: "pending" (waiting to be
- * added) or "completed" (added). "accepted" from the older accept → available
- * flow still waits.
+ * added), "completed" (added) or "declined". "accepted" from the older
+ * accept → available flow still waits.
  */
-val HouseholdRequest.mediaStatus: String get() = if (isOpen) "pending" else "completed"
+val HouseholdRequest.mediaStatus: String get() = if (isOpen) "pending" else effectiveStatus
 
 /**
- * Whether the user marks media requests added: the Requests `approve` switch.
- * The head always may - a server from before the switch existed doesn't send
- * it, but handled media by role (head only).
+ * Whether the user marks media requests added on a server from before request
+ * types (which sends no [RequestModule]s): the Requests `approve` switch. The
+ * head always may - a server from before the switch existed doesn't send it,
+ * but handled media by role (head only).
  */
 fun canApproveMedia(access: AccessMatrix, role: String?): Boolean =
     access.requests.approve || role == "head"
 
 /**
- * Requests waiting on [userId]: open media requests if they approve media
- * ([approvesMedia]), and pending maintenance requests assigned to them. Media
- * is one step (waiting → added); "accepted" media is left over from the older
- * accept → available flow and still waits to be added.
+ * What a server from before request types offered: media and maintenance, both
+ * on, asked for with the Requests "Add" switch ([canSubmit]) and media handled
+ * by [approvesMedia] ([canApproveMedia]).
+ */
+fun defaultRequestModules(canSubmit: Boolean, approvesMedia: Boolean): List<RequestModule> = listOf(
+    RequestModule(
+        id = "media",
+        workflow = "approve",
+        label = "Media",
+        canAsk = canSubmit,
+        handles = approvesMedia,
+        mediaTypes = listOf("movie", "tv"),
+    ),
+    // assigneeIds empty: the editor offers everyone else in the household.
+    RequestModule(id = "maintenance", workflow = "assign", label = "Maintenance", canAsk = canSubmit),
+)
+
+/** The approve-workflow kinds the member handles (media, where they mark it added). */
+fun handledKinds(modules: List<RequestModule>): Set<String> =
+    modules.filter { it.workflow == "approve" && it.handles }.map { it.id }.toSet()
+
+/**
+ * Requests waiting on [userId]: open requests of the kinds they handle
+ * ([handles], from [handledKinds]), and pending maintenance requests assigned
+ * to them. Media is one step (waiting → added); "accepted" media is left over
+ * from the older accept → available flow and still waits to be added.
  */
 fun awaitingAcceptanceBy(
     requests: List<HouseholdRequest>,
     userId: String,
-    approvesMedia: Boolean,
+    handles: Set<String>,
 ): List<HouseholdRequest> = requests.filter { r ->
-    when (r.category) {
-        "media" -> approvesMedia && r.isOpen
-        "maintenance" -> r.effectiveStatus == "pending" && r.assignee?.id == userId
+    when {
+        r.category in handles -> r.isOpen
+        r.category == "maintenance" -> r.effectiveStatus == "pending" && r.assignee?.id == userId
         else -> false
     }
 }
