@@ -141,6 +141,8 @@ fun HomeScreen(
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     // A full-screen page over the tabs, opened from the top bar.
     var overlay by rememberSaveable { mutableStateOf<Overlay?>(null) }
+    // People you look after opens on this person's page (a phone alert about them); null: the cards.
+    var lookAfterStart by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmSignOut by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var reportingBug by remember { mutableStateOf(false) }
@@ -385,7 +387,7 @@ fun HomeScreen(
                                     DropdownMenuItem(
                                         text = { Text("People you look after") },
                                         leadingIcon = { Icon(Icons.Filled.Favorite, contentDescription = null) },
-                                        onClick = { menuOpen = false; overlay = Overlay.LookAfter },
+                                        onClick = { menuOpen = false; lookAfterStart = null; overlay = Overlay.LookAfter },
                                     )
                                 }
                                 if (phoneSetup?.supervised == true) {
@@ -491,8 +493,11 @@ fun HomeScreen(
                     when {
                         target != null && target.isOn(features) -> { overlay = null; tab = target }
                         n.subjectType == "app_release" -> overlay = Overlay.Profile
-                        // A supervised child's phone (phone_alert): their status is there.
-                        n.subjectType == "phone" && features.location -> overlay = Overlay.LookAfter
+                        // A supervised child's phone (phone_alert, new app; subjectId: the child): their page there.
+                        n.subjectType == "phone" && features.location -> {
+                            lookAfterStart = n.subjectId
+                            overlay = Overlay.LookAfter
+                        }
                     }
                 },
                 modifier,
@@ -507,7 +512,7 @@ fun HomeScreen(
             Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)
             Overlay.Activity -> ActivityScreen(session.api, user.id, modifier)
             Overlay.Map -> MapScreen(session.api, showMessage, modifier)
-            Overlay.LookAfter -> LookAfterScreen(session.api, showMessage, modifier)
+            Overlay.LookAfter -> LookAfterScreen(session.api, showMessage, modifier, startPersonId = lookAfterStart)
             Overlay.PhoneSetup -> PhoneSetupScreen(session.api, showMessage, onClose = { overlay = null }, modifier)
             Overlay.Settings -> SettingsScreen(session.api, session.baseUrl, isHead = user.role == "head", features, showMessage, modifier)
             Overlay.Members -> MembersScreen(session, user, showMessage, onSetUpChild = { overlay = Overlay.AddChild }, modifier)
@@ -517,7 +522,7 @@ fun HomeScreen(
                 baseUrl = session.baseUrl,
                 locationOn = features.location,
                 showMessage = showMessage,
-                onOpenLookAfter = { overlay = Overlay.LookAfter },
+                onOpenLookAfter = { lookAfterStart = null; overlay = Overlay.LookAfter },
                 onDone = { overlay = Overlay.Members },
                 modifier = modifier,
             )

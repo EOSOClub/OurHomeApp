@@ -1,5 +1,8 @@
 package com.eosoclub.ourhome.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.graphics.ImageBitmap
 import com.eosoclub.ourhome.data.UsageHistory
@@ -10,8 +13,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -19,6 +31,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import com.eosoclub.ourhome.data.setupSummary
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -41,7 +57,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 // "People you look after" (web: /look-after): the children and teens this
-// adult supervises (the Head's supervision list). Ring their phone, make their
+// adult supervises (the Head's supervision list). A summary card each; a card
+// opens that person's page, where this adult can ring their phone, make their
 // location sharing required, share their app usage, choose which protections
 // their phone must have on (PhoneRule). Only offered in the menu
 // to someone who supervises somebody; the server checks it again.
@@ -217,9 +234,21 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
     }
 }
 
+/**
+ * First a summary card for each person (with Ring); a card opens that person's
+ * page with everything. Back returns to the cards. [startPersonId]: open
+ * straight on that person's page (a phone alert about them).
+ */
 @Composable
-internal fun LookAfterScreen(api: ApiClient, showMessage: (String) -> Unit, modifier: Modifier = Modifier) {
+internal fun LookAfterScreen(
+    api: ApiClient,
+    showMessage: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    startPersonId: String? = null,
+) {
     val vm = viewModel { LookAfterViewModel(api) }
+    var selectedId by rememberSaveable(startPersonId) { mutableStateOf(startPersonId) }
+    BackHandler(enabled = selectedId != null) { selectedId = null }
     val state by vm.state.collectAsStateWithLifecycle()
     val icons by vm.icons.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -236,17 +265,68 @@ internal fun LookAfterScreen(api: ApiClient, showMessage: (String) -> Unit, modi
     Box(modifier.fillMaxSize()) {
         if (LoadState(state.loading, state.error, !state.loaded, "", { vm.load() })) return@Box
         val lookAfter = state.lookAfter
+        // Someone no longer looked after: back to the cards.
+        val selected = lookAfter?.people?.firstOrNull { it.id == selectedId }
+        if (lookAfter == null || selected == null) {
+            // One column on a phone held upright, more when there's room (as the web's grid).
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 300.dp),
+                contentPadding = PaddingValues(16.dp, 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                val full: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
+                item(span = full) {
+                    LookAfterNote(
+                        "The children and teens the Head of House asked you to supervise. Tap someone to see and " +
+                            "change everything for them. Everything you do here is logged in Activity.",
+                        padded = false,
+                    )
+                }
+                if (lookAfter == null || lookAfter.people.isEmpty()) {
+                    item(span = full) {
+                        LookAfterNote(
+                            "You don't look after anyone right now. The Head of House chooses who supervises whom on the Members page.",
+                            padded = false,
+                        )
+                    }
+                    return@LazyVerticalGrid
+                }
+                items(lookAfter.people, key = { it.id }) { person ->
+                    PersonCard(
+                        person,
+                        canRing = lookAfter.canRing,
+                        onOpen = { selectedId = person.id },
+                        onRing = { vm.ring(person, showMessage) },
+                    )
+                }
+                if (!lookAfter.canRing) {
+                    item(span = full) {
+                        LookAfterNote(
+                            "Ringing needs instant phone alerts: Firebase on this server, or Stay connected turned on " +
+                                "in the app on their phone.",
+                            padded = false,
+                        )
+                    }
+                }
+            }
+            return@Box
+        }
         LazyColumn(contentPadding = PaddingValues(vertical = 8.dp), modifier = Modifier.fillMaxSize()) {
             item {
-                LookAfterNote("The children and teens the Head of House asked you to supervise. Everything you do here is logged in Activity.")
-            }
-            if (lookAfter == null || lookAfter.people.isEmpty()) {
-                item {
-                    LookAfterNote("You don't look after anyone right now. The Head of House chooses who supervises whom on the Members page.")
+                TextButton(onClick = { selectedId = null }, modifier = Modifier.padding(start = 4.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null)
+                    Text("People you look after")
                 }
-                return@LazyColumn
+                Text(
+                    selected.name,
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
             }
-            items(lookAfter.people, key = { it.id }) { person ->
+            item(key = selected.id) {
+                val person = selected
                 val saving = state.savingRequired?.takeIf { it.first == person.id }
                 val savingUsage = state.savingUsage?.takeIf { it.first == person.id }
                 LookedAfterRow(
@@ -296,13 +376,90 @@ internal fun LookAfterScreen(api: ApiClient, showMessage: (String) -> Unit, modi
     }
 }
 
+/** [padded]: its own side margins (off inside the cards' grid, which has them). */
 @Composable
-private fun LookAfterNote(text: String) {
+private fun LookAfterNote(text: String, padded: Boolean = true) {
     Text(
         text,
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = Modifier.padding(horizontal = if (padded) 16.dp else 0.dp, vertical = 8.dp),
+    )
+}
+
+/** Their phone: what's wrong with it (true: shown red), or when it last checked in. */
+private fun phoneStatus(person: LookedAfter): Pair<String, Boolean> {
+    val phone = person.phone ?: return "Their phone hasn't checked in yet" to false
+    val problem = phone.problemText
+    return if (problem != null) {
+        "$problem (last seen ${relativeTime(phone.lastSeenAt)})" to true
+    } else {
+        "Phone checked in ${relativeTime(phone.lastSeenAt)}" to false
+    }
+}
+
+/**
+ * One person on the first page: what needs seeing at a glance (their phone,
+ * location, today's app time, setup, the last ring), and Ring. Tapping it
+ * opens their page, where everything can be changed. A red edge while their
+ * phone has a problem.
+ */
+@Composable
+private fun PersonCard(person: LookedAfter, canRing: Boolean, onOpen: () -> Unit, onRing: () -> Unit) {
+    val (status, problem) = phoneStatus(person)
+    Card(
+        onClick = onOpen,
+        border = if (problem) BorderStroke(1.dp, MaterialTheme.colorScheme.error) else null,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = if (canRing) 4.dp else 12.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    person.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            CardLine(status, error = problem)
+            CardLine(if (person.required) "Location required" else person.sharingNote.orEmpty())
+            val latest = person.appUsage.latest
+            CardLine(
+                when {
+                    !person.appUsage.shared -> "App usage not shared"
+                    latest != null -> "${latest.header(java.time.LocalDate.now().toString())} in apps"
+                    else -> "No app usage from their phone yet"
+                },
+            )
+            person.setupSummary()?.let { CardLine(it) }
+            person.ring?.let { ring ->
+                CardLine("You rang ${relativeTime(ring.sentAt)}: ${ring.outcome}", error = ring.phase == "no_answer")
+            }
+            if (canRing) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onRing) { Text("Ring") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CardLine(text: String, error: Boolean = false) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
@@ -336,21 +493,16 @@ private fun LookedAfterRow(
     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(person.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // Their name is the page's heading.
                 person.sharingNote?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                // Their phone: what's wrong with it (red), or when it last checked in.
                 val phone = person.phone
-                val problem = phone?.problemText
+                val (status, problem) = phoneStatus(person)
                 Text(
-                    when {
-                        phone == null -> "Their phone hasn't checked in yet"
-                        problem != null -> "$problem (last seen ${relativeTime(phone.lastSeenAt)})"
-                        else -> "Phone checked in ${relativeTime(phone.lastSeenAt)}"
-                    },
+                    status,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (problem != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 // How instant alerts reach it; nothing for an app too old to say.
                 val alerts = when {
