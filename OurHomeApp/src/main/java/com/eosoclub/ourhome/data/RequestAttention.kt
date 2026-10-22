@@ -106,16 +106,22 @@ fun deadlineAlerts(
     }
 }
 
-/** One-line summary, e.g. "TV: Severance (2025) · S2 - from Jamison". */
+/**
+ * One-line summary, e.g. "TV: Severance (2025) · S2 - from Jamison", or for a
+ * problem "TV problem: Severance (2022) · S2 E3 - from Jamison".
+ */
 fun HouseholdRequest.summary(): String {
     val from = requester.name?.let { " - from $it" }.orEmpty()
     return when (category) {
-        "media" -> {
-            val kind = if (mediaType == "tv") "TV" else "Movie"
-            val year = year?.let { " ($it)" }.orEmpty()
-            val season = season?.let { " · S$it" }.orEmpty()
-            "$kind: $title$year$season$from"
-        }
+        "media" -> mediaTitle() + from
         else -> "Maintenance: $title$from"
     }
+}
+
+/** A media request's title line, e.g. "TV problem: Severance (2022) · S2 E3". */
+fun HouseholdRequest.mediaTitle(): String {
+    val kind = (if (mediaType == "tv") "TV" else "Movie") + if (issue) " problem" else ""
+    val year = year?.let { " ($it)" }.orEmpty()
+    val place = season?.let { s -> " · S$s" + episode?.let { " E$it" }.orEmpty() }.orEmpty()
+    return "$kind: $title$year$place"
 }

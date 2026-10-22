@@ -546,7 +546,11 @@ data class HouseholdRequest(
     val mediaType: String? = null,
     val year: Int? = null,
     val season: Int? = null,
-    // maintenance
+    /** A problem with something the household already has, not a request to add it. */
+    val issue: Boolean = false,
+    /** TV problems: the episode within [season]; null is the whole season. */
+    val episode: Int? = null,
+    // maintenance; also a media problem's "what's wrong"
     val details: String? = null,
     val assignee: UserRef? = null,
     /**

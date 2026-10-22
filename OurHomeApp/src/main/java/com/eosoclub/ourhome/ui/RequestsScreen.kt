@@ -92,7 +92,16 @@ private val MAINTENANCE_SECTIONS = listOf(
 
 /** What the editor submits. */
 sealed interface RequestEdit {
-    data class Media(val mediaType: String, val title: String, val year: Int, val season: Int?) : RequestEdit
+    /** [issue]: a problem with something the household has; [details] says what's wrong. */
+    data class Media(
+        val mediaType: String,
+        val title: String,
+        val year: Int,
+        val season: Int?,
+        val issue: Boolean = false,
+        val episode: Int? = null,
+        val details: String? = null,
+    ) : RequestEdit
     data class Maintenance(val title: String, val details: String?, val assigneeId: String) : RequestEdit
 }
 
@@ -170,7 +179,9 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         form.clear()
         try {
             val saved = when (edit) {
-                is RequestEdit.Media -> api.saveMediaRequest(id, edit.mediaType, edit.title, edit.year, edit.season)
+                is RequestEdit.Media -> api.saveMediaRequest(
+                    id, edit.mediaType, edit.title, edit.year, edit.season, edit.issue, edit.episode, edit.details,
+                )
                 is RequestEdit.Maintenance -> api.saveMaintenanceRequest(id, edit.title, edit.details, edit.assigneeId)
             }
             closeEditor()
@@ -178,6 +189,7 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
                 when {
                     id != null -> "Request updated"
                     saved.category == "maintenance" -> "Sent to ${saved.assignee?.name ?: "them"}"
+                    saved.issue -> "Reported a problem with “${saved.title}”"
                     else -> "Requested “${saved.title}”"
                 },
             )
@@ -226,10 +238,16 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         _messages.send(updated.dueAt?.let { "Done by ${formatDate(it)} - got it" } ?: "Accepted “${r.title}”")
     }
 
-    /** Maintenance: the assignee marks it done. Media: an approver marks it added (one step). */
+    /** Maintenance: the assignee marks it done. Media: an approver marks it added, or a problem fixed (one step). */
     fun complete(r: HouseholdRequest) = runBusy(r) {
         replace(api.completeRequest(r.id))
-        _messages.send(if (r.category == "media") "Added “${r.title}”" else "Marked “${r.title}” done")
+        _messages.send(
+            when {
+                r.issue -> "Marked “${r.title}” fixed"
+                r.category == "media" -> "Added “${r.title}”"
+                else -> "Marked “${r.title}” done"
+            },
+        )
     }
 
     fun startDecline(r: HouseholdRequest) {
@@ -355,10 +373,33 @@ fun RequestsScreen(
                     }
                 }
                 if (mediaModule != null && media.isNotEmpty()) {
+                    fun mediaCards(list: List<HouseholdRequest>) = items(list, key = { it.id }) { r ->
+                        val isOwn = r.requester.id == user.id
+                        val declined = r.mediaStatus == "declined"
+                        MediaCard(
+                            r = r,
+                            me = user.id,
+                            isOwn = isOwn,
+                            canManage = mediaModule.handles,
+                            canDecline = mediaModule.handles && mediaModule.allowDecline,
+                            busy = r.id in state.busy,
+                            onMarkAdded = { vm.complete(r) },
+                            onDecline = { vm.startDecline(r) },
+                            // A declined request can't be edited, only removed.
+                            onEdit = if (isOwn && canWrite && !declined) ({ vm.startEdit(r) }) else null,
+                            onRemove = if (isOwn && canWrite && declined) ({ vm.askRemove(r) }) else null,
+                        )
+                    }
                     categoryHeader(mediaModule.label)
+                    // Problems with what the household already has, above the requests to add.
+                    val problems = media.filter { it.issue }.sortedBy { MEDIA_STATUS_ORDER.indexOf(it.mediaStatus) }
+                    if (problems.isNotEmpty()) {
+                        sectionHeader("media-problems", "Problems", problems.size)
+                        mediaCards(problems)
+                    }
                     MEDIA_SECTIONS.forEach { (type, label) ->
                         // Waiting first, then added, then declined.
-                        val items = media.filter { it.mediaType == type }
+                        val items = media.filter { it.mediaType == type && !it.issue }
                             .sortedBy { MEDIA_STATUS_ORDER.indexOf(it.mediaStatus) }
                         // A kind the head stopped offering still shows while it has requests.
                         if (items.isEmpty() && type !in mediaModule.mediaTypes) return@forEach
@@ -372,23 +413,7 @@ fun RequestsScreen(
                                 )
                             }
                         }
-                        items(items, key = { it.id }) { r ->
-                            val isOwn = r.requester.id == user.id
-                            val declined = r.mediaStatus == "declined"
-                            MediaCard(
-                                r = r,
-                                me = user.id,
-                                isOwn = isOwn,
-                                canManage = mediaModule.handles,
-                                canDecline = mediaModule.handles && mediaModule.allowDecline,
-                                busy = r.id in state.busy,
-                                onMarkAdded = { vm.complete(r) },
-                                onDecline = { vm.startDecline(r) },
-                                // A declined request can't be edited, only removed.
-                                onEdit = if (isOwn && canWrite && !declined) ({ vm.startEdit(r) }) else null,
-                                onRemove = if (isOwn && canWrite && declined) ({ vm.askRemove(r) }) else null,
-                            )
-                        }
+                        mediaCards(items)
                     }
                 }
             }
@@ -509,14 +534,30 @@ private fun MediaCard(
         Column(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp, end = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    // Problems are listed together, so each says what kind of media it is.
+                    val kind = if (r.issue) MEDIA_TYPES.firstOrNull { it.first == r.mediaType }?.second else null
+                    if (kind != null) {
+                        Text(kind, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Text(
                         r.year?.let { "${r.title} ($it)" } ?: r.title,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Medium,
                     )
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        SuggestionChip(onClick = {}, label = { Text(MEDIA_STATUS_LABELS[status] ?: status) })
-                        r.season?.let { SuggestionChip(onClick = {}, label = { Text("Season $it") }) }
+                        val statusLabel = if (r.issue && status == "completed") "Fixed" else MEDIA_STATUS_LABELS[status] ?: status
+                        SuggestionChip(onClick = {}, label = { Text(statusLabel) })
+                        val place = when {
+                            r.season != null -> "Season ${r.season}" + r.episode?.let { " · Episode $it" }.orEmpty()
+                            r.issue && r.mediaType == "tv" -> "Whole show"
+                            else -> null
+                        }
+                        place?.let { SuggestionChip(onClick = {}, label = { Text(it) }) }
+                    }
+                    if (r.issue) {
+                        r.details?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                     if (status == "declined") {
                         val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
@@ -527,7 +568,7 @@ private fun MediaCard(
                         )
                     }
                     Text(
-                        "Requested by ${if (isOwn) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
+                        "${if (r.issue) "Reported" else "Requested"} by ${if (isOwn) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -547,7 +588,15 @@ private fun MediaCard(
                     if (canDecline) {
                         TextButton(onClick = onDecline, enabled = !busy) { Text("Decline") }
                     }
-                    Button(onClick = onMarkAdded, enabled = !busy) { Text(if (busy) "Saving…" else "Mark as added") }
+                    Button(onClick = onMarkAdded, enabled = !busy) {
+                        Text(
+                            when {
+                                busy -> "Saving…"
+                                r.issue -> "Mark fixed"
+                                else -> "Mark as added"
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -732,8 +781,11 @@ private fun DeclineDialog(
                     label = { Text("Reason (optional)") },
                     placeholder = {
                         Text(
-                            if (r.category == "maintenance") "e.g. I'm away this week, ask someone else"
-                            else "e.g. We already have it on another service",
+                            when {
+                                r.category == "maintenance" -> "e.g. I'm away this week, ask someone else"
+                                r.issue -> "e.g. That's the only copy there is"
+                                else -> "e.g. We already have it on another service"
+                            },
                         )
                     },
                     supportingText = { Text(error ?: "Everyone in the household sees it.") },
@@ -755,8 +807,10 @@ private fun DeclineDialog(
 
 /**
  * Step-by-step form, matching the web: request type, then either media
- * (type → name, season, year) or maintenance (what → details → who).
- * The category is fixed once a request exists. What it offers comes from the
+ * (something new or a problem → type → name, season, year, and for a problem
+ * the episode and what's wrong) or maintenance (what → details → who).
+ * The category, and whether media is new or a problem, are fixed once a
+ * request exists. What it offers comes from the
  * head's request types ([modules]): the kinds this member may ask for, the
  * kinds of media and the person picked to start with. A request being edited
  * keeps its own kind even if the head has since stopped offering it.
@@ -794,14 +848,24 @@ private fun RequestEditor(
     var title by remember { mutableStateOf(initial?.title.orEmpty()) }
     var year by remember { mutableStateOf(initial?.year?.toString().orEmpty()) }
     var season by remember { mutableStateOf(initial?.season?.toString().orEmpty()) }
+    // Media problems: where (TV: the whole show, or a season and maybe an episode) and what's wrong.
+    var issue by remember { mutableStateOf(initial?.issue ?: false) }
+    var wholeShow by remember { mutableStateOf(initial?.issue == true && initial.mediaType == "tv" && initial.season == null) }
+    var episode by remember { mutableStateOf(initial?.episode?.toString().orEmpty()) }
+    var problem by remember { mutableStateOf(if (initial?.issue == true) initial.details.orEmpty() else "") }
     var details by remember { mutableStateOf(initial?.details.orEmpty()) }
     var assigneeId by remember { mutableStateOf(initial?.assignee?.id ?: startingAssignee(firstCategory)) }
     val categoryModule = modules.firstOrNull { it.id == category }
 
+    val tvProblem = issue && mediaType == "tv"
+    val needsSeason = tvProblem && !wholeShow
     val yearValue = year.takeIf { it.length == 4 }?.toIntOrNull()?.takeIf { it in 1870..2100 }
-    val seasonValue = season.toIntOrNull()
-    val seasonValid = season.isBlank() || seasonValue in 1..100
-    val mediaReady = category == "media" && mediaType.isNotEmpty() && title.isNotBlank() && yearValue != null && seasonValid
+    val seasonValue = if (tvProblem && wholeShow) null else season.toIntOrNull()
+    val seasonValid = if (season.isBlank() || (tvProblem && wholeShow)) !needsSeason else seasonValue in 1..100
+    val episodeValue = if (needsSeason) episode.toIntOrNull() else null
+    val episodeValid = !needsSeason || episode.isBlank() || episodeValue in 1..1000
+    val mediaReady = category == "media" && mediaType.isNotEmpty() && title.isNotBlank() && yearValue != null &&
+        seasonValid && episodeValid && (!issue || problem.isNotBlank())
     val maintenanceReady = category == "maintenance" && title.isNotBlank() && assigneeId.isNotEmpty()
     val yearLabel = when {
         mediaType != "tv" -> "Release year"
@@ -817,7 +881,15 @@ private fun RequestEditor(
         onSave = {
             onSave(
                 if (category == "media") {
-                    RequestEdit.Media(mediaType, title.trim(), yearValue!!, if (mediaType == "tv") seasonValue else null)
+                    RequestEdit.Media(
+                        mediaType,
+                        title.trim(),
+                        yearValue!!,
+                        if (mediaType == "tv") seasonValue else null,
+                        issue = issue,
+                        episode = episodeValue,
+                        details = if (issue) problem.trim() else null,
+                    )
                 } else {
                     RequestEdit.Maintenance(title.trim(), details.trim().ifEmpty { null }, assigneeId)
                 },
@@ -828,7 +900,12 @@ private fun RequestEditor(
         error = errors.message,
     ) {
         // Why each is red: the server's word first, then what's checked here.
-        val seasonError = errors["season"] ?: if (!seasonValid) "Enter a season from 1 to 100, or leave it blank." else null
+        val seasonError = errors["season"] ?: when {
+            seasonValid || (needsSeason && season.isBlank()) -> null
+            needsSeason -> "Enter a season from 1 to 100."
+            else -> "Enter a season from 1 to 100, or leave it blank."
+        }
+        val episodeError = errors["episode"] ?: if (!episodeValid) "Enter an episode from 1 to 1000, or leave it blank." else null
         val yearError = errors["year"] ?: if (year.isNotEmpty() && yearValue == null) "Enter a 4-digit year from 1870 to 2100." else null
         if (initial == null) {
             DropdownField(
@@ -852,6 +929,12 @@ private fun RequestEditor(
         }
 
         if (category == "media") {
+            val purposes = listOf("add" to "Something new added", "issue" to "A problem fixed with something we have")
+            if (initial == null) {
+                DropdownField("What do you need?", purposes, if (issue) "issue" else "add", { issue = it == "issue" })
+            } else {
+                FieldLabel(purposes.first { it.first == if (issue) "issue" else "add" }.second)
+            }
             DropdownField("Type of media", mediaTypes, mediaType, { mediaType = it; errors.clear("mediaType") }, error = errors["mediaType"])
         }
         if (category == "media" && mediaType.isNotEmpty()) {
@@ -866,7 +949,33 @@ private fun RequestEditor(
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (mediaType == "tv") {
+            if (tvProblem) {
+                CheckRow("It's the whole show, not one season", wholeShow) { wholeShow = it }
+            }
+            if (needsSeason) {
+                OutlinedTextField(
+                    value = season,
+                    onValueChange = { season = it.filter(Char::isDigit).take(3); errors.clear("season") },
+                    label = { Text("Season") },
+                    placeholder = { Text("e.g. 2") },
+                    supportingText = seasonError?.let { { Text(it) } },
+                    singleLine = true,
+                    isError = seasonError != null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = episode,
+                    onValueChange = { episode = it.filter(Char::isDigit).take(4); errors.clear("episode") },
+                    label = { Text("Episode (optional)") },
+                    placeholder = { Text("Whole season") },
+                    supportingText = { Text(episodeError ?: "Leave blank if it's the whole season.") },
+                    singleLine = true,
+                    isError = episodeError != null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else if (mediaType == "tv" && !tvProblem) {
                 OutlinedTextField(
                     value = season,
                     onValueChange = { season = it.filter(Char::isDigit).take(3); errors.clear("season") },
@@ -889,6 +998,19 @@ private fun RequestEditor(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (issue) {
+                OutlinedTextField(
+                    value = problem,
+                    onValueChange = { problem = it.take(2000); errors.clear("details") },
+                    label = { Text("What's wrong?") },
+                    placeholder = { Text("e.g. No sound after 20 minutes, or the subtitles are out of sync") },
+                    minLines = 2,
+                    isError = errors["details"] != null,
+                    supportingText = errors["details"]?.let { { Text(it) } },
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
 
         if (category == "maintenance") {

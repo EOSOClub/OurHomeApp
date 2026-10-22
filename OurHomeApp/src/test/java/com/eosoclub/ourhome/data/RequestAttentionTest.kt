@@ -89,6 +89,16 @@ class RequestAttentionTest {
         assertEquals(false, media("declined").isOpen)
     }
 
+    @Test fun `a problem report says so, with its season and episode`() {
+        val show = media("pending").copy(title = "Severance", mediaType = "tv", year = 2022)
+        assertEquals("TV: Severance (2022) · S2 - from $other", show.copy(season = 2).summary())
+        val problem = show.copy(issue = true, season = 2, episode = 3)
+        assertEquals("TV problem: Severance (2022) · S2 E3 - from $other", problem.summary())
+        assertEquals("TV problem: Severance (2022)", problem.copy(season = null, episode = null).mediaTitle())
+        // A problem waits on whoever handles media, like a request to add.
+        assertEquals(listOf(problem), awaitingAcceptanceBy(listOf(problem), me, handles = setOf("media")))
+    }
+
     @Test fun `handled kinds come from the modules`() {
         val modules = listOf(
             RequestModule(id = "media", workflow = "approve", label = "Media", handles = true),

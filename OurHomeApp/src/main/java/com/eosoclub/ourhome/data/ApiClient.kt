@@ -716,14 +716,30 @@ class ApiClient(
             RequestModuleSettings.serializer(),
         )
 
-    /** Creates a media request, or with [id] replaces the caller's own. */
-    suspend fun saveMediaRequest(id: String?, mediaType: String, title: String, year: Int, season: Int?) =
+    /**
+     * Creates a media request, or with [id] replaces the caller's own. [issue]:
+     * a problem with something the household has ([details] says what's wrong,
+     * [episode] where in [season]); fixed once made, the server keeps its own.
+     */
+    suspend fun saveMediaRequest(
+        id: String?,
+        mediaType: String,
+        title: String,
+        year: Int,
+        season: Int?,
+        issue: Boolean,
+        episode: Int?,
+        details: String?,
+    ) =
         saveRequest(id) {
             put("category", "media")
             put("mediaType", mediaType)
             put("title", title)
             put("year", year)
             put("season", season)
+            put("issue", issue)
+            put("episode", episode)
+            put("details", details)
         }
 
     /** Creates a maintenance request for [assigneeId], or with [id] replaces the caller's own. */

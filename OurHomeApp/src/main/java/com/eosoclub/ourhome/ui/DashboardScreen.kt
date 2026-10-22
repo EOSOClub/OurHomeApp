@@ -51,6 +51,7 @@ import com.eosoclub.ourhome.data.MemberPresence
 import com.eosoclub.ourhome.data.batteryLabel
 import com.eosoclub.ourhome.data.centi
 import com.eosoclub.ourhome.data.formatPoints
+import com.eosoclub.ourhome.data.mediaTitle
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -258,10 +259,7 @@ private fun NeedsYouCard(
 }
 
 private fun requestTitle(r: HouseholdRequest): String = when (r.category) {
-    "media" -> {
-        val kind = if (r.mediaType == "tv") "TV" else "Movie"
-        "$kind: ${r.title}" + (r.year?.let { " ($it)" } ?: "") + (r.season?.let { " · S$it" } ?: "")
-    }
+    "media" -> r.mediaTitle()
     else -> r.title
 }
 

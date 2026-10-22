@@ -235,7 +235,7 @@ private fun PeoplePicker(members: List<Member>, selected: List<String>, onChange
 }
 
 @Composable
-private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier.clickable { onChange(!checked) },
         verticalAlignment = Alignment.CenterVertically,

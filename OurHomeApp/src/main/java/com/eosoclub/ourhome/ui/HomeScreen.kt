@@ -231,7 +231,14 @@ fun HomeScreen(
     val requestModules = requestsState.modules
         ?: defaultRequestModules(access.requests.create, canApproveMedia(access, user.role))
     val waitingRequests = awaitingAcceptanceBy(requestsState.requests, user.id, handledKinds(requestModules))
-        .map { WaitingRequest(it, if (it.category == "media") "Mark added" else "Accept", urgent = false) } +
+        .map {
+            val action = when {
+                it.category != "media" -> "Accept"
+                it.issue -> "Fix it"
+                else -> "Mark added"
+            }
+            WaitingRequest(it, action, urgent = false)
+        } +
         deadlineAlerts(requestsState.requests, user.id)
             .filter { !it.forRequester && it.state != DeadlineState.DueTomorrow }
             .map { WaitingRequest(it.request, if (it.state == DeadlineState.Overdue) "Overdue" else "Due today", urgent = true) }
