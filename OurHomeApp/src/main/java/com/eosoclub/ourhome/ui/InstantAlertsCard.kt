@@ -178,8 +178,7 @@ internal fun InstantAlertsCard(session: SessionManager, showMessage: (String) ->
             } else {
                 Text(
                     "Off, so Android's Stop button can close Our Home. In Accessibility, open Keep Our Home running " +
-                        "and turn it on. If Android says it's a restricted setting, open App info first, tap ⋮ and " +
-                        "choose Allow restricted settings.",
+                        "and turn it on. " + CloseGuard.RESTRICTED_HINT,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

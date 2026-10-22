@@ -386,10 +386,28 @@ object CloseGuard {
             pkg == packageName && (cls == className || packageName + cls == className)
         }
 
-    fun accessibilitySettings(): Intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+    /**
+     * In Settings' own task, not on top of OurHome's: once the guard is on it
+     * sends these pages Home, and left in OurHome's task they'd come back every
+     * time OurHome is opened, and be sent Home again.
+     */
+    fun accessibilitySettings(): Intent =
+        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
+    /** In Settings' own task, for the same reason as [accessibilitySettings]. */
     fun appInfo(context: Context): Intent =
         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri())
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    /**
+     * How to get past Android's "Restricted setting" refusal (an app installed
+     * from a file, Android 13 or later). The ⋮ menu item only appears once
+     * Android has refused, so the order matters.
+     */
+    const val RESTRICTED_HINT =
+        "If Android says it's a restricted setting: tap OK, then open App info, tap ⋮ at the top and choose " +
+            "Allow restricted settings, then go back and turn it on. The ⋮ menu only shows up after Android " +
+            "has said no once."
 
     /**
      * The Force stop button's words in this phone's language (Settings' own

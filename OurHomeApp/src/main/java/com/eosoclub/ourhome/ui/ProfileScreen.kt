@@ -52,7 +52,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -265,28 +269,34 @@ fun ProfileScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             AccountCard(profile)
-            profile.profile?.let { about ->
-                AboutMeCard(profile.name, about, saving = state.savingAbout, errors = vm.aboutForm, onSave = vm::saveAboutMe)
-            }
-            state.members?.takeIf { it.size > 1 }?.let { HouseholdCard(it, profile.id) }
-            // The long phone blocks, closed so a newly set up phone isn't a wall of
-            // switches (each section shows only when it applies to this member).
-            CollapsibleCard(
-                "Phone and sharing",
-                phoneSubtitle(showLocation, state.usageShared),
-                group = true,
-                openWhen = showLocation && state.checkOnMe,
-            ) {
-                if (showLocation) LocationCard(session, showMessage)
-                AppUsageCard(session)
-                InstantAlertsCard(session, showMessage)
-            }
-            state.release?.let { release ->
-                val context = LocalContext.current
-                AppUpdateCard(release, state.downloadProgress) { vm.downloadAndInstall(context.applicationContext) }
-            }
-            EditProfileCard(profile, saving = state.savingProfile, errors = vm.profileForm, onSave = vm::saveProfile)
-            ChangePasswordCard(state.passwordFormKey, changing = state.changingPassword, errors = vm.passwordForm, onChange = vm::changePassword)
+            TwoStacks(
+                first = {
+                    profile.profile?.let { about ->
+                        AboutMeCard(profile.name, about, saving = state.savingAbout, errors = vm.aboutForm, onSave = vm::saveAboutMe)
+                    }
+                    state.members?.takeIf { it.size > 1 }?.let { HouseholdCard(it, profile.id) }
+                },
+                second = {
+                    // The long phone blocks, closed so a newly set up phone isn't a wall of
+                    // switches (each section shows only when it applies to this member).
+                    CollapsibleCard(
+                        "Phone and sharing",
+                        phoneSubtitle(showLocation, state.usageShared),
+                        group = true,
+                        openWhen = showLocation && state.checkOnMe,
+                    ) {
+                        if (showLocation) LocationCard(session, showMessage)
+                        AppUsageCard(session)
+                        InstantAlertsCard(session, showMessage)
+                    }
+                    state.release?.let { release ->
+                        val context = LocalContext.current
+                        AppUpdateCard(release, state.downloadProgress) { vm.downloadAndInstall(context.applicationContext) }
+                    }
+                    EditProfileCard(profile, saving = state.savingProfile, errors = vm.profileForm, onSave = vm::saveProfile)
+                    ChangePasswordCard(state.passwordFormKey, changing = state.changingPassword, errors = vm.passwordForm, onChange = vm::changePassword)
+                },
+            )
         }
     }
 }
@@ -411,6 +421,52 @@ internal fun CollapsibleCard(
                 verticalArrangement = Arrangement.spacedBy(if (group) 16.dp else 12.dp),
             ) {
                 CompositionLocalProvider(LocalGroupedSection provides group) { content() }
+            }
+        }
+    }
+}
+
+/**
+ * Two stacks of cards, side by side on a phone or tablet turned sideways (and on
+ * any screen 840dp wide or more), so short cards don't each take a full row; as
+ * the web's Profile and Settings. Upright, [first] sits above [second]: the same
+ * order as one list. One layout for both, so a turn only re-measures: the cards
+ * keep their place in the composition, and with it whether they're open.
+ */
+@Composable
+internal fun TwoStacks(
+    spacing: Dp = 16.dp,
+    first: @Composable ColumnScope.() -> Unit,
+    second: @Composable ColumnScope.() -> Unit,
+) {
+    val window = LocalWindowInfo.current.containerSize
+    val widthDp = with(LocalDensity.current) { window.width.toDp() }
+    // Sideways: the window is wider than it is tall.
+    val sideBySide = widthDp >= 840.dp || (window.width > window.height && widthDp >= 600.dp)
+    Layout(
+        content = {
+            Column(verticalArrangement = Arrangement.spacedBy(spacing), content = first)
+            Column(verticalArrangement = Arrangement.spacedBy(spacing), content = second)
+        },
+    ) { measurables, constraints ->
+        val gap = spacing.roundToPx()
+        val width = constraints.maxWidth
+        if (sideBySide) {
+            val half = (width - gap) / 2
+            val each = constraints.copy(minWidth = half, maxWidth = half, minHeight = 0)
+            val (a, b) = measurables.map { it.measure(each) }
+            layout(width, maxOf(a.height, b.height)) {
+                a.place(0, 0)
+                b.place(half + gap, 0)
+            }
+        } else {
+            val each = constraints.copy(minWidth = width, minHeight = 0)
+            val (a, b) = measurables.map { it.measure(each) }
+            // No gap under an empty stack.
+            val between = if (a.height > 0 && b.height > 0) gap else 0
+            layout(width, a.height + between + b.height) {
+                a.place(0, 0)
+                b.place(0, a.height + between)
             }
         }
     }

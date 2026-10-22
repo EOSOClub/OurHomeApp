@@ -18,6 +18,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.eosoclub.ourhome.data.SessionManager
 import com.eosoclub.ourhome.data.UsageHistory
+import com.eosoclub.ourhome.notifications.CloseGuard
 import com.eosoclub.ourhome.notifications.UsageReport
 
 /**
@@ -66,8 +67,7 @@ internal fun AppUsageCard(session: SessionManager) {
             Text("Usage access is allowed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             Text(
-                "It needs Usage access. On the next screen, choose Our Home and turn it on. If Android says it's a " +
-                    "restricted setting, first open Settings → Apps → Our Home, tap ⋮, and choose Allow restricted settings.",
+                "It needs Usage access. On the next screen, choose Our Home and turn it on. " + CloseGuard.RESTRICTED_HINT,
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(onClick = { context.startActivity(UsageReport.settingsIntent()) }) { Text("Allow usage access") }

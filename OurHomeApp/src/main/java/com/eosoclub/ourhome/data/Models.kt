@@ -550,8 +550,8 @@ data class HouseholdRequest(
     val details: String? = null,
     val assignee: UserRef? = null,
     /**
-     * "pending" | "accepted" | "completed", or "declined" (media, where the head
-     * allows declining). Null on media from before statuses.
+     * "pending" | "accepted" | "completed", or "declined" (where the head allows
+     * declining that kind). Null on media from before statuses.
      */
     val status: String? = null,
     /** Done-by date the assignee committed to - the deadline. */

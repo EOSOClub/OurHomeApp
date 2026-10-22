@@ -257,8 +257,8 @@ internal fun PhoneSetupScreen(
                                 "screen, find Our Home and turn it on.",
                         )
                         if (!state.done) {
-                            RestrictedHint(state.step, restrictedInstall, onAppInfo = { open(CloseGuard.appInfo(context)) })
                             Button(onClick = { open(UsageReport.settingsIntent()) }) { Text("Open Usage access") }
+                            RestrictedHint(state.step, restrictedInstall, onAppInfo = { open(CloseGuard.appInfo(context)) })
                         }
                     }
                     SetupStep.PreventUninstall -> {
@@ -267,7 +267,6 @@ internal fun PhoneSetupScreen(
                                 "be uninstalled without the PIN.",
                         )
                         if (!state.done) {
-                            RestrictedHint(state.step, restrictedInstall, onAppInfo = { open(CloseGuard.appInfo(context)) })
                             if (!hasPin) {
                                 Button(onClick = { showSetPinDialog = true }) { Text("Set parent PIN") }
                             } else {
@@ -275,6 +274,7 @@ internal fun PhoneSetupScreen(
                                     Text("Activate Device admin")
                                 }
                             }
+                            RestrictedHint(state.step, restrictedInstall, onAppInfo = { open(CloseGuard.appInfo(context)) })
                         }
                     }
                     SetupStep.KeepRunning -> {
@@ -284,8 +284,8 @@ internal fun PhoneSetupScreen(
                                 "it's on, App info, Device admin and Accessibility can't be opened on this phone.",
                         )
                         if (!state.done) {
-                            RestrictedHint(state.step, restrictedInstall, onAppInfo = { open(CloseGuard.appInfo(context)) })
                             Button(onClick = { open(CloseGuard.accessibilitySettings()) }) { Text("Open Accessibility") }
+                            RestrictedHint(state.step, restrictedInstall, onAppInfo = { open(CloseGuard.appInfo(context)) })
                         }
                     }
                 }
@@ -347,20 +347,21 @@ private fun StepText(text: String) {
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
-/** How to get past Android's "Restricted setting" refusal, on the steps it can refuse. */
+/**
+ * How to get past Android's "Restricted setting" refusal, on the steps it can
+ * refuse. Under the step's own button: Android has to refuse first.
+ */
 @Composable
 private fun RestrictedHint(step: SetupStep, restrictedInstall: Boolean, onAppInfo: () -> Unit) {
     if (!mayBeRestricted(step, restrictedInstall, Build.VERSION.SDK_INT)) return
-    Text(
-        "If Android says it's a restricted setting: tap OK, then open App info, tap ⋮ at the top and choose " +
-            "Allow restricted settings. Then try again.",
-        style = MaterialTheme.typography.bodySmall,
-    )
+    Text(CloseGuard.RESTRICTED_HINT, style = MaterialTheme.typography.bodySmall)
     OutlinedButton(onClick = onAppInfo) { Text("App info") }
 }
 
-private fun notificationSettings(context: Context): Intent =
-    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-
 private fun appDetails(context: Context): Intent =
     Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", context.packageName, null))
+        // Settings' own task, as CloseGuard.appInfo: the guard closes this page.
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+private fun notificationSettings(context: Context): Intent =
+    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)

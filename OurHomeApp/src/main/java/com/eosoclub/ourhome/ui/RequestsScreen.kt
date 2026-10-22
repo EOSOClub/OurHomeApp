@@ -87,6 +87,7 @@ private val MAINTENANCE_SECTIONS = listOf(
     "pending" to "Waiting for acceptance",
     "accepted" to "In progress",
     "completed" to "Done",
+    "declined" to "Declined",
 )
 
 /** What the editor submits. */
@@ -335,14 +336,20 @@ fun RequestsScreen(
                         if (items.isEmpty()) return@forEach
                         sectionHeader("maint-$status", label, items.size)
                         items(items, key = { it.id }) { r ->
+                            val isOwn = r.requester.id == user.id
+                            val declined = r.status == "declined"
                             MaintenanceCard(
                                 r = r,
                                 me = user.id,
                                 requireDueDate = maintenanceModule.requireDueDate,
+                                canDecline = maintenanceModule.allowDecline,
                                 busy = r.id in state.busy,
                                 onAccept = { vm.startAccept(r) },
                                 onComplete = { vm.complete(r) },
-                                onEdit = if (canWrite && r.requester.id == user.id) ({ vm.startEdit(r) }) else null,
+                                onDecline = { vm.startDecline(r) },
+                                // A declined request can't be edited, only removed.
+                                onEdit = if (isOwn && canWrite && !declined) ({ vm.startEdit(r) }) else null,
+                                onRemove = if (isOwn && canWrite && declined) ({ vm.askRemove(r) }) else null,
                             )
                         }
                     }
@@ -553,13 +560,19 @@ private fun MaintenanceCard(
     me: String,
     /** Accepting needs a done-by date (the head's choice). */
     requireDueDate: Boolean,
+    /** The head lets the person asked decline. */
+    canDecline: Boolean,
     busy: Boolean,
     onAccept: () -> Unit,
     onComplete: () -> Unit,
+    onDecline: () -> Unit,
     onEdit: (() -> Unit)?,
+    /** Own declined request: removing is all that's left. */
+    onRemove: (() -> Unit)?,
 ) {
     val isAssignee = r.assignee?.id == me
     val done = r.status == "completed"
+    val declined = r.status == "declined"
     // Highlight requests waiting on *you*.
     val colors = if (isAssignee && r.status == "pending") {
         CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
@@ -575,7 +588,7 @@ private fun MaintenanceCard(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Medium,
                         textDecoration = if (done) TextDecoration.LineThrough else null,
-                        color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                        color = if (done || declined) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                     )
                     val deadline = when {
                         r.status == "accepted" && r.dueAt != null -> dueLabel(r.dueAt, prefix = "Done by")
@@ -592,6 +605,14 @@ private fun MaintenanceCard(
                     r.details?.takeIf { it.isNotBlank() }?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    if (declined) {
+                        val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
+                        Text(
+                            "Declined$by" + r.reply?.let { ": $it" }.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Text(
                         "${who(r.requester, me).replaceFirstChar(Char::uppercase)} asked ${who(r.assignee, me)} · ${formatDate(r.createdAt)}",
                         style = MaterialTheme.typography.bodySmall,
@@ -601,12 +622,18 @@ private fun MaintenanceCard(
                 if (onEdit != null) {
                     IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit ${r.title}") }
                 }
+                if (onRemove != null) {
+                    IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${r.title}") }
+                }
             }
-            if (isAssignee && !done) {
+            if (isAssignee && !done && !declined) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 ) {
+                    if (canDecline) {
+                        TextButton(onClick = onDecline, enabled = !busy) { Text("Decline") }
+                    }
                     if (r.status == "pending") {
                         Button(onClick = onAccept, enabled = !busy) { Text("Accept") }
                     } else {
@@ -703,7 +730,12 @@ private fun DeclineDialog(
                     value = reply,
                     onValueChange = { reply = it.take(500) },
                     label = { Text("Reason (optional)") },
-                    placeholder = { Text("e.g. We already have it on another service") },
+                    placeholder = {
+                        Text(
+                            if (r.category == "maintenance") "e.g. I'm away this week, ask someone else"
+                            else "e.g. We already have it on another service",
+                        )
+                    },
                     supportingText = { Text(error ?: "Everyone in the household sees it.") },
                     isError = error != null,
                     minLines = 2,

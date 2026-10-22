@@ -328,18 +328,27 @@ fun SettingsScreen(
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             // Keyed on the saved values so the form resets to them after a save;
             // each on its own, so saving one doesn't wipe an edit in the other.
+            // Side by side when turned sideways (TwoStacks), as on the web.
             state.points?.let { p ->
-                key(p.timezone, p.weekStartsOn) { TimeZoneCard(p, state.busy, vm.timeZoneForm, vm::saveTimeZone) }
-                key(p.minutesPerPoint) { PointsCard(p, state.busy, vm.pointsForm, vm::savePoints) }
+                TwoStacks(
+                    first = { key(p.timezone, p.weekStartsOn) { TimeZoneCard(p, state.busy, vm.timeZoneForm, vm::saveTimeZone) } },
+                    second = { key(p.minutesPerPoint) { PointsCard(p, state.busy, vm.pointsForm, vm::savePoints) } },
+                )
             }
-            // Rooms are where tasks are done: hidden with Tasks.
-            if (features.places) state.places?.let { PlacesCard(it, state.busy, vm) }
-            state.categories?.let { CategoriesCard(it, state.busy, vm) }
-            // Paperless feeds Bills and NFC tags drive Inventory: hidden with them.
-            if (features.bills) state.paperless?.let { PaperlessCard(it, state.busy, state.syncing, vm) }
-            state.integrations?.let { HomeAssistantCard(it, state.newToken, "$baseUrl/api/webhooks/nfc", state.busy, vm) }
-            if (features.inventory) state.tags?.let { NfcTagsCard(it, state.items, state.places, state.busy, vm) }
-            if (isHead) ExportCard(state.busy, vm)
+            TwoStacks(
+                first = {
+                    // Rooms are where tasks are done: hidden with Tasks.
+                    if (features.places) state.places?.let { PlacesCard(it, state.busy, vm) }
+                    state.categories?.let { CategoriesCard(it, state.busy, vm) }
+                },
+                second = {
+                    // Paperless feeds Bills and NFC tags drive Inventory: hidden with them.
+                    if (features.bills) state.paperless?.let { PaperlessCard(it, state.busy, state.syncing, vm) }
+                    state.integrations?.let { HomeAssistantCard(it, state.newToken, "$baseUrl/api/webhooks/nfc", state.busy, vm) }
+                    if (features.inventory) state.tags?.let { NfcTagsCard(it, state.items, state.places, state.busy, vm) }
+                    if (isHead) ExportCard(state.busy, vm)
+                },
+            )
         }
     }
 }

@@ -128,8 +128,8 @@ object UsageReport {
             AppOpsManager.MODE_ALLOWED
     }
 
-    /** Android's page where Usage access is allowed. */
-    fun settingsIntent(): Intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+    /** Android's page where Usage access is allowed, in Settings' own task (see CloseGuard.accessibilitySettings). */
+    fun settingsIntent(): Intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
     suspend fun send(context: Context, api: ApiClient) {
         if (!api.myUsageSharing().shared) {
