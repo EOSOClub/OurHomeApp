@@ -55,6 +55,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.Placeable
+import androidx.compose.ui.layout.layoutId
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.material3.LinearProgressIndicator
@@ -269,14 +273,16 @@ fun ProfileScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             AccountCard(profile)
-            TwoStacks(
-                first = {
-                    profile.profile?.let { about ->
+            // Upright: one list in this order. Sideways: short cards in pairs, then
+            // Phone and sharing across the whole width with its sections side by side.
+            CardRows(PROFILE_ROWS) {
+                profile.profile?.let { about ->
+                    CardSlot("about") {
                         AboutMeCard(profile.name, about, saving = state.savingAbout, errors = vm.aboutForm, onSave = vm::saveAboutMe)
                     }
-                    state.members?.takeIf { it.size > 1 }?.let { HouseholdCard(it, profile.id) }
-                },
-                second = {
+                }
+                state.members?.takeIf { it.size > 1 }?.let { CardSlot("household") { HouseholdCard(it, profile.id) } }
+                CardSlot("phone") {
                     // The long phone blocks, closed so a newly set up phone isn't a wall of
                     // switches (each section shows only when it applies to this member).
                     CollapsibleCard(
@@ -285,21 +291,40 @@ fun ProfileScreen(
                         group = true,
                         openWhen = showLocation && state.checkOnMe,
                     ) {
-                        if (showLocation) LocationCard(session, showMessage)
-                        AppUsageCard(session)
-                        InstantAlertsCard(session, showMessage)
+                        // Location and app usage beside Instant alerts when there's room.
+                        TwoStacks(
+                            first = {
+                                if (showLocation) LocationCard(session, showMessage)
+                                AppUsageCard(session)
+                            },
+                            second = { InstantAlertsCard(session, showMessage) },
+                        )
                     }
-                    state.release?.let { release ->
+                }
+                state.release?.let { release ->
+                    CardSlot("app") {
                         val context = LocalContext.current
                         AppUpdateCard(release, state.downloadProgress) { vm.downloadAndInstall(context.applicationContext) }
                     }
+                }
+                CardSlot("edit") {
                     EditProfileCard(profile, saving = state.savingProfile, errors = vm.profileForm, onSave = vm::saveProfile)
+                }
+                CardSlot("password") {
                     ChangePasswordCard(state.passwordFormKey, changing = state.changingPassword, errors = vm.passwordForm, onChange = vm::changePassword)
-                },
-            )
+                }
+            }
         }
     }
 }
+
+/** Profile's cards when sideways (owner's layout, 2026-10-22); see [CardRows]. */
+private val PROFILE_ROWS = listOf(
+    listOf("about", "edit"),
+    listOf("household", "password"),
+    listOf("app", "none"),
+    listOf("phone"),
+)
 
 /**
  * What Phone and sharing holds, so a closed block still says what's inside,
@@ -439,10 +464,7 @@ internal fun TwoStacks(
     first: @Composable ColumnScope.() -> Unit,
     second: @Composable ColumnScope.() -> Unit,
 ) {
-    val window = LocalWindowInfo.current.containerSize
-    val widthDp = with(LocalDensity.current) { window.width.toDp() }
-    // Sideways: the window is wider than it is tall.
-    val sideBySide = widthDp >= 840.dp || (window.width > window.height && widthDp >= 600.dp)
+    val sideBySide = cardsSideBySide()
     Layout(
         content = {
             Column(verticalArrangement = Arrangement.spacedBy(spacing), content = first)
@@ -454,10 +476,13 @@ internal fun TwoStacks(
         if (sideBySide) {
             val half = (width - gap) / 2
             val each = constraints.copy(minWidth = half, maxWidth = half, minHeight = 0)
-            val (a, b) = measurables.map { it.measure(each) }
+            val a = measurables[0].measure(each)
+            // Nothing in the first stack: the second takes the whole width.
+            val bWidth = if (a.height == 0) width else half
+            val b = measurables[1].measure(constraints.copy(minWidth = bWidth, maxWidth = bWidth, minHeight = 0))
             layout(width, maxOf(a.height, b.height)) {
                 a.place(0, 0)
-                b.place(half + gap, 0)
+                b.place(if (a.height == 0) 0 else half + gap, 0)
             }
         } else {
             val each = constraints.copy(minWidth = width, minHeight = 0)
@@ -468,6 +493,65 @@ internal fun TwoStacks(
                 a.place(0, 0)
                 b.place(0, a.height + between)
             }
+        }
+    }
+}
+
+/** Room for cards side by side: turned sideways (600dp or more), or any window 840dp wide. */
+@Composable
+internal fun cardsSideBySide(): Boolean {
+    val window = LocalWindowInfo.current.containerSize
+    val widthDp = with(LocalDensity.current) { window.width.toDp() }
+    // Sideways: the window is wider than it is tall.
+    return widthDp >= 840.dp || (window.width > window.height && widthDp >= 600.dp)
+}
+
+/** Marks a card for [CardRows] by [id]. */
+@Composable
+internal fun CardSlot(id: String, content: @Composable () -> Unit) {
+    Box(Modifier.layoutId(id)) { content() }
+}
+
+/**
+ * Cards ([CardSlot]s) laid out in [rows] when there's room ([cardsSideBySide]):
+ * a row of two ids puts them side by side, a row of one gives it the whole
+ * width; ids not shown are skipped. Upright, the cards are one list in the
+ * order they're written. One layout for both, so turning the phone only moves
+ * them: each keeps its place in the composition, and with it whether it's open.
+ */
+@Composable
+internal fun CardRows(rows: List<List<String>>, spacing: Dp = 16.dp, content: @Composable () -> Unit) {
+    val sideBySide = cardsSideBySide()
+    Layout(content) { measurables, constraints ->
+        val gap = spacing.roundToPx()
+        val width = constraints.maxWidth
+        val full = constraints.copy(minWidth = width, maxWidth = width, minHeight = 0)
+        val placed = mutableListOf<Triple<Placeable, Int, Int>>()
+        var y = 0
+        fun row(items: List<Pair<Measurable, Int>>, each: Constraints) {
+            val ps = items.map { (m, x) -> m.measure(each) to x }
+            val h = ps.maxOfOrNull { it.first.height } ?: 0
+            if (h == 0) return
+            ps.forEach { (p, x) -> placed += Triple(p, x, y) }
+            y += h + gap
+        }
+        if (!sideBySide) {
+            measurables.forEach { row(listOf(it to 0), full) }
+        } else {
+            val half = (width - gap) / 2
+            val byId = measurables.associateBy { it.layoutId }
+            val used = mutableSetOf<Any?>()
+            rows.forEach { ids ->
+                val present = ids.mapIndexedNotNull { col, id -> byId[id]?.let { it to col * (half + gap) } }
+                used.addAll(ids)
+                if (ids.size == 1) row(present, full)
+                else row(present, constraints.copy(minWidth = half, maxWidth = half, minHeight = 0))
+            }
+            // Anything not named in rows: full width after them.
+            measurables.filter { it.layoutId !in used }.forEach { row(listOf(it to 0), full) }
+        }
+        layout(width, (y - gap).coerceAtLeast(0)) {
+            placed.forEach { (p, x, py) -> p.place(x, py) }
         }
     }
 }

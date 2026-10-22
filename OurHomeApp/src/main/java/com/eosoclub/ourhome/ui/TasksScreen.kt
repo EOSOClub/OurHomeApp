@@ -79,6 +79,8 @@ import java.time.Instant
 class TasksViewModel(private val api: ApiClient) : ViewModel() {
     data class UiState(
         val tasks: List<Task> = emptyList(),
+        /** The household's minutes per point, for a new task's points (null until loaded). */
+        val minutesPerPoint: Double? = null,
         val loading: Boolean = true,
         val error: String? = null,
         val busy: Set<String> = emptySet(),
@@ -111,6 +113,8 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
         state.update { it.copy(loading = true) }
         // Rooms change rarely; a failure (older server) keeps the last.
         launch { runCatching { api.places() }.onSuccess { p -> state.update { it.copy(places = p) } } }
+        // Every member may read the rate; a failure keeps the one the tasks carry.
+        launch { runCatching { api.pointsSettings() }.onSuccess { p -> state.update { it.copy(minutesPerPoint = p.minutesPerPoint) } } }
         state.load({ api.tasks() }, { s, v -> s.copy(tasks = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
     }
 
@@ -524,8 +528,9 @@ fun TasksScreen(
             onDismiss = vm::cancelEdit,
             canSave = true,
             showPoints = showPoints,
-            // The household rate comes with every task; the default before any load.
-            minutesPerPoint = state.tasks.firstOrNull()?.minutesPerPoint ?: DEFAULT_MINUTES_PER_POINT,
+            // The household rate (Settings → Task points): asked for on load, else the one every task
+            // carries; the default only before either arrives (no tasks yet used to mean 10 here).
+            minutesPerPoint = state.minutesPerPoint ?: state.tasks.firstOrNull()?.minutesPerPoint ?: DEFAULT_MINUTES_PER_POINT,
             onSave = vm::create,
             onDelete = null,
         )

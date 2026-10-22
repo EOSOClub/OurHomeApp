@@ -60,6 +60,8 @@ class ApiClient(
     private val onUnauthorized: (String?) -> Unit,
 ) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    /** For a body the server checks field by field: defaults and nulls are written too. */
+    private val everyField = Json { encodeDefaults = true; explicitNulls = true }
     private val jsonType = "application/json".toMediaType()
 
     private val http = OkHttpClient.Builder()
@@ -699,6 +701,20 @@ class ApiClient(
      */
     suspend fun requestModules(): List<RequestModule> =
         call(get("/api/requests/modules"), ListSerializer(RequestModule.serializer()))
+
+    /** Head only: Settings → Request types, every module with every field. */
+    suspend fun requestModuleSettings(): RequestModuleSettings =
+        call(get("/api/requests/modules/settings"), RequestModuleSettings.serializer())
+
+    /**
+     * Head only: saves Request types as a whole; the server answers with what
+     * it stored. Every field is sent, nulls included (the server needs them all).
+     */
+    suspend fun saveRequestModuleSettings(settings: RequestModuleSettings): RequestModuleSettings =
+        call(
+            post("/api/requests/modules/settings", everyField.encodeToJsonElement(RequestModuleSettings.serializer(), settings)),
+            RequestModuleSettings.serializer(),
+        )
 
     /** Creates a media request, or with [id] replaces the caller's own. */
     suspend fun saveMediaRequest(id: String?, mediaType: String, title: String, year: Int, season: Int?) =

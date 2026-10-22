@@ -569,7 +569,7 @@ data class HouseholdRequest(
 /**
  * A kind of request that's on in this household, as the signed-in member sees
  * it (RequestModuleView, `GET /api/requests/modules`). The head turns kinds on
- * and configures them on the website (Settings → Request types).
+ * and configures them in Settings → Request types (website or app).
  */
 @Serializable
 data class RequestModule(
@@ -595,6 +595,50 @@ data class RequestModule(
     /** Assign workflow: accepting needs a done-by date. */
     val requireDueDate: Boolean = true,
 )
+
+/**
+ * Settings → Request types (head only; web lib/requestModules.ts): every
+ * module's settings. Saved as a whole. Empty [MediaModuleSettings.handlerIds]
+ * = everyone with Requests "Approve"; empty
+ * [MaintenanceModuleSettings.assigneeIds] = anyone in the household.
+ */
+@Serializable
+data class RequestModuleSettings(
+    val media: MediaModuleSettings = MediaModuleSettings(),
+    val maintenance: MaintenanceModuleSettings = MaintenanceModuleSettings(),
+)
+
+@Serializable
+data class MediaModuleSettings(
+    val enabled: Boolean = true,
+    /** The name on the Requests page; null = "Media". */
+    val label: String? = null,
+    /** Shown on the form once it's picked. */
+    val note: String? = null,
+    /** Roles that may ask ("head", "manager", "adult", "teen", "child", "guest"). */
+    val askRoles: List<String> = REQUEST_ROLES,
+    val handlerIds: List<String> = emptyList(),
+    val allowDecline: Boolean = false,
+    /** "movie", "tv". */
+    val mediaTypes: List<String> = listOf("movie", "tv"),
+)
+
+@Serializable
+data class MaintenanceModuleSettings(
+    val enabled: Boolean = true,
+    /** The name on the Requests page; null = "Maintenance". */
+    val label: String? = null,
+    val note: String? = null,
+    val askRoles: List<String> = REQUEST_ROLES,
+    val assigneeIds: List<String> = emptyList(),
+    /** Picked to start with; one of [assigneeIds] when that has anyone. */
+    val defaultAssigneeId: String? = null,
+    val requireDueDate: Boolean = true,
+    val allowDecline: Boolean = false,
+)
+
+/** Every role, in the server's order (web USER_ROLES). */
+val REQUEST_ROLES = listOf("head", "manager", "adult", "teen", "child", "guest")
 
 @Serializable
 data class NfcTag(

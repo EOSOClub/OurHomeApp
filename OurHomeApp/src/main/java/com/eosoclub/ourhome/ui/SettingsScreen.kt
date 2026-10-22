@@ -76,6 +76,8 @@ import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.Floor
 import com.eosoclub.ourhome.data.Integration
 import com.eosoclub.ourhome.data.InventoryItem
+import com.eosoclub.ourhome.data.Member
+import com.eosoclub.ourhome.data.RequestModuleSettings
 import com.eosoclub.ourhome.data.NfcTag
 import com.eosoclub.ourhome.data.PaperlessStatus
 import com.eosoclub.ourhome.data.Places
@@ -94,7 +96,7 @@ import java.time.ZoneId
 
 /**
  * The web's Settings page (head + managers): points rate and calendar (head),
- * rooms & floors, categories, Paperless bill import, Home Assistant tokens,
+ * rooms & floors, categories, request types (head), Paperless bill import, Home Assistant tokens,
  * NFC tag mappings, and the household export (head). Each card loads on its
  * own, so one failing (an older server, a turned-off feature) leaves the rest.
  */
@@ -115,6 +117,10 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
         val syncing: Boolean = false,
         /** A just-created Home Assistant token; shown once until dismissed. */
         val newToken: String? = null,
+        /** Request types (head, with Requests on); null until loaded or on an older server. */
+        val requestModules: RequestModuleSettings? = null,
+        /** The household, for Request types' people pickers. */
+        val members: List<Member> = emptyList(),
     )
 
     val state = MutableStateFlow(UiState())
@@ -135,6 +141,11 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
                 launch { state.load({ api.nfcTags() }, { s, v -> s.copy(tags = v) }, failed) }
                 launch { state.load({ api.inventory() }, { s, v -> s.copy(items = v.sortedBy { it.name.lowercase() }) }, failed) }
             }
+            // A server from before request types has none: the card just doesn't show.
+            if (isHead && features.requests) {
+                launch { runCatching { api.requestModuleSettings() }.onSuccess { r -> state.update { it.copy(requestModules = r) } } }
+                launch { runCatching { api.householdMembers() }.onSuccess { m -> state.update { it.copy(members = m) } } }
+            }
         }
         state.update { it.copy(loading = false) }
     }
@@ -148,6 +159,12 @@ class SettingsViewModel(private val api: ApiClient, private val isHead: Boolean)
     val paperlessForm = FormErrors()
     val tokenForm = FormErrors()
     val tagForm = FormErrors()
+    val requestTypesForm = FormErrors()
+
+    fun saveRequestModules(next: RequestModuleSettings) = act("Request types saved", form = requestTypesForm) {
+        val saved = api.saveRequestModuleSettings(next)
+        state.update { it.copy(requestModules = saved) }
+    }
 
     /** Runs one change; [onDone] (close the dialog, …) only when it worked. [form]: where a failure is marked. */
     private fun act(success: String?, onDone: () -> Unit = {}, form: FormErrors? = null, block: suspend () -> Unit) {
@@ -340,6 +357,10 @@ fun SettingsScreen(
                     // Rooms are where tasks are done: hidden with Tasks.
                     if (features.places) state.places?.let { PlacesCard(it, state.busy, vm) }
                     state.categories?.let { CategoriesCard(it, state.busy, vm) }
+                    // Head only (the server says the same), as on the web.
+                    state.requestModules?.let { saved ->
+                        RequestTypesCard(saved, state.members, state.busy, vm.requestTypesForm, vm::saveRequestModules)
+                    }
                 },
                 second = {
                     // Paperless feeds Bills and NFC tags drive Inventory: hidden with them.
