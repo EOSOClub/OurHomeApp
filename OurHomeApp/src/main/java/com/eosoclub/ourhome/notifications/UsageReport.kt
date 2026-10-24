@@ -56,6 +56,10 @@ import java.util.concurrent.TimeUnit
  * After each report the server lists the apps it has no icon for; those are
  * sent once, as small PNGs, so supervisors see the icon next to the minutes.
  *
+ * The 15-minute job and [sendNow] also check in ([PhoneCheckIn], with the
+ * battery), so the adults see a fresher battery and hear sooner when it runs
+ * low. The hourly check has just checked in itself, so it doesn't again.
+ *
  * Each run also compares the apps that can be opened with the last run's,
  * and tells the server about new ones, so supervisors are told (Android
  * doesn't tell a background app about installs). That needs no Usage access.
@@ -109,7 +113,7 @@ object UsageReport {
         override suspend fun doWork(): Result {
             val api = (applicationContext as OurHomeApp).session.api
             return try {
-                send(applicationContext, api)
+                send(applicationContext, api, checkIn = true)
                 Result.success()
             } catch (e: UnauthorizedException) {
                 cancel(applicationContext)
@@ -131,12 +135,23 @@ object UsageReport {
     /** Android's page where Usage access is allowed, in Settings' own task (see CloseGuard.accessibilitySettings). */
     fun settingsIntent(): Intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-    suspend fun send(context: Context, api: ApiClient) {
+    /** [checkIn]: also check in first (the 15-minute job and [sendNow]; see above). */
+    suspend fun send(context: Context, api: ApiClient, checkIn: Boolean = false) {
         if (!api.myUsageSharing().shared) {
             cancel(context)
             return
         }
         schedule(context)
+        // A failed check-in mustn't hold back the usage; the next run tries again.
+        if (checkIn) {
+            try {
+                PhoneCheckIn.send(context, api)
+            } catch (e: UnauthorizedException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "check-in with the usage report failed", e)
+            }
+        }
         if (!reportNewApps(context, api)) return
         if (!hasAccess(context)) {
             Log.i(TAG, "usage is shared but Usage access isn't allowed; nothing to send")

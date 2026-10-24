@@ -266,7 +266,7 @@ data class LookedAfterRing(
 /**
  * [problems]: "quiet" | "app_removed" | "switched_off" | "battery_flat" |
  * "no_signal" (why it went quiet, at most one) | "notifications_off" |
- * "location_off" | "usage_off"
+ * "location_off" | "usage_off" | "battery_low"
  * | "battery_restricted" | "close_guard_off" | "uninstall_guard_off" |
  * "emergency_unlock_*" (web lib/phoneHealth.ts PHONE_PROBLEMS). [lastPushAt]:
  * when an instant alert last reached it (null: none yet, or an older app).
@@ -294,6 +294,7 @@ data class LookedAfterPhone(
                 "notifications_off" -> "Notifications turned off on their phone"
                 "location_off" -> "Location turned off on their phone"
                 "usage_off" -> "Usage access turned off on their phone"
+                "battery_low" -> "Their phone battery is low"
                 "battery_restricted" -> "Battery saving can delay OurHome on their phone"
                 "close_guard_off" -> "OurHome can be closed on their phone"
                 "uninstall_guard_off" -> "OurHome can be uninstalled on their phone"

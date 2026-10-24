@@ -35,8 +35,11 @@ data class DeviceStatus(
         ).joinToString("") { "&$it" }
 
     companion object {
-        /** At or below this, not charging, the phone tells the server at once: it's about to go flat. */
-        const val LOW_PCT = 5
+        /** At or below this, not charging, the phone tells the server at once: its adults are told it's low (web PHONE_LOW_PCT). */
+        const val LOW_PCT = 15
+
+        /** At or below this, not charging, it tells the server again: it's about to go flat (web PHONE_FLAT_PCT). */
+        const val FLAT_PCT = 5
 
         /** Android's network as the server's word for it. */
         fun networkName(connected: Boolean, wifi: Boolean, cellular: Boolean): String = when {
@@ -47,10 +50,15 @@ data class DeviceStatus(
         }
 
         /**
-         * Whether a battery reading should be sent now: it just went low
-         * (once, until it charges or climbs back over [LOW_PCT]).
+         * How low the battery is: 0 fine (or charging), 1 at [LOW_PCT] or
+         * below, 2 at [FLAT_PCT] or below. A reading is sent at once each
+         * time this changes: lower, so the adults are told; back up (plugged
+         * in), so their low battery alert goes without waiting.
          */
-        fun isNewlyLow(pct: Int, charging: Boolean, alreadySent: Boolean): Boolean =
-            !alreadySent && !charging && pct in 0..LOW_PCT
+        fun lowStep(pct: Int, charging: Boolean): Int = when {
+            charging || pct !in 0..LOW_PCT -> 0
+            pct <= FLAT_PCT -> 2
+            else -> 1
+        }
     }
 }

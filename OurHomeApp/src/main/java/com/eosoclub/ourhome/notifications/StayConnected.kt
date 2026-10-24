@@ -15,7 +15,6 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
-import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
@@ -34,6 +33,7 @@ import com.eosoclub.ourhome.MainActivity
 import com.eosoclub.ourhome.OurHomeApp
 import com.eosoclub.ourhome.R
 import com.eosoclub.ourhome.data.DeviceStatus
+import com.eosoclub.ourhome.location.batteryFrom
 import com.eosoclub.ourhome.data.SseParser
 import com.eosoclub.ourhome.data.UnauthorizedException
 import com.eosoclub.ourhome.data.parseStreamMessage
@@ -290,8 +290,9 @@ internal class StreamConnection(
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var phoneEvents: BroadcastReceiver? = null
 
+    /** The last [DeviceStatus.lowStep] told to the server. */
     @Volatile
-    private var lowBatterySent = false
+    private var lowStepSent = 0
 
     fun start() {
         if (loop != null) return
@@ -313,9 +314,10 @@ internal class StreamConnection(
     /**
      * While connected, OurHome is running, so it can hear what Android tells
      * running apps: the phone switching off (its last word to the server), and
-     * the battery going nearly flat (a check-in at once). Either way the
-     * adults who look after this member are told why it went quiet, not just
-     * that it did (PhoneCheckIn).
+     * the battery running low, then nearly flat, and being plugged in again (a
+     * check-in at once each time). The adults who look after this member are
+     * told it's low, and if it goes quiet, why, not just that it did
+     * (PhoneCheckIn).
      */
     private fun watchPhone() {
         val receiver = object : BroadcastReceiver() {
@@ -332,17 +334,15 @@ internal class StreamConnection(
                         }
                     }
                     Intent.ACTION_BATTERY_CHANGED -> {
-                        val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-                        val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
-                        if (level < 0 || scale <= 0) return
-                        val pct = level * 100 / scale
-                        val charging = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
-                        if (charging || pct > DeviceStatus.LOW_PCT) {
-                            lowBatterySent = false
-                        } else if (DeviceStatus.isNewlyLow(pct, charging, lowBatterySent) && StayConnected.isRequired(context)) {
-                            lowBatterySent = true
-                            Log.i(TAG, "battery nearly flat; checking in")
+                        val (pct, charging) = batteryFrom(intent) ?: return
+                        val step = DeviceStatus.lowStep(pct, charging)
+                        if (step != lowStepSent && StayConnected.isRequired(context)) {
+                            // Lower: the adults are told. Back up (plugged in): their alert goes.
+                            lowStepSent = step
+                            Log.i(TAG, "battery at $pct%${if (charging) ", charging" else ""}; checking in")
                             PhoneCheckIn.sendNow(context)
+                        } else if (step < lowStepSent) {
+                            lowStepSent = step
                         }
                     }
                 }

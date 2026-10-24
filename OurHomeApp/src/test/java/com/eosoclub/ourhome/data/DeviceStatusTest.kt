@@ -1,8 +1,6 @@
 package com.eosoclub.ourhome.data
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DeviceStatusTest {
@@ -26,11 +24,15 @@ class DeviceStatusTest {
     }
 
     @Test
-    fun `tells the server once when the battery goes nearly flat`() {
-        assertTrue(DeviceStatus.isNewlyLow(5, charging = false, alreadySent = false))
-        assertFalse(DeviceStatus.isNewlyLow(5, charging = false, alreadySent = true))
-        assertFalse(DeviceStatus.isNewlyLow(3, charging = true, alreadySent = false))
-        assertFalse(DeviceStatus.isNewlyLow(6, charging = false, alreadySent = false))
+    fun `tells the server when the battery runs low, and again when it goes nearly flat`() {
+        assertEquals(0, DeviceStatus.lowStep(16, charging = false))
+        assertEquals(1, DeviceStatus.lowStep(15, charging = false))
+        assertEquals(1, DeviceStatus.lowStep(6, charging = false))
+        assertEquals(2, DeviceStatus.lowStep(5, charging = false))
+        assertEquals(2, DeviceStatus.lowStep(0, charging = false))
+        // Charging, or a level Android got wrong: nothing to tell.
+        assertEquals(0, DeviceStatus.lowStep(3, charging = true))
+        assertEquals(0, DeviceStatus.lowStep(-1, charging = false))
     }
 
     @Test
@@ -40,5 +42,6 @@ class DeviceStatusTest {
             LookedAfterPhone("x", problems = listOf("app_removed")).problemText,
         )
         assertEquals("Their phone probably ran out of battery", LookedAfterPhone("x", problems = listOf("battery_flat")).problemText)
+        assertEquals("Their phone battery is low", LookedAfterPhone("x", problems = listOf("battery_low")).problemText)
     }
 }

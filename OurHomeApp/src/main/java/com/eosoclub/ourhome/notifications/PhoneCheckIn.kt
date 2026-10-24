@@ -39,10 +39,12 @@ import java.util.UUID
  * and whether "Keep Our Home running" is on in Accessibility).
  *
  * While an adult looks after this member, also its [status] (battery, network
- * and mobile signal), so a phone that goes quiet can be told apart: flat, out
- * of signal, or switched off ([sendBeforeShutdown]). Also sent at once when
- * the server asks (a "ping" push, after it lost the phone's connection) and
- * when the battery goes nearly flat ([StreamConnection]).
+ * and mobile signal), so they're told when the battery runs low, and a phone
+ * that goes quiet can be told apart: flat, out of signal, or switched off
+ * ([sendBeforeShutdown]). The server also keeps the Map's battery fresh from
+ * it. Also sent every 15 minutes while app usage is shared ([UsageReport]),
+ * at once when the server asks (a "ping" push, after it lost the phone's
+ * connection), and when the battery runs low or nearly flat ([StreamConnection]).
  */
 object PhoneCheckIn {
     private const val TAG = "PhoneCheckIn"
@@ -132,13 +134,18 @@ object PhoneCheckIn {
         )
     }
 
-    /** Checks in now (the server asked, or the battery is nearly flat), as soon as there's a network. */
+    /**
+     * Checks in now (the server asked, or the battery changed step), as soon
+     * as there's a network. Replaces one already waiting or running, so the
+     * latest ask always runs and reads the phone afresh (keeping the first
+     * dropped a plug-in that came a moment after a low battery).
+     */
     fun sendNow(context: Context) {
         val request = OneTimeWorkRequestBuilder<NowWorker>()
             .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(NOW_WORK, ExistingWorkPolicy.KEEP, request)
+        WorkManager.getInstance(context).enqueueUniqueWork(NOW_WORK, ExistingWorkPolicy.REPLACE, request)
     }
 
     /**
