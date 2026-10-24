@@ -11,7 +11,10 @@ package com.eosoclub.ourhome.data
 // "phone_alert": a supervised child's phone went quiet, or location or Usage
 // access was turned off while needed (web phoneStatusService); its title says it all.
 // "new_app": a supervised child's phone has a new app (web reportNewApps); so does its title.
-val HOUSEHOLD_REMINDER_TYPES = setOf("overdue", "low_inventory", "reminder", "bill_due", "task_ready", "phone_alert", "new_app")
+// "request_update": someone answered this user's request (web requestNoticeService); its
+// title leads with the outcome ("Approved: LEGO set").
+val HOUSEHOLD_REMINDER_TYPES =
+    setOf("overdue", "low_inventory", "reminder", "bill_due", "task_ready", "phone_alert", "new_app", "request_update")
 
 /**
  * What the phone should do with the current unread reminders.

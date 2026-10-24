@@ -73,6 +73,7 @@ object HouseholdReminderAlerts {
             "task" -> TAB_TASKS
             "inventory_item" -> TAB_INVENTORY
             "bill" -> TAB_BILLS
+            "request" -> RequestReminders.TAB_REQUESTS
             else -> TAB_NOTIFICATIONS
         }
 
@@ -80,7 +81,7 @@ object HouseholdReminderAlerts {
         if (!RequestReminders.canNotify(context)) return
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Household reminders", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "Tasks ready for you, overdue tasks, low stock, bills coming due, and phones of the people you look after"
+                description = "Tasks ready for you, overdue tasks, low stock, bills coming due, answers to your requests, and phones of the people you look after"
             },
         )
         val lines = showing.map { it.reminderLine() }
@@ -94,6 +95,9 @@ object HouseholdReminderAlerts {
             NotificationCompat.BigTextStyle().bigText(text)
         } else {
             NotificationCompat.InboxStyle().also { s ->
+                // The collapsed title names the new one, which the list repeats
+                // first; expanded, a plain heading keeps it from showing twice.
+                s.setBigContentTitle("${showing.size} household reminders")
                 lines.take(5).forEach(s::addLine)
                 if (lines.size > 5) s.setSummaryText("+${lines.size - 5} more")
             }

@@ -57,4 +57,15 @@ class HouseholdRemindersTest {
         val plan = planReminderAlert(listOf(n("1", "task_ready"), n("2", "bug_report")), alerted = emptySet())
         assertEquals(listOf("1"), plan.alert.map { it.id })
     }
+
+    @Test
+    fun requestAnswerAlertsWithItsOwnTitle() {
+        val answer = Notification(
+            id = "1", type = "request_update", title = "Approved: LEGO set", read = false, createdAt = "2026-10-23T12:00:00Z",
+        )
+        val plan = planReminderAlert(listOf(answer), alerted = emptySet())
+        assertEquals(listOf("1"), plan.alert.map { it.id })
+        // The outcome leads the title, so no label goes in front.
+        assertEquals("Approved: LEGO set", answer.reminderLine())
+    }
 }
