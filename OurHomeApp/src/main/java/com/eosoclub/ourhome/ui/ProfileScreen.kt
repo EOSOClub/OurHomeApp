@@ -379,8 +379,53 @@ private fun Stat(label: String, value: Int) {
 /** True inside a [CollapsibleCard] group: a [SectionCard] then sits under a divider instead of in a card of its own. */
 private val LocalGroupedSection = staticCompositionLocalOf { false }
 
+/**
+ * Inside a [CollapsibleCard] group, [foldable] makes the title row fold the body
+ * away, as [CollapsibleCard] does: closed to start, stays as left across a
+ * rotation, opens by itself whenever [openWhen] turns true. [badge] sits beside
+ * the title and shows while folded (an On / Off pill).
+ */
 @Composable
-internal fun SectionCard(title: String, subtitle: String, content: @Composable ColumnScope.() -> Unit) {
+internal fun SectionCard(
+    title: String,
+    subtitle: String,
+    badge: (@Composable () -> Unit)? = null,
+    foldable: Boolean = false,
+    openWhen: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    if (LocalGroupedSection.current && foldable) {
+        var open by rememberSaveable { mutableStateOf(false) }
+        LaunchedEffect(openWhen) { if (openWhen) open = true }
+        Column {
+            HorizontalDivider()
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClickLabel = if (open) "Close" else "Open") { open = !open }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(title, style = MaterialTheme.typography.titleSmall)
+                        badge?.invoke()
+                    }
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Icon(
+                    if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            AnimatedVisibility(open) {
+                Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
+            }
+        }
+        return
+    }
     if (LocalGroupedSection.current) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             HorizontalDivider()

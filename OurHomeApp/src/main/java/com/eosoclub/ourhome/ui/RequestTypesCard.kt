@@ -1,5 +1,6 @@
 package com.eosoclub.ourhome.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
@@ -97,7 +99,14 @@ private fun RequestTypesForm(
 
     errors.message?.let { FieldError(it) }
 
-    SectionCard("Media", "Movies and TV shows to get. Whoever approves them marks each one added.") {
+    val mediaProblem = missingHandlers || noMediaKinds
+    SectionCard(
+        "Media",
+        "Movies and TV shows to get. Whoever approves them marks each one added.",
+        badge = { StateBadge(media.enabled, mediaProblem) },
+        foldable = true,
+        openWhen = mediaProblem,
+    ) {
         CheckRow("On", media.enabled) { media = media.copy(enabled = it) }
         if (media.enabled) {
             CommonFields(
@@ -134,7 +143,15 @@ private fun RequestTypesForm(
         }
     }
 
-    SectionCard("Maintenance", "Something to fix or do around the house. The person asked accepts it, then marks it done.") {
+    // The server's word on the default person counts too, so a failed save shows where.
+    val maintenanceProblem = missingAssignees || errors["maintenance.defaultAssigneeId"] != null
+    SectionCard(
+        "Maintenance",
+        "Something to fix or do around the house. The person asked accepts it, then marks it done.",
+        badge = { StateBadge(maintenance.enabled, maintenanceProblem) },
+        foldable = true,
+        openWhen = maintenanceProblem,
+    ) {
         CheckRow("On", maintenance.enabled) { maintenance = maintenance.copy(enabled = it) }
         if (maintenance.enabled) {
             CommonFields(
@@ -229,7 +246,14 @@ private fun DecisionSection(
     onChange: (DecisionModuleSettings) -> Unit,
     onChosenChange: (Boolean) -> Unit,
 ) {
-    SectionCard(title, description) {
+    val missing = value.enabled && chosen && value.handlerIds.isEmpty()
+    SectionCard(
+        title,
+        description,
+        badge = { StateBadge(value.enabled, missing) },
+        foldable = true,
+        openWhen = missing,
+    ) {
         CheckRow("On", value.enabled) { onChange(value.copy(enabled = it)) }
         if (value.enabled) {
             CommonFields(
@@ -256,7 +280,7 @@ private fun DecisionSection(
             )
             if (chosen) {
                 PeoplePicker(members, value.handlerIds) { onChange(value.copy(handlerIds = it)) }
-                FieldError(if (value.handlerIds.isEmpty()) "Pick at least one person." else null)
+                FieldError(if (missing) "Pick at least one person." else null)
                 Hint("They can always say no, with a reason.")
             } else {
                 Hint("Set in Household → Permissions. Out of the box: you and Managers. They can always say no, with a reason.")
@@ -303,6 +327,24 @@ private fun CommonFields(
         }
     }
     Hint("They also need Requests “Add” in Household → Permissions.")
+}
+
+/** Beside a section's title, so a folded section still shows whether it's on, or that it needs fixing before Save. */
+@Composable
+private fun StateBadge(enabled: Boolean, problem: Boolean) {
+    val (text, color) = when {
+        problem -> "Needs fixing" to MaterialTheme.colorScheme.error
+        enabled -> "On" to MaterialTheme.colorScheme.primary
+        else -> "Off" to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+        modifier = Modifier
+            .background(color.copy(alpha = 0.15f), CircleShape)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    )
 }
 
 /** People to tick, for "Only the people I pick". */
