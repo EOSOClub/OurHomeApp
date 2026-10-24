@@ -215,6 +215,8 @@ data class LookedAfter(
     val appUsage: LookedAfterUsage = LookedAfterUsage(),
     /** The protections their phone must have on; null from older servers (no switches then). */
     val rules: PhoneRules? = null,
+    /** Apps blocked on their phone; none from older servers. */
+    val blocking: LookedAfterBlocking = LookedAfterBlocking(),
     /** How far their phone got with Set up this phone; null from older servers. */
     val setup: LookedAfterSetup? = null,
     /** My last ring of their phone and what it said back; null when I haven't rung it lately. */

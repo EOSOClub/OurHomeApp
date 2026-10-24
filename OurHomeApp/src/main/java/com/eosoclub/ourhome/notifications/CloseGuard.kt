@@ -7,6 +7,8 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
@@ -16,6 +18,7 @@ import android.widget.Toast
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import com.eosoclub.ourhome.R
+import com.eosoclub.ourhome.data.BlockedAppRule
 import java.security.MessageDigest
 import java.security.SecureRandom
 
@@ -38,6 +41,8 @@ import java.security.SecureRandom
  *      package-installer uninstall dialog for OurHome (without blocking app
  *      updates), and this service's own Accessibility pages, by going to the
  *      home screen.
+ *    - Covers an app a supervising adult blocked with the blocked screen
+ *      ([AppBlocker]).
  * 3. **Emergency offline recovery without PIN**: if the parent PIN is lost and
  *    there is no internet connection, an in-app emergency unlock timer (its
  *    length chosen by the parent with the PIN, [EmergencyDuration]) or
@@ -525,6 +530,9 @@ class CloseGuardService : AccessibilityService() {
     private var activateLabels: Set<String> = emptySet()
     private var lastCheckAt = 0L
     private var lastToastAt = 0L
+    private var lastCoveredApp: String? = null
+    private var lastCoveredAt = 0L
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var tornDown = false
 
     override fun onServiceConnected() {
@@ -558,6 +566,14 @@ class CloseGuardService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        // An app opening: covered at once when an adult blocked it (not paused by the parent PIN's unlock).
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val block = AppBlocker.blockFor(this, event.packageName?.toString())
+            if (block != null) {
+                cover(block)
+                return
+            }
+        }
         if (!CloseGuard.isGuarding(this)) return
         // Content changes come often: look at most twice a second.
         val now = SystemClock.elapsedRealtime()
@@ -584,6 +600,23 @@ class CloseGuardService : AccessibilityService() {
                 "An adult who looks after you keeps Our Home on this phone. Use the parent PIN in Our Home to unlock it.",
                 Toast.LENGTH_SHORT,
             ).show()
+        }
+    }
+
+    /** The blocked screen over [block]'s app; an app's burst of window changes covers it once. */
+    private fun cover(block: BlockedAppRule) {
+        val now = SystemClock.elapsedRealtime()
+        if (block.app == lastCoveredApp && now - lastCoveredAt < COVER_EVERY_MS) return
+        lastCoveredApp = block.app
+        lastCoveredAt = now
+        AppBlocker.cover(this, block)
+    }
+
+    /** The blocked list changed: covers a blocked app that's already open. */
+    internal fun checkBlockedNow() {
+        mainHandler.post {
+            val open = runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull()
+            AppBlocker.blockFor(this, open)?.let(::cover)
         }
     }
 
@@ -619,6 +652,7 @@ class CloseGuardService : AccessibilityService() {
         const val TAG = "CloseGuard"
         const val CHECK_EVERY_MS = 500L
         const val TOAST_EVERY_MS = 5_000L
+        const val COVER_EVERY_MS = 1_000L
     }
 }
 

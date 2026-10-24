@@ -1157,6 +1157,7 @@ class ApiClient(
         emergencyUnlockReadyAtMs: Long? = null,
         status: DeviceStatus?,
         shuttingDown: Boolean,
+        alwaysAllowed: Collection<String>? = null,
     ): CheckInResult =
         call(
             post(
@@ -1182,6 +1183,8 @@ class ApiClient(
                     emergencyUnlockReadyAtMs?.let { put("emergencyUnlockReadyAtMs", it) }
                     // Only while an adult looks after this member (DeviceStatus).
                     status?.let { put("status", it.toJson()) }
+                    // Also only while an adult looks after this member: the apps it never blocks.
+                    alwaysAllowed?.let { apps -> putJsonArray("alwaysAllowed") { apps.take(50).forEach { add(it) } } }
                     if (shuttingDown) put("shuttingDown", true)
                 },
             ),
@@ -1363,6 +1366,20 @@ class ApiClient(
                     put("supervisedId", supervisedId)
                     put("rule", rule.key)
                     put("required", required)
+                },
+            ),
+            LookAfter.serializer(),
+        )
+
+    /** Blocks [app] (its package name) on a supervised child's phone, or unblocks it. */
+    suspend fun setAppBlocked(supervisedId: String, app: String, blocked: Boolean): LookAfter =
+        call(
+            post(
+                "/api/supervision/blocked-apps",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    put("app", app)
+                    put("blocked", blocked)
                 },
             ),
             LookAfter.serializer(),

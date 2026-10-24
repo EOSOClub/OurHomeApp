@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -50,7 +52,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.LookAfter
 import com.eosoclub.ourhome.data.LookedAfter
+import com.eosoclub.ourhome.data.LookedAfterBlocking
 import com.eosoclub.ourhome.data.PhoneRule
+import com.eosoclub.ourhome.data.blockedSummary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
@@ -59,8 +63,8 @@ import kotlinx.coroutines.launch
 // "People you look after" (web: /look-after): the children and teens this
 // adult supervises (the Head's supervision list). A summary card each; a card
 // opens that person's page, where this adult can ring their phone, make their
-// location sharing required, share their app usage, choose which protections
-// their phone must have on (PhoneRule). Only offered in the menu
+// location sharing required, share their app usage and block apps from it,
+// choose which protections their phone must have on (PhoneRule). Only offered in the menu
 // to someone who supervises somebody; the server checks it again.
 
 /** Refetched this often while showing, so phone check-ins and usage stay current. */
@@ -128,6 +132,8 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
         val savingUsage: Pair<String, Boolean>? = null,
         /** Which of whose phone rules is being saved, and to what. */
         val savingRule: Triple<String, PhoneRule, Boolean>? = null,
+        /** Whose app is being blocked or unblocked (person id, package name), and to what. */
+        val savingBlock: Triple<String, String, Boolean>? = null,
         /** Whose week of app usage is open, their loaded history, and whose failed to load. */
         val usageOpen: Set<String> = emptySet(),
         val usageHistory: Map<String, UsageHistory> = emptyMap(),
@@ -230,6 +236,24 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
         } catch (e: Exception) {
             state.update { it.copy(savingRule = null) }
             onDone(e.message ?: "Couldn't change it")
+        }
+    }
+
+    /** Blocks [app] ([label] for the message) on [person]'s phone, or unblocks it. One at a time. */
+    fun setBlocked(person: LookedAfter, app: String, label: String, blocked: Boolean, onDone: (String) -> Unit) {
+        if (state.value.savingBlock != null) return
+        edits++
+        state.update { it.copy(savingBlock = Triple(person.id, app, blocked)) }
+        viewModelScope.launch {
+            try {
+                val next = api.setAppBlocked(person.id, app, blocked)
+                // Set before the saving state ends, so the button never flicks back.
+                state.update { it.copy(lookAfter = next, savingBlock = null) }
+                onDone(if (blocked) "$label is blocked on ${person.name}'s phone" else "$label is unblocked on ${person.name}'s phone")
+            } catch (e: Exception) {
+                state.update { it.copy(savingBlock = null) }
+                onDone(e.message ?: "Couldn't change it")
+            }
         }
     }
 }
@@ -347,6 +371,8 @@ internal fun LookAfterScreen(
                     usageHistory = state.usageHistory[person.id],
                     usageHistoryFailed = person.id in state.usageHistoryFailed,
                     onToggleUsage = { vm.toggleUsageHistory(person.id) },
+                    savingBlock = state.savingBlock?.takeIf { it.first == person.id }?.let { it.second to it.third },
+                    onBlock = { app, label, blocked -> vm.setBlocked(person, app, label, blocked, showMessage) },
                 )
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp))
             }
@@ -358,7 +384,10 @@ internal fun LookAfterScreen(
                         "They always see when you check. Share app usage shows how long they spend in each app; " +
                         "their phone needs Usage access for it. Their phone sends it every 15 minutes, and opening " +
                         "this page asks it for the latest numbers. They see the same numbers on their Profile. While " +
-                        "it's shared, you're also told when a new app turns up on their phone. Require Keep Our Home running stops OurHome " +
+                        "it's shared, you're also told when a new app turns up on their phone. Block next to an app " +
+                        "stops it opening on their phone: they see a screen saying you blocked it. Blocking needs " +
+                        "Keep Our Home running on their phone. Phone calls, messages and OurHome always stay open. " +
+                        "Require Keep Our Home running stops OurHome " +
                         "being closed on their phone, Require Prevent uninstall stops it being removed without " +
                         "your PIN, and Require Unrestricted battery stops battery saving from holding back rings " +
                         "and alerts. Each one you require is a step in Set up this phone on their phone, and " +
@@ -441,6 +470,7 @@ private fun PersonCard(person: LookedAfter, canRing: Boolean, onOpen: () -> Unit
                     else -> "No app usage from their phone yet"
                 },
             )
+            blockedSummary(person.blocking.apps)?.let { CardLine(it) }
             person.setupSummary()?.let { CardLine(it) }
             person.ring?.let { ring ->
                 CardLine("You rang ${relativeTime(ring.sentAt)}: ${ring.outcome}", error = ring.phase == "no_answer")
@@ -489,7 +519,20 @@ private fun LookedAfterRow(
     usageHistory: UsageHistory?,
     usageHistoryFailed: Boolean,
     onToggleUsage: () -> Unit,
+    /** The app being blocked or unblocked for them, and to what. */
+    savingBlock: Pair<String, Boolean>?,
+    onBlock: (app: String, label: String, blocked: Boolean) -> Unit,
 ) {
+    val blocking = person.blocking
+    val blockAction: AppRowAction = { app ->
+        val pending = savingBlock?.takeIf { it.first == app.app }
+        BlockButton(
+            alwaysOpen = app.app in blocking.alwaysAllowed,
+            blocked = pending?.second ?: blocking.isBlocked(app.app),
+            enabled = savingBlock == null,
+            onClick = { blocked -> onBlock(app.app, app.label, blocked) },
+        )
+    }
     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -545,8 +588,8 @@ private fun LookedAfterRow(
             )
             when {
                 latest == null -> Unit
-                !usageOpen -> latest.top.forEach { app -> UsageAppRow(app, icons, loadIcon) }
-                usageHistory != null -> UsageHistoryView(usageHistory, icons, loadIcon)
+                !usageOpen -> latest.top.forEach { app -> UsageAppRow(app, icons, loadIcon, blockAction) }
+                usageHistory != null -> UsageHistoryView(usageHistory, icons, loadIcon, blockAction)
                 usageHistoryFailed -> Text(
                     "Couldn't load their app usage.",
                     style = MaterialTheme.typography.bodySmall,
@@ -560,6 +603,7 @@ private fun LookedAfterRow(
                 }
             }
         }
+        BlockedApps(blocking, icons, loadIcon, savingBlock, onUnblock = { app, label -> onBlock(app, label, false) })
         // Only from servers that send the rules.
         person.rules?.let { rules ->
             PhoneRule.entries.forEach { rule ->
@@ -577,5 +621,72 @@ private fun LookedAfterRow(
         }
         // How far their phone got with Set up this phone (only from servers that send it).
         SetupProgress(person)
+    }
+}
+
+/** The end of an app's row in their usage: Block, or Unblock (red) once blocked; "Always open" for an app their phone never blocks. */
+@Composable
+private fun BlockButton(alwaysOpen: Boolean, blocked: Boolean, enabled: Boolean, onClick: (blocked: Boolean) -> Unit) {
+    // One width whatever it says, so the times before it stay lined up.
+    Box(Modifier.width(96.dp), contentAlignment = Alignment.CenterEnd) {
+        if (alwaysOpen) {
+            Text(
+                "Always open",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+            )
+        } else {
+            TextButton(
+                onClick = { onClick(!blocked) },
+                enabled = enabled,
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                colors = if (blocked) ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error) else ButtonDefaults.textButtonColors(),
+            ) {
+                Text(if (blocked) "Unblock" else "Block", style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+}
+
+/** The apps blocked on their phone, who blocked each and when, with Unblock. */
+@Composable
+private fun BlockedApps(
+    blocking: LookedAfterBlocking,
+    icons: Map<String, ImageBitmap?>,
+    loadIcon: (String) -> Unit,
+    savingBlock: Pair<String, Boolean>?,
+    onUnblock: (app: String, label: String) -> Unit,
+) {
+    if (blocking.apps.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text("Blocked apps", style = MaterialTheme.typography.titleSmall)
+        if (blocking.works == false) {
+            Text(
+                "Keep Our Home running is off on their phone, so these apps open anyway until it's back on.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        blocking.apps.forEach { app ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                AppIconBox(app.app, app.label, app.icon, icons, loadIcon)
+                Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                    Text(app.label, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "Blocked by ${app.byName} ${relativeTime(app.at)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(
+                    onClick = { onUnblock(app.app, app.label) },
+                    enabled = savingBlock == null,
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                ) {
+                    Text("Unblock", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
     }
 }

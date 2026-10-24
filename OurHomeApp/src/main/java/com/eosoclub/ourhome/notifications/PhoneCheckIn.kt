@@ -45,6 +45,10 @@ import java.util.UUID
  * it. Also sent every 15 minutes while app usage is shared ([UsageReport]),
  * at once when the server asks (a "ping" push, after it lost the phone's
  * connection), and when the battery runs low or nearly flat ([StreamConnection]).
+ *
+ * While looked after, it also sends the apps it never blocks, and the answer
+ * brings the apps their supervisors blocked ([AppBlocker]); a block or unblock
+ * wakes the phone to check in at once.
  */
 object PhoneCheckIn {
     private const val TAG = "PhoneCheckIn"
@@ -77,6 +81,7 @@ object PhoneCheckIn {
         val dueStage = CloseGuard.stageToSend(due, forcedEmergencyStage, running)
 
         val emergencyActive = readyAt != null || dueStage != null
+        val lookedAfter = StayConnected.isRequired(context)
         val result = api.checkIn(
             installId = installId(context),
             appVersion = BuildConfig.VERSION_NAME,
@@ -93,14 +98,17 @@ object PhoneCheckIn {
             uninstallGuard = if (emergencyActive) false else CloseGuard.isAdminActive(context),
             emergencyUnlockStage = dueStage,
             emergencyUnlockReadyAtMs = readyAt,
-            status = statusIfLookedAfter(context),
+            status = if (lookedAfter) readStatus(context) else null,
             shuttingDown = shuttingDown,
+            alwaysAllowed = if (lookedAfter) AppBlocker.alwaysAllowed(context) else null,
         )
         due.forEach { CloseGuard.markEmergencyStageSent(context, it.wire) }
         // Switching off: the next check-in (after it's back) sets this again.
         if (shuttingDown) return
         // An adult looks after this member: Stay connected is kept on.
         StayConnected.setRequired(context, result.stayConnectedRequired)
+        // And the apps they blocked (nothing is blocked once nobody looks after them).
+        AppBlocker.save(context, if (result.stayConnectedRequired) result.blockedApps else emptyList())
     }
 
     /** Schedules the parent notifications for the chosen [duration] (1h, 5h, or 10h). */

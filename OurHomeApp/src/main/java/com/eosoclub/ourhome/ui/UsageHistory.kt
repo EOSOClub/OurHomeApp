@@ -75,32 +75,47 @@ internal class UsageIcons(private val api: ApiClient, private val scope: Corouti
     }
 }
 
-/** One app: its icon (or first letter until their phone sent it), name and time. */
+/** An app's icon from their phone, or its first letter until the phone has sent it ([hasIcon]: the server has one). */
 @Composable
-internal fun UsageAppRow(app: UsageTopApp, icons: Map<String, ImageBitmap?>, loadIcon: (String) -> Unit) {
-    if (app.icon && app.app.isNotEmpty()) LaunchedEffect(app.app) { loadIcon(app.app) }
-    val icon = icons[app.app]
+internal fun AppIconBox(app: String, label: String, hasIcon: Boolean, icons: Map<String, ImageBitmap?>, loadIcon: (String) -> Unit) {
+    if (hasIcon && app.isNotEmpty()) LaunchedEffect(app) { loadIcon(app) }
+    val icon = icons[app]
+    if (icon != null) {
+        Image(icon, contentDescription = null, modifier = Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)))
+    } else {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(20.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        ) {
+            Text(
+                label.take(1).uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** What goes at the end of an app's row (a supervisor's Block), if anything. */
+internal typealias AppRowAction = @Composable (UsageTopApp) -> Unit
+
+/** One app: its icon (or first letter until their phone sent it), name and time, then [action]'s part. */
+@Composable
+internal fun UsageAppRow(
+    app: UsageTopApp,
+    icons: Map<String, ImageBitmap?>,
+    loadIcon: (String) -> Unit,
+    action: AppRowAction? = null,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, end = 8.dp),
+        // With a button, its own touch area makes the row's height and end gap.
+        modifier = Modifier.fillMaxWidth().padding(top = if (action == null) 4.dp else 0.dp, end = if (action == null) 8.dp else 0.dp),
     ) {
-        if (icon != null) {
-            Image(icon, contentDescription = null, modifier = Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)))
-        } else {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(20.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            ) {
-                Text(
-                    app.label.take(1).uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
+        AppIconBox(app.app, app.label, app.icon, icons, loadIcon)
         Text(
             app.label,
             style = MaterialTheme.typography.bodySmall,
@@ -113,12 +128,18 @@ internal fun UsageAppRow(app: UsageTopApp, icons: Map<String, ImageBitmap?>, loa
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        action?.invoke(app)
     }
 }
 
 /** The week's chart, then every app of the picked day (the newest until another is tapped). */
 @Composable
-internal fun UsageHistoryView(history: UsageHistory, icons: Map<String, ImageBitmap?>, loadIcon: (String) -> Unit) {
+internal fun UsageHistoryView(
+    history: UsageHistory,
+    icons: Map<String, ImageBitmap?>,
+    loadIcon: (String) -> Unit,
+    action: AppRowAction? = null,
+) {
     var picked by rememberSaveable { mutableStateOf<String?>(null) }
     val today = java.time.LocalDate.now().toString()
     // The picked day may have aged out since.
@@ -191,7 +212,7 @@ internal fun UsageHistoryView(history: UsageHistory, icons: Map<String, ImageBit
         if (shown.apps.isEmpty()) {
             Text("No app was open for a full minute.", style = MaterialTheme.typography.bodySmall, color = muted)
         }
-        shown.apps.forEach { app -> UsageAppRow(app, icons, loadIcon) }
+        shown.apps.forEach { app -> UsageAppRow(app, icons, loadIcon, action) }
         if (shown.apps.size >= USAGE_TOP_APPS) {
             Text(
                 "Only the $USAGE_TOP_APPS most used apps are kept for each day.",

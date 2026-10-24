@@ -96,6 +96,15 @@
             </intent-filter>
         </activity>
 
+        <!-- The blocked screen over an app a supervising adult blocked
+             (notifications/AppBlocker). Its own task, out of Recents. -->
+        <activity
+            android:name=".notifications.AppBlockedActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="" />
+
         <!-- Tags scanned while the app isn't open. Invisible: it looks the tag up,
              then posts the quick notification or opens MainActivity, and finishes.
              Never shows over the lock screen (no showWhenLocked). -->
