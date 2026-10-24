@@ -534,8 +534,8 @@ data class ActivityPage(
 )
 
 /**
- * A household request (RequestDTO) - media or maintenance. Named to avoid
- * clashing with OkHttp's Request.
+ * A household request (RequestDTO) - media, maintenance, purchase or
+ * permission. Named to avoid clashing with OkHttp's Request.
  */
 @Serializable
 data class HouseholdRequest(
@@ -550,8 +550,20 @@ data class HouseholdRequest(
     val issue: Boolean = false,
     /** TV problems: the episode within [season]; null is the whole season. */
     val episode: Int? = null,
-    // maintenance; also a media problem's "what's wrong"
+    // maintenance; also a media problem's "what's wrong", a purchase's why and
+    // a permission's details
     val details: String? = null,
+    // purchase
+    val url: String? = null,
+    val imageUrl: String? = null,
+    /** Estimated price of one. */
+    val price: Double? = null,
+    val quantity: Int? = null,
+    /** Approved and put on this shopping list (its name then). */
+    val addedToList: String? = null,
+    // permission: from and (optionally) until
+    val startsAt: String? = null,
+    val endsAt: String? = null,
     val assignee: UserRef? = null,
     /**
      * "pending" | "accepted" | "completed", or "declined" (where the head allows
@@ -562,9 +574,9 @@ data class HouseholdRequest(
     val dueAt: String? = null,
     val completedAt: String? = null,
     val declinedAt: String? = null,
-    /** Media: who marked it added or declined it. */
+    /** Approve workflow (media, purchase, permission): who marked it done, approved or declined it. */
     val decidedBy: UserRef? = null,
-    /** Media: what they said (a decline's reason). */
+    /** Approve workflow: what they said (a decline's reason). */
     val reply: String? = null,
     val requester: UserRef,
     val createdAt: String,
@@ -577,7 +589,7 @@ data class HouseholdRequest(
  */
 @Serializable
 data class RequestModule(
-    /** "media" | "maintenance". */
+    /** "media" | "maintenance" | "purchase" | "permission". */
     val id: String,
     /** "approve" (handlers mark it done or decline it) | "assign" (one person accepts it). */
     val workflow: String,
@@ -587,9 +599,21 @@ data class RequestModule(
     val note: String? = null,
     /** May ask for it: the Requests "Add" switch and the head's roles for it. */
     val canAsk: Boolean = false,
-    /** Approve workflow: marks these done (and declines, where allowed). */
+    /**
+     * Approve workflow: marks these done (and declines, where allowed). With
+     * [bySupervisors], only the requests of people without supervisors; use
+     * [decides] for one request.
+     */
     val handles: Boolean = false,
     val allowDecline: Boolean = false,
+    /** Approve workflow: a request from someone with supervisors goes to them. */
+    val bySupervisors: Boolean = false,
+    /** With [bySupervisors]: the members who have supervisors. */
+    val supervisedIds: List<String> = emptyList(),
+    /** With [bySupervisors]: those of them this member supervises. */
+    val supervisingIds: List<String> = emptyList(),
+    /** Purchase: the shopping lists this member may put an approved one on. */
+    val shoppingLists: List<NamedRef> = emptyList(),
     /** Media: the kinds offered ("movie", "tv"). */
     val mediaTypes: List<String> = emptyList(),
     /** Assign workflow: who this member may ask. */
@@ -600,16 +624,24 @@ data class RequestModule(
     val requireDueDate: Boolean = true,
 )
 
+/** An id and a name: a shopping list offered when approving a purchase. */
+@Serializable
+data class NamedRef(val id: String, val name: String)
+
 /**
  * Settings → Request types (head only; web lib/requestModules.ts): every
  * module's settings. Saved as a whole. Empty [MediaModuleSettings.handlerIds]
  * = everyone with Requests "Approve"; empty
- * [MaintenanceModuleSettings.assigneeIds] = anyone in the household.
+ * [MaintenanceModuleSettings.assigneeIds] = anyone in the household. A server
+ * from before Purchase and Permission doesn't send them (the defaults here,
+ * off) and ignores them when saved.
  */
 @Serializable
 data class RequestModuleSettings(
     val media: MediaModuleSettings = MediaModuleSettings(),
     val maintenance: MaintenanceModuleSettings = MaintenanceModuleSettings(),
+    val purchase: DecisionModuleSettings = DecisionModuleSettings(),
+    val permission: DecisionModuleSettings = DecisionModuleSettings(askRoles = listOf("teen", "child")),
 )
 
 @Serializable
@@ -623,8 +655,25 @@ data class MediaModuleSettings(
     val askRoles: List<String> = REQUEST_ROLES,
     val handlerIds: List<String> = emptyList(),
     val allowDecline: Boolean = false,
+    /** Not offered for media; always false. */
+    val bySupervisors: Boolean = false,
     /** "movie", "tv". */
     val mediaTypes: List<String> = listOf("movie", "tv"),
+)
+
+/** Purchase and Permission: yes or no, so [allowDecline] is always true. */
+@Serializable
+data class DecisionModuleSettings(
+    /** Off until the head turns it on. */
+    val enabled: Boolean = false,
+    val label: String? = null,
+    val note: String? = null,
+    val askRoles: List<String> = REQUEST_ROLES,
+    /** Empty = everyone with Requests "Approve" (for anyone [bySupervisors] doesn't cover). */
+    val handlerIds: List<String> = emptyList(),
+    val allowDecline: Boolean = true,
+    /** The asker's supervisors decide, when they have any. */
+    val bySupervisors: Boolean = true,
 )
 
 @Serializable

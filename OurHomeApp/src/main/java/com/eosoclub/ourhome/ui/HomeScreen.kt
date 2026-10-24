@@ -86,7 +86,6 @@ import com.eosoclub.ourhome.data.awaitingAcceptanceBy
 import com.eosoclub.ourhome.data.canApproveMedia
 import com.eosoclub.ourhome.data.deadlineAlerts
 import com.eosoclub.ourhome.data.defaultRequestModules
-import com.eosoclub.ourhome.data.handledKinds
 import com.eosoclub.ourhome.data.isOpen
 import com.eosoclub.ourhome.location.Geofences
 import com.eosoclub.ourhome.notifications.AppUpdateAlerts
@@ -230,9 +229,10 @@ fun HomeScreen(
     // Which kinds I handle: the head's request types, or on an older server the Approve switch.
     val requestModules = requestsState.modules
         ?: defaultRequestModules(access.requests.create, canApproveMedia(access, user.role))
-    val waitingRequests = awaitingAcceptanceBy(requestsState.requests, user.id, handledKinds(requestModules))
+    val waitingRequests = awaitingAcceptanceBy(requestsState.requests, user.id, requestModules)
         .map {
             val action = when {
+                it.category == "purchase" || it.category == "permission" -> "Decide"
                 it.category != "media" -> "Accept"
                 it.issue -> "Fix it"
                 else -> "Mark added"

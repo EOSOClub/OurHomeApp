@@ -751,6 +751,43 @@ class ApiClient(
             put("assigneeId", assigneeId)
         }
 
+    /**
+     * Creates a purchase request, or with [id] replaces the caller's own while
+     * it waits. [price]: the estimate for one; [details]: why.
+     */
+    suspend fun savePurchaseRequest(
+        id: String?,
+        title: String,
+        details: String?,
+        url: String?,
+        imageUrl: String?,
+        price: Double?,
+        quantity: Int,
+    ) =
+        saveRequest(id) {
+            put("category", "purchase")
+            put("title", title)
+            put("details", details)
+            put("url", url)
+            put("imageUrl", imageUrl)
+            put("price", price)
+            put("quantity", quantity)
+        }
+
+    /** Creates a permission request, or with [id] replaces the caller's own while it waits. */
+    suspend fun savePermissionRequest(id: String?, title: String, details: String?, startsAt: Instant?, endsAt: Instant?) =
+        saveRequest(id) {
+            put("category", "permission")
+            put("title", title)
+            put("details", details)
+            put("startsAt", startsAt?.toString())
+            put("endsAt", endsAt?.toString())
+        }
+
+    /** "Fetch details" on a purchase request: the same reader as Shopping's, under Requests. */
+    suspend fun requestLinkPreview(url: String): LinkPreview =
+        call(post("/api/requests/preview", buildJsonObject { put("url", url) }), LinkPreview.serializer())
+
     private suspend fun saveRequest(id: String?, fields: JsonObjectBuilder.() -> Unit): HouseholdRequest =
         call(
             post(
@@ -774,8 +811,12 @@ class ApiClient(
             HouseholdRequest.serializer(),
         )
 
-    suspend fun completeRequest(id: String): HouseholdRequest =
-        call(post("/api/requests/complete", buildJsonObject { put("id", id) }), HouseholdRequest.serializer())
+    /** Marks a request done, added, fixed or approved; a purchase may go on shopping list [listId] as it's approved. */
+    suspend fun completeRequest(id: String, listId: String? = null): HouseholdRequest =
+        call(
+            post("/api/requests/complete", buildJsonObject { put("id", id); listId?.let { put("listId", it) } }),
+            HouseholdRequest.serializer(),
+        )
 
     /** Declines a request (where the head allows it), with an optional [reply] for the requester. */
     suspend fun declineRequest(id: String, reply: String?): HouseholdRequest =

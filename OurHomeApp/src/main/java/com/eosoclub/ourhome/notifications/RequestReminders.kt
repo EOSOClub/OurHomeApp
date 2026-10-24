@@ -34,7 +34,6 @@ import com.eosoclub.ourhome.data.can
 import com.eosoclub.ourhome.data.awaitingAcceptanceBy
 import com.eosoclub.ourhome.data.canApproveMedia
 import com.eosoclub.ourhome.data.defaultRequestModules
-import com.eosoclub.ourhome.data.handledKinds
 import com.eosoclub.ourhome.data.defaultAccess
 import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.summary
@@ -228,7 +227,7 @@ object RequestReminders {
                 } else {
                     emptyList()
                 }
-                val waiting = awaitingAcceptanceBy(requests, user.id, handledKinds(modules))
+                val waiting = awaitingAcceptanceBy(requests, user.id, modules)
                 Log.i(TAG, "${waiting.size} request(s) awaiting acceptance (${if (fromPush) "push" else "hourly"})")
                 update(applicationContext, waiting, onlyIfNew = fromPush)
                 DeadlineReminders.check(applicationContext, requests, user.id)

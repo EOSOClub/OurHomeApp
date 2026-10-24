@@ -63,6 +63,10 @@ class RequestAttentionTest {
         assertTrue(alerts(media).isEmpty())
     }
 
+    private fun mediaModule(handles: Boolean) = RequestModule(id = "media", workflow = "approve", label = "Media", handles = handles)
+    private val handlesMedia = listOf(mediaModule(true))
+    private val handlesNothing = listOf(mediaModule(false))
+
     private fun media(status: String?) = HouseholdRequest(
         id = "m-$status",
         category = "media",
@@ -76,9 +80,9 @@ class RequestAttentionTest {
         val all = listOf(media(null), media("pending"), media("accepted"), media("completed"), media("declined"))
         assertEquals(
             listOf("m-null", "m-pending", "m-accepted"),
-            awaitingAcceptanceBy(all, me, handles = setOf("media")).map { it.id },
+            awaitingAcceptanceBy(all, me, handlesMedia).map { it.id },
         )
-        assertTrue(awaitingAcceptanceBy(all, me, handles = emptySet()).isEmpty())
+        assertTrue(awaitingAcceptanceBy(all, me, handlesNothing).isEmpty())
     }
 
     @Test fun `media is one step - waiting, added or declined`() {
@@ -96,24 +100,69 @@ class RequestAttentionTest {
         assertEquals("TV problem: Severance (2022) · S2 E3 - from $other", problem.summary())
         assertEquals("TV problem: Severance (2022)", problem.copy(season = null, episode = null).mediaTitle())
         // A problem waits on whoever handles media, like a request to add.
-        assertEquals(listOf(problem), awaitingAcceptanceBy(listOf(problem), me, handles = setOf("media")))
+        assertEquals(listOf(problem), awaitingAcceptanceBy(listOf(problem), me, handlesMedia))
     }
 
-    @Test fun `handled kinds come from the modules`() {
-        val modules = listOf(
-            RequestModule(id = "media", workflow = "approve", label = "Media", handles = true),
-            RequestModule(id = "maintenance", workflow = "assign", label = "Maintenance", handles = true),
-        )
-        assertEquals(setOf("media"), handledKinds(modules))
-        assertEquals(emptySet<String>(), handledKinds(modules.map { it.copy(handles = false) }))
+    @Test fun `an assign-workflow module's handles flag doesn't make anyone a handler`() {
+        val modules = listOf(RequestModule(id = "maintenance", workflow = "assign", label = "Maintenance", handles = true))
+        val theirs = maintenance(null, assignee = other, status = "pending")
+        assertTrue(awaitingAcceptanceBy(listOf(theirs), me, modules).isEmpty())
     }
 
     @Test fun `an older server gets the old two kinds`() {
         val modules = defaultRequestModules(canSubmit = true, approvesMedia = false)
         assertEquals(listOf("media", "maintenance"), modules.map { it.id })
         assertTrue(modules.all { it.canAsk })
-        assertEquals(emptySet<String>(), handledKinds(modules))
-        assertEquals(setOf("media"), handledKinds(defaultRequestModules(canSubmit = false, approvesMedia = true)))
+        assertTrue(awaitingAcceptanceBy(listOf(media("pending")), me, modules).isEmpty())
+        val approver = defaultRequestModules(canSubmit = false, approvesMedia = true)
+        assertEquals(listOf("m-pending"), awaitingAcceptanceBy(listOf(media("pending")), me, approver).map { it.id })
+    }
+
+    private fun decision(category: String, requester: String, status: String? = "pending") = HouseholdRequest(
+        id = "$category-$requester-$status",
+        category = category,
+        title = "Sleepover at Ava's",
+        status = status,
+        requester = UserRef(requester, requester),
+        createdAt = "2026-10-01T12:00:00Z",
+    )
+
+    private fun permissionModule(handles: Boolean, supervising: List<String>) = RequestModule(
+        id = "permission",
+        workflow = "approve",
+        label = "Permission",
+        handles = handles,
+        bySupervisors = true,
+        supervisedIds = listOf("kid"),
+        supervisingIds = supervising,
+    )
+
+    @Test fun `a supervised child's permission waits on their supervisors only`() {
+        val kids = decision("permission", "kid")
+        val parent = permissionModule(handles = false, supervising = listOf("kid"))
+        val head = permissionModule(handles = true, supervising = emptyList())
+        assertTrue(parent.decides("kid"))
+        assertEquals(false, head.decides("kid"))
+        assertEquals(listOf(kids), awaitingAcceptanceBy(listOf(kids), me, listOf(parent)))
+        assertTrue(awaitingAcceptanceBy(listOf(kids), me, listOf(head)).isEmpty())
+        // Decided: waits on nobody.
+        assertTrue(awaitingAcceptanceBy(listOf(decision("permission", "kid", "completed")), me, listOf(parent)).isEmpty())
+    }
+
+    @Test fun `anyone without supervisors goes to the usual handlers`() {
+        val adults = decision("permission", "adult")
+        assertTrue(permissionModule(handles = true, supervising = emptyList()).decides("adult"))
+        assertEquals(false, permissionModule(handles = false, supervising = listOf("kid")).decides("adult"))
+        // With the rule off, supervisors don't matter.
+        val off = permissionModule(handles = true, supervising = listOf("kid")).copy(bySupervisors = false)
+        assertTrue(off.decides("kid"))
+        assertEquals(listOf(adults), awaitingAcceptanceBy(listOf(adults), me, listOf(off)))
+    }
+
+    @Test fun `purchase and permission summaries say what they are`() {
+        assertEquals("Permission: Sleepover at Ava's - from kid", decision("permission", "kid").summary())
+        assertEquals("Buy: LEGO", decision("purchase", "kid").copy(title = "LEGO").decisionTitle())
+        assertEquals("Maintenance: Fix faucet - from $other", maintenance(null).summary())
     }
 
     @Test fun `media approval comes from the grid, and the head always has it`() {
@@ -128,6 +177,6 @@ class RequestAttentionTest {
         val mine = maintenance(null, status = "pending")
         val accepted = maintenance(today, status = "accepted")
         val theirs = maintenance(null, assignee = other, status = "pending")
-        assertEquals(listOf(mine), awaitingAcceptanceBy(listOf(mine, accepted, theirs), me, handles = setOf("media")))
+        assertEquals(listOf(mine), awaitingAcceptanceBy(listOf(mine, accepted, theirs), me, handlesMedia))
     }
 }

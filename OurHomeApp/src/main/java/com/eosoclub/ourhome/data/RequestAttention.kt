@@ -47,25 +47,35 @@ fun defaultRequestModules(canSubmit: Boolean, approvesMedia: Boolean): List<Requ
     RequestModule(id = "maintenance", workflow = "assign", label = "Maintenance", canAsk = canSubmit),
 )
 
-/** The approve-workflow kinds the member handles (media, where they mark it added). */
-fun handledKinds(modules: List<RequestModule>): Set<String> =
-    modules.filter { it.workflow == "approve" && it.handles }.map { it.id }.toSet()
+/**
+ * Whether the member decides one approve-workflow request from [requesterId]:
+ * where supervisors decide and the requester has some, only those supervisors;
+ * anyone else's by [RequestModule.handles]. Mirrors viewDecides in the web's
+ * src/lib/requestModules.ts.
+ */
+fun RequestModule.decides(requesterId: String): Boolean =
+    if (bySupervisors && requesterId in supervisedIds) requesterId in supervisingIds else handles
 
 /**
- * Requests waiting on [userId]: open requests of the kinds they handle
- * ([handles], from [handledKinds]), and pending maintenance requests assigned
- * to them. Media is one step (waiting → added); "accepted" media is left over
- * from the older accept → available flow and still waits to be added.
+ * Requests waiting on [userId]: open approve-workflow requests (media,
+ * purchase, permission) they decide ([modules], see [decides]), and pending
+ * maintenance requests assigned to them. Media is one step (waiting → added);
+ * "accepted" media is left over from the older accept → available flow and
+ * still waits to be added.
  */
 fun awaitingAcceptanceBy(
     requests: List<HouseholdRequest>,
     userId: String,
-    handles: Set<String>,
-): List<HouseholdRequest> = requests.filter { r ->
-    when {
-        r.category in handles -> r.isOpen
-        r.category == "maintenance" -> r.effectiveStatus == "pending" && r.assignee?.id == userId
-        else -> false
+    modules: List<RequestModule>,
+): List<HouseholdRequest> {
+    val approve = modules.filter { it.workflow == "approve" }.associateBy { it.id }
+    return requests.filter { r ->
+        val module = approve[r.category]
+        when {
+            module != null -> r.isOpen && module.decides(r.requester.id)
+            r.category == "maintenance" -> r.effectiveStatus == "pending" && r.assignee?.id == userId
+            else -> false
+        }
     }
 }
 
@@ -107,16 +117,22 @@ fun deadlineAlerts(
 }
 
 /**
- * One-line summary, e.g. "TV: Severance (2025) · S2 - from Jamison", or for a
- * problem "TV problem: Severance (2022) · S2 E3 - from Jamison".
+ * One-line summary, e.g. "TV: Severance (2025) · S2 - from Jamison", for a
+ * problem "TV problem: Severance (2022) · S2 E3 - from Jamison", or
+ * "Permission: Sleepover at Ava's - from Riley".
  */
 fun HouseholdRequest.summary(): String {
     val from = requester.name?.let { " - from $it" }.orEmpty()
     return when (category) {
-        "media" -> mediaTitle() + from
-        else -> "Maintenance: $title$from"
-    }
+        "media" -> mediaTitle()
+        "purchase", "permission" -> decisionTitle()
+        else -> "Maintenance: $title"
+    } + from
 }
+
+/** A purchase's or permission's title line: "Buy: LEGO Bonsai Tree", "Permission: Sleepover at Ava's". */
+fun HouseholdRequest.decisionTitle(): String =
+    if (category == "purchase") "Buy: $title" else "Permission: $title"
 
 /** A media request's title line, e.g. "TV problem: Severance (2022) · S2 E3". */
 fun HouseholdRequest.mediaTitle(): String {

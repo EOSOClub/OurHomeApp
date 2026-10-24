@@ -1,5 +1,8 @@
 package com.eosoclub.ourhome.ui
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,9 +12,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -41,10 +46,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -56,23 +67,33 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.HouseholdRequest
+import com.eosoclub.ourhome.data.LinkPreview
 import com.eosoclub.ourhome.data.Member
+import com.eosoclub.ourhome.data.NamedRef
 import com.eosoclub.ourhome.data.Permission
 import com.eosoclub.ourhome.data.RequestModule
 import com.eosoclub.ourhome.data.SessionUser
 import com.eosoclub.ourhome.data.UserRef
 import com.eosoclub.ourhome.data.can
+import com.eosoclub.ourhome.data.decides
 import com.eosoclub.ourhome.data.defaultRequestModules
-import com.eosoclub.ourhome.data.effectiveStatus
+import com.eosoclub.ourhome.data.isOpen
 import com.eosoclub.ourhome.data.mediaStatus
+import com.eosoclub.ourhome.data.productLink
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 
 // Mirrors MEDIA_TYPES / MAINTENANCE_STATUSES in the web app's src/lib/enums.ts.
 // Which kinds of request are on, and their names, come from the server
@@ -89,6 +110,32 @@ private val MAINTENANCE_SECTIONS = listOf(
     "completed" to "Done",
     "declined" to "Declined",
 )
+// Purchase and Permission are yes or no (web DECISION_STATUS_LABELS), shown
+// in this order above Maintenance and Media.
+private val DECISION_KINDS = listOf("permission", "purchase")
+private val DECISION_SECTIONS = listOf(
+    "pending" to "Waiting for a decision",
+    "completed" to "Approved",
+    "declined" to "Declined",
+)
+private val DECISION_STATUS_LABELS = mapOf("pending" to "Waiting", "completed" to "Approved", "declined" to "Declined")
+
+private val dayAndTime = DateTimeFormatter.ofPattern("EEE, MMM d")
+private val timeOfDay = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
+
+/** "Fri, Oct 30, 6:00 PM" in this phone's time. */
+private fun dateTimeLabel(iso: String): String {
+    val at = Instant.parse(iso).atZone(ZoneId.systemDefault())
+    return "${at.format(dayAndTime)}, ${at.format(timeOfDay)}"
+}
+
+/** A permission's from and until: "Fri, Oct 30, 6:00 PM until Sat, Oct 31, 11:00 AM". */
+private fun whenLabel(r: HouseholdRequest): String? =
+    r.startsAt?.let { from -> dateTimeLabel(from) + r.endsAt?.let { " until ${dateTimeLabel(it)}" }.orEmpty() }
+
+/** A picked day and time as the instant to send; no time picked means noon, as in the app's other forms. */
+private fun instantOf(date: LocalDate?, time: LocalTime?): Instant? =
+    date?.atTime(time ?: LocalTime.NOON)?.atZone(ZoneId.systemDefault())?.toInstant()
 
 /** What the editor submits. */
 sealed interface RequestEdit {
@@ -103,6 +150,17 @@ sealed interface RequestEdit {
         val details: String? = null,
     ) : RequestEdit
     data class Maintenance(val title: String, val details: String?, val assigneeId: String) : RequestEdit
+    /** [price]: the estimate for one; [details]: why. */
+    data class Purchase(
+        val title: String,
+        val details: String?,
+        val url: String?,
+        val imageUrl: String?,
+        val price: Double?,
+        val quantity: Int,
+    ) : RequestEdit
+    /** [endsAt] only with [startsAt]. */
+    data class Permission(val title: String, val details: String?, val startsAt: Instant?, val endsAt: Instant?) : RequestEdit
 }
 
 class RequestsViewModel(private val api: ApiClient) : ViewModel() {
@@ -114,6 +172,8 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         val editing: HouseholdRequest? = null,
         val creating: Boolean = false,
         val accepting: HouseholdRequest? = null,
+        /** A purchase being approved: which shopping list to put it on. */
+        val approving: HouseholdRequest? = null,
         val declining: HouseholdRequest? = null,
         /** An own declined request waiting for "Remove?" to be confirmed. */
         val removing: HouseholdRequest? = null,
@@ -183,6 +243,10 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
                     id, edit.mediaType, edit.title, edit.year, edit.season, edit.issue, edit.episode, edit.details,
                 )
                 is RequestEdit.Maintenance -> api.saveMaintenanceRequest(id, edit.title, edit.details, edit.assigneeId)
+                is RequestEdit.Purchase -> api.savePurchaseRequest(
+                    id, edit.title, edit.details, edit.url, edit.imageUrl, edit.price, edit.quantity,
+                )
+                is RequestEdit.Permission -> api.savePermissionRequest(id, edit.title, edit.details, edit.startsAt, edit.endsAt)
             }
             closeEditor()
             _messages.send(
@@ -190,6 +254,7 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
                     id != null -> "Request updated"
                     saved.category == "maintenance" -> "Sent to ${saved.assignee?.name ?: "them"}"
                     saved.issue -> "Reported a problem with “${saved.title}”"
+                    saved.category == "permission" -> "Asked permission for “${saved.title}”"
                     else -> "Requested “${saved.title}”"
                 },
             )
@@ -238,17 +303,46 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         _messages.send(updated.dueAt?.let { "Done by ${formatDate(it)} - got it" } ?: "Accepted “${r.title}”")
     }
 
-    /** Maintenance: the assignee marks it done. Media: an approver marks it added, or a problem fixed (one step). */
-    fun complete(r: HouseholdRequest) = runBusy(r) {
-        replace(api.completeRequest(r.id))
+    /**
+     * Maintenance: the assignee marks it done. Media: an approver marks it
+     * added, or a problem fixed (one step). Purchase and permission: whoever
+     * decides approves it; a purchase may go on shopping list [listId].
+     */
+    fun complete(r: HouseholdRequest, listId: String? = null) = runBusy(r, inDialog = state.value.approving != null) {
+        val updated = api.completeRequest(r.id, listId)
+        replace(updated)
+        state.update { it.copy(approving = null) }
         _messages.send(
             when {
                 r.issue -> "Marked “${r.title}” fixed"
                 r.category == "media" -> "Added “${r.title}”"
+                r.category == "purchase" || r.category == "permission" ->
+                    "Approved “${r.title}”" + updated.addedToList?.let { " and added it to $it" }.orEmpty()
                 else -> "Marked “${r.title}” done"
             },
         )
     }
+
+    /** A purchase with lists to offer: ask which one first. */
+    fun startApprove(r: HouseholdRequest) {
+        form.clear()
+        state.update { it.copy(approving = r) }
+    }
+
+    fun cancelApprove() {
+        form.clear()
+        state.update { it.copy(approving = null) }
+    }
+
+    /** "Fetch details" on a purchase. */
+    suspend fun linkPreview(url: String): LinkPreview = api.requestLinkPreview(url)
+
+    private val pictures = mutableMapOf<String, ImageBitmap>()
+
+    /** A purchase's product picture, or null if it can't be loaded. */
+    suspend fun picture(url: String): ImageBitmap? = pictures[url] ?: api.remoteImage(url)?.let { bytes ->
+        withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
+    }?.also { pictures[url] = it }
 
     fun startDecline(r: HouseholdRequest) {
         form.clear()
@@ -346,6 +440,36 @@ fun RequestsScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
+                DECISION_KINDS.forEach { kind ->
+                    val module = modules.firstOrNull { it.id == kind } ?: return@forEach
+                    val list = state.requests.filter { it.category == kind }
+                    if (list.isEmpty()) return@forEach
+                    categoryHeader(module.label)
+                    DECISION_SECTIONS.forEach { (status, label) ->
+                        // Anything still open (no status, or "accepted" from an older app) waits for a decision.
+                        val items = list.filter { if (status == "pending") it.isOpen else it.status == status }
+                        if (items.isEmpty()) return@forEach
+                        sectionHeader("$kind-$status", label, items.size)
+                        items(items, key = { it.id }) { r ->
+                            val isOwn = r.requester.id == user.id
+                            DecisionCard(
+                                r = r,
+                                me = user.id,
+                                decides = module.decides(r.requester.id),
+                                busy = r.id in state.busy,
+                                loadPicture = vm::picture,
+                                onApprove = {
+                                    // A purchase can go on a shopping list: ask which. Otherwise approve at once.
+                                    if (kind == "purchase" && module.shoppingLists.isNotEmpty()) vm.startApprove(r) else vm.complete(r)
+                                },
+                                onDecline = { vm.startDecline(r) },
+                                // Once decided it can't be edited, only removed.
+                                onEdit = if (isOwn && canWrite && r.isOpen) ({ vm.startEdit(r) }) else null,
+                                onRemove = if (isOwn && canWrite && !r.isOpen) ({ vm.askRemove(r) }) else null,
+                            )
+                        }
+                    }
+                }
                 if (maintenanceModule != null && maintenance.isNotEmpty()) {
                     categoryHeader(maintenanceModule.label)
                     MAINTENANCE_SECTIONS.forEach { (status, label) ->
@@ -445,6 +569,19 @@ fun RequestsScreen(
             onDismiss = vm::closeEditor,
             onSave = { edit -> vm.save(state.editing?.id, edit) },
             onDelete = state.editing?.let { r -> { vm.delete(r) } },
+            fetchPreview = vm::linkPreview,
+            loadPicture = vm::picture,
+        )
+    }
+
+    state.approving?.let { r ->
+        ApproveDialog(
+            r = r,
+            lists = modules.firstOrNull { it.id == "purchase" }?.shoppingLists.orEmpty(),
+            error = vm.form["listId"] ?: vm.form.message,
+            busy = r.id in state.busy,
+            onDismiss = vm::cancelApprove,
+            onApprove = { listId -> vm.complete(r, listId) },
         )
     }
 
@@ -699,6 +836,152 @@ private fun MaintenanceCard(
 }
 
 /**
+ * A purchase or permission request: what's asked, the decision once made, and
+ * Approve / Decline for whoever decides it ([decides]: [RequestModule.decides]).
+ */
+@Composable
+private fun DecisionCard(
+    r: HouseholdRequest,
+    me: String,
+    decides: Boolean,
+    busy: Boolean,
+    loadPicture: suspend (String) -> ImageBitmap?,
+    onApprove: () -> Unit,
+    onDecline: () -> Unit,
+    onEdit: (() -> Unit)?,
+    /** Own decided request: removing is all that's left. */
+    onRemove: (() -> Unit)?,
+) {
+    val status = if (r.isOpen) "pending" else r.status.orEmpty()
+    val open = status == "pending"
+    // Highlight requests waiting on *you*.
+    val colors = if (decides && open) {
+        CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+    } else {
+        CardDefaults.cardColors()
+    }
+    Card(colors = colors, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp, end = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // The picture "Fetch details" found, as on the web; nothing until it loads.
+                r.imageUrl?.let { url ->
+                    val picture by produceState<ImageBitmap?>(null, url) { value = loadPicture(url) }
+                    picture?.let {
+                        Image(
+                            it,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.padding(end = 12.dp).size(48.dp).clip(RoundedCornerShape(4.dp)).background(Color.White),
+                        )
+                    }
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    val many = (r.quantity ?: 1) > 1
+                    Text(
+                        if (many) "${r.quantity} × ${r.title}" else r.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = if (status == "declined") MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.Center) {
+                        SuggestionChip(onClick = {}, label = { Text(DECISION_STATUS_LABELS[status] ?: status) })
+                        r.price?.let { p ->
+                            Text(
+                                // As on the web: $39.98, $389.00.
+                                "$" + String.format(java.util.Locale.US, "%.2f", p) + if (many) " each" else "",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.align(Alignment.CenterVertically),
+                            )
+                        }
+                    }
+                    whenLabel(r)?.let {
+                        Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    }
+                    r.url?.takeIf { it.isNotBlank() }?.let { ItemLink(productLink(it)) }
+                    r.details?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    when (status) {
+                        "completed" -> Text(
+                            "Approved by ${who(r.decidedBy, me)}" + r.addedToList?.let { " · added to $it" }.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        "declined" -> Text(
+                            "Declined" + r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty() + r.reply?.let { ": $it" }.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        "Asked by ${if (r.requester.id == me) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (onEdit != null) {
+                    IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit ${r.title}") }
+                }
+                if (onRemove != null) {
+                    IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${r.title}") }
+                }
+            }
+            if (decides && open) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                ) {
+                    TextButton(onClick = onDecline, enabled = !busy) { Text("Decline") }
+                    Button(onClick = onApprove, enabled = !busy) { Text(if (busy) "Saving…" else "Approve") }
+                }
+            }
+        }
+    }
+}
+
+/** Approving a purchase: put it on one of the shopping lists, or not. */
+@Composable
+private fun ApproveDialog(
+    r: HouseholdRequest,
+    lists: List<NamedRef>,
+    error: String?,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    /** null: approved without putting it on a list. */
+    onApprove: (String?) -> Unit,
+) {
+    var listId by remember { mutableStateOf(lists.firstOrNull()?.id.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Approve purchase") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("“${r.title}” from ${r.requester.name ?: "someone"}")
+                DropdownField(
+                    "Add it to a shopping list",
+                    lists.map { it.id to it.name } + ("" to "Don't add it to a list"),
+                    listId,
+                    { listId = it },
+                    error = error,
+                )
+                Text(
+                    "Its link, picture, price and how many go with it, so whoever shops has it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = !busy, onClick = { onApprove(listId.ifEmpty { null }) }) {
+                Text(if (busy) "Saving…" else "Approve")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/**
  * The assignee picks their done-by date; past days can't be chosen. Stays
  * open until it's saved; [error] says why it wasn't (the snackbar is behind).
  * Without [requireDueDate] (the head's choice) "No date" accepts without one.
@@ -783,6 +1066,8 @@ private fun DeclineDialog(
                         Text(
                             when {
                                 r.category == "maintenance" -> "e.g. I'm away this week, ask someone else"
+                                r.category == "purchase" -> "e.g. Let's wait for your birthday"
+                                r.category == "permission" -> "e.g. Not on a school night"
                                 r.issue -> "e.g. That's the only copy there is"
                                 else -> "e.g. We already have it on another service"
                             },
@@ -808,7 +1093,9 @@ private fun DeclineDialog(
 /**
  * Step-by-step form, matching the web: request type, then either media
  * (something new or a problem → type → name, season, year, and for a problem
- * the episode and what's wrong) or maintenance (what → details → who).
+ * the episode and what's wrong) or maintenance (what → details → who) or
+ * purchase (what, link, price, how many, why) or permission (what, from,
+ * until, details).
  * The category, and whether media is new or a problem, are fixed once a
  * request exists. What it offers comes from the
  * head's request types ([modules]): the kinds this member may ask for, the
@@ -828,6 +1115,9 @@ private fun RequestEditor(
     onDismiss: () -> Unit,
     onSave: (RequestEdit) -> Unit,
     onDelete: (() -> Unit)?,
+    /** Purchase: "Fetch details" and the picture it found. */
+    fetchPreview: suspend (String) -> LinkPreview,
+    loadPicture: suspend (String) -> ImageBitmap?,
 ) {
     val askable = modules.filter { it.canAsk }
     val mediaModule = modules.firstOrNull { it.id == "media" }
@@ -855,6 +1145,17 @@ private fun RequestEditor(
     var problem by remember { mutableStateOf(if (initial?.issue == true) initial.details.orEmpty() else "") }
     var details by remember { mutableStateOf(initial?.details.orEmpty()) }
     var assigneeId by remember { mutableStateOf(initial?.assignee?.id ?: startingAssignee(firstCategory)) }
+    // Purchase: link (Fetch details fills the picture and price), price of one, how many.
+    var url by remember { mutableStateOf(initial?.url.orEmpty()) }
+    var imageUrl by remember { mutableStateOf(initial?.imageUrl) }
+    var price by remember { mutableStateOf(initial?.price?.let(::priceText).orEmpty()) }
+    var quantity by remember { mutableStateOf((initial?.quantity ?: 1).toString()) }
+    // Permission: from and until, each a day and a time (no time: noon).
+    val zone = ZoneId.systemDefault()
+    var fromDate by remember { mutableStateOf(initial?.startsAt?.let { Instant.parse(it).atZone(zone).toLocalDate() }) }
+    var fromTime by remember { mutableStateOf(initial?.startsAt?.let { Instant.parse(it).atZone(zone).toLocalTime() }) }
+    var untilDate by remember { mutableStateOf(initial?.endsAt?.let { Instant.parse(it).atZone(zone).toLocalDate() }) }
+    var untilTime by remember { mutableStateOf(initial?.endsAt?.let { Instant.parse(it).atZone(zone).toLocalTime() }) }
     val categoryModule = modules.firstOrNull { it.id == category }
 
     val tvProblem = issue && mediaType == "tv"
@@ -867,6 +1168,18 @@ private fun RequestEditor(
     val mediaReady = category == "media" && mediaType.isNotEmpty() && title.isNotBlank() && yearValue != null &&
         seasonValid && episodeValid && (!issue || problem.isNotBlank())
     val maintenanceReady = category == "maintenance" && title.isNotBlank() && assigneeId.isNotEmpty()
+    val priceValue = priceOrNull(price)
+    val priceValid = price.isBlank() || priceValue != null
+    val quantityValue = quantity.toIntOrNull()?.takeIf { it in 1..999 }
+    val purchaseReady = category == "purchase" && title.isNotBlank() && priceValid && quantityValue != null
+    val startsAt = instantOf(fromDate, fromTime)
+    val endsAt = instantOf(untilDate, untilTime)
+    val untilError = errors["endsAt"] ?: when {
+        endsAt != null && startsAt == null -> "Say when it starts too."
+        endsAt != null && startsAt != null && !endsAt.isAfter(startsAt) -> "Until has to be after from."
+        else -> null
+    }
+    val permissionReady = category == "permission" && title.isNotBlank() && untilError == null
     val yearLabel = when {
         mediaType != "tv" -> "Release year"
         seasonValue != null && seasonValid -> "Year season $seasonValue came out"
@@ -876,12 +1189,12 @@ private fun RequestEditor(
     EditorDialog(
         title = if (initial == null) "New request" else "Edit request",
         saving = saving,
-        saveEnabled = mediaReady || maintenanceReady,
+        saveEnabled = mediaReady || maintenanceReady || purchaseReady || permissionReady,
         onDismiss = onDismiss,
         onSave = {
             onSave(
-                if (category == "media") {
-                    RequestEdit.Media(
+                when (category) {
+                    "media" -> RequestEdit.Media(
                         mediaType,
                         title.trim(),
                         yearValue!!,
@@ -890,8 +1203,25 @@ private fun RequestEditor(
                         episode = episodeValue,
                         details = if (issue) problem.trim() else null,
                     )
-                } else {
-                    RequestEdit.Maintenance(title.trim(), details.trim().ifEmpty { null }, assigneeId)
+                    "purchase" -> {
+                        val link = url.trim().ifEmpty { null }
+                        RequestEdit.Purchase(
+                            title.trim(),
+                            details.trim().ifEmpty { null },
+                            link,
+                            // A picture goes with its link.
+                            if (link != null) imageUrl else null,
+                            priceValue,
+                            quantityValue!!,
+                        )
+                    }
+                    "permission" -> RequestEdit.Permission(
+                        title.trim(),
+                        details.trim().ifEmpty { null },
+                        startsAt,
+                        if (startsAt != null) endsAt else null,
+                    )
+                    else -> RequestEdit.Maintenance(title.trim(), details.trim().ifEmpty { null }, assigneeId)
                 },
             )
         },
@@ -1059,6 +1389,107 @@ private fun RequestEditor(
                     )
                 }
             }
+        }
+
+        if (category == "purchase") {
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it; errors.clear("title") },
+                label = { Text("What would you like?") },
+                placeholder = { Text("e.g. LEGO Space set") },
+                singleLine = true,
+                isError = errors["title"] != null,
+                supportingText = errors["title"]?.let { { Text(it) } },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            ProductLinkField(
+                url = url,
+                imageUrl = imageUrl,
+                error = errors["url"] ?: errors["imageUrl"],
+                onUrlChange = { url = it; imageUrl = null; errors.clear("url") },
+                fetchPreview = fetchPreview,
+                onPreview = { p ->
+                    p.imageUrl?.let { imageUrl = it }
+                    if (title.isBlank()) p.title?.let { title = it }
+                    if (price.isBlank()) p.price?.let { price = priceText(it) }
+                },
+                loadPicture = loadPicture,
+                label = "Link (optional)",
+            )
+            val priceError = errors["price"] ?: if (!priceValid) "Enter a price of 0 or more." else null
+            OutlinedTextField(
+                value = price,
+                onValueChange = { price = it; errors.clear("price") },
+                label = { Text("Est. price (optional)") },
+                placeholder = { Text("0.00") },
+                supportingText = { Text(priceError ?: "For one.") },
+                isError = priceError != null,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            val quantityError = errors["quantity"] ?: if (quantityValue == null) "Enter a number from 1 to 999." else null
+            OutlinedTextField(
+                value = quantity,
+                onValueChange = { quantity = it.filter(Char::isDigit).take(3); errors.clear("quantity") },
+                label = { Text("How many") },
+                supportingText = quantityError?.let { { Text(it) } },
+                isError = quantityError != null,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = details,
+                onValueChange = { details = it.take(2000); errors.clear("details") },
+                label = { Text("Why (optional)") },
+                placeholder = { Text("What it's for, anything that helps decide") },
+                minLines = 2,
+                isError = errors["details"] != null,
+                supportingText = errors["details"]?.let { { Text(it) } },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        if (category == "permission") {
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it; errors.clear("title") },
+                label = { Text("What would you like to do?") },
+                placeholder = { Text("e.g. Sleepover at Sam's") },
+                singleLine = true,
+                isError = errors["title"] != null,
+                supportingText = errors["title"]?.let { { Text(it) } },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            DateField("From (optional)", fromDate, error = errors["startsAt"]) { fromDate = it; errors.clear("startsAt") }
+            if (fromDate != null) {
+                TimeField("Time", fromTime) { fromTime = it }
+            } else {
+                Text(
+                    "Leave it empty if there's no time, like a new app.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            DateField("Until (optional)", untilDate, error = untilError) { untilDate = it; errors.clear("endsAt") }
+            if (untilDate != null) {
+                TimeField("Time", untilTime) { untilTime = it }
+            }
+            OutlinedTextField(
+                value = details,
+                onValueChange = { details = it.take(2000); errors.clear("details") },
+                label = { Text("Details (optional)") },
+                placeholder = { Text("Where, who with, how you'll get there") },
+                minLines = 2,
+                isError = errors["details"] != null,
+                supportingText = errors["details"]?.let { { Text(it) } },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }

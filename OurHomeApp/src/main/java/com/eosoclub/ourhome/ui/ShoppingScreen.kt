@@ -538,9 +538,9 @@ private fun ItemRow(item: ShoppingItem, vm: ShoppingViewModel, access: PageAcces
     }
 }
 
-/** The item's product link: "View on Amazon" (and the product id) or the shop's address; opens in the browser. */
+/** The item's product link: "View on Amazon" (and the product id) or the shop's address; opens in the browser. Also on purchase requests. */
 @Composable
-private fun ItemLink(link: ProductLink) {
+internal fun ItemLink(link: ProductLink) {
     val uriHandler = LocalUriHandler.current
     Row(
         Modifier.padding(top = 2.dp).clickable { runCatching { uriHandler.openUri(link.href) } },
@@ -830,10 +830,11 @@ internal fun priceOrNull(text: String): Double? = text.trim().toDoubleOrNull()?.
 /**
  * The web's LinkField: a product link, and "Fetch details" to read the page's
  * title, picture and price ([onPreview] decides what to use). A link the server
- * calls invalid is marked red; a page it couldn't read is just a note.
+ * calls invalid is marked red; a page it couldn't read is just a note. Also
+ * on purchase requests.
  */
 @Composable
-private fun ProductLinkField(
+internal fun ProductLinkField(
     url: String,
     imageUrl: String?,
     /** What the server said is wrong with the link when saving. */
@@ -842,6 +843,7 @@ private fun ProductLinkField(
     fetchPreview: suspend (String) -> LinkPreview,
     onPreview: (LinkPreview) -> Unit,
     loadPicture: suspend (String) -> ImageBitmap?,
+    label: String = "Link",
 ) {
     val scope = rememberCoroutineScope()
     var fetching by remember { mutableStateOf(false) }
@@ -876,7 +878,7 @@ private fun ProductLinkField(
             note = null
             fetchError = null
         },
-        label = { Text("Link") },
+        label = { Text(label) },
         placeholder = { Text("Paste an Amazon (or other) product link") },
         singleLine = true,
         isError = shownError != null,

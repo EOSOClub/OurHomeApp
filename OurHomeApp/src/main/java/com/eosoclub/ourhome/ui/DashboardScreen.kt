@@ -51,6 +51,7 @@ import com.eosoclub.ourhome.data.MemberPresence
 import com.eosoclub.ourhome.data.batteryLabel
 import com.eosoclub.ourhome.data.centi
 import com.eosoclub.ourhome.data.formatPoints
+import com.eosoclub.ourhome.data.decisionTitle
 import com.eosoclub.ourhome.data.mediaTitle
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
@@ -260,6 +261,7 @@ private fun NeedsYouCard(
 
 private fun requestTitle(r: HouseholdRequest): String = when (r.category) {
     "media" -> r.mediaTitle()
+    "purchase", "permission" -> r.decisionTitle()
     else -> r.title
 }
 

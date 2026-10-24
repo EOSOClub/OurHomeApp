@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.eosoclub.ourhome.data.DecisionModuleSettings
 import com.eosoclub.ourhome.data.Member
 import com.eosoclub.ourhome.data.REQUEST_ROLES
 import com.eosoclub.ourhome.data.RequestModuleSettings
@@ -75,9 +76,15 @@ private fun RequestTypesForm(
 ) {
     var media by remember { mutableStateOf(saved.media) }
     var maintenance by remember { mutableStateOf(saved.maintenance) }
+    var purchase by remember { mutableStateOf(saved.purchase) }
+    var permission by remember { mutableStateOf(saved.permission) }
     // "Only the people I pick" is on while the list has anyone in it; empty means everyone.
     var mediaChosen by remember { mutableStateOf(saved.media.handlerIds.isNotEmpty()) }
     var maintenanceChosen by remember { mutableStateOf(saved.maintenance.assigneeIds.isNotEmpty()) }
+    var purchaseChosen by remember { mutableStateOf(saved.purchase.handlerIds.isNotEmpty()) }
+    var permissionChosen by remember { mutableStateOf(saved.permission.handlerIds.isNotEmpty()) }
+    val missingDeciders = (purchase.enabled && purchaseChosen && purchase.handlerIds.isEmpty()) ||
+        (permission.enabled && permissionChosen && permission.handlerIds.isEmpty())
 
     val handlerIds = if (mediaChosen) media.handlerIds else emptyList()
     val assigneeIds = if (maintenanceChosen) maintenance.assigneeIds else emptyList()
@@ -166,6 +173,26 @@ private fun RequestTypesForm(
         }
     }
 
+    DecisionSection(
+        title = "Purchase",
+        description = "Something someone would like bought. Whoever decides says yes or no, and can put it on a shopping list.",
+        members = members,
+        value = purchase,
+        chosen = purchaseChosen,
+        onChange = { purchase = it },
+        onChosenChange = { purchaseChosen = it },
+    )
+
+    DecisionSection(
+        title = "Permission",
+        description = "Asking to do something, like a sleepover or a new app. Whoever decides says yes or no.",
+        members = members,
+        value = permission,
+        chosen = permissionChosen,
+        onChange = { permission = it },
+        onChosenChange = { permissionChosen = it },
+    )
+
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Button(
             onClick = {
@@ -177,11 +204,64 @@ private fun RequestTypesForm(
                             mediaTypes = media.mediaTypes.ifEmpty { saved.media.mediaTypes },
                         ),
                         maintenance = maintenance.copy(assigneeIds = assigneeIds, defaultAssigneeId = defaultAssigneeId),
+                        purchase = purchase.copy(handlerIds = if (purchaseChosen) purchase.handlerIds else emptyList()),
+                        permission = permission.copy(handlerIds = if (permissionChosen) permission.handlerIds else emptyList()),
                     ),
                 )
             },
-            enabled = !busy && !missingHandlers && !missingAssignees && !noMediaKinds,
+            enabled = !busy && !missingHandlers && !missingAssignees && !noMediaKinds && !missingDeciders,
         ) { Text("Save") }
+    }
+}
+
+/**
+ * Purchase or Permission: on, the common fields, and who decides - the
+ * asker's supervisors first if ticked, then the Approve switch or chosen
+ * people. Declining is built in.
+ */
+@Composable
+private fun DecisionSection(
+    title: String,
+    description: String,
+    members: List<Member>,
+    value: DecisionModuleSettings,
+    chosen: Boolean,
+    onChange: (DecisionModuleSettings) -> Unit,
+    onChosenChange: (Boolean) -> Unit,
+) {
+    SectionCard(title, description) {
+        CheckRow("On", value.enabled) { onChange(value.copy(enabled = it)) }
+        if (value.enabled) {
+            CommonFields(
+                defaultLabel = title,
+                label = value.label,
+                note = value.note,
+                askRoles = value.askRoles,
+                onLabel = { onChange(value.copy(label = it)) },
+                onNote = { onChange(value.copy(note = it)) },
+                onRoles = { onChange(value.copy(askRoles = it)) },
+            )
+            CheckRow("The asker's supervisors decide, when they have any", value.bySupervisors) {
+                onChange(value.copy(bySupervisors = it))
+            }
+            Hint(
+                "A child's or teen's supervisors are set on the Household tab. Only they decide that child's " +
+                    "request; the head and managers don't, unless they're one of them.",
+            )
+            DropdownField(
+                if (value.bySupervisors) "Who decides for everyone else" else "Who decides",
+                listOf("switch" to "Everyone with Requests “Approve”", "chosen" to "Only the people I pick"),
+                if (chosen) "chosen" else "switch",
+                { onChosenChange(it == "chosen") },
+            )
+            if (chosen) {
+                PeoplePicker(members, value.handlerIds) { onChange(value.copy(handlerIds = it)) }
+                FieldError(if (value.handlerIds.isEmpty()) "Pick at least one person." else null)
+                Hint("They can always say no, with a reason.")
+            } else {
+                Hint("Set in Household → Permissions. Out of the box: you and Managers. They can always say no, with a reason.")
+            }
+        }
     }
 }
 
