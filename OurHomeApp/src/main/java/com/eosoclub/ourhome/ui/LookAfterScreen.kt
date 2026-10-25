@@ -66,7 +66,13 @@ import com.eosoclub.ourhome.data.ALL_APPS
 import com.eosoclub.ourhome.data.ALL_APPS_LABEL
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.AppLimitEntry
+import com.eosoclub.ourhome.data.CAP_CHOICES
 import com.eosoclub.ourhome.data.EVERY_DAY
+import com.eosoclub.ourhome.data.GIVE_STEPS
+import com.eosoclub.ourhome.data.LookedAfterPointsTime
+import com.eosoclub.ourhome.data.RATE_CHOICES
+import com.eosoclub.ourhome.data.formatMinutes
+import com.eosoclub.ourhome.data.formatPoints
 import com.eosoclub.ourhome.data.LimitChoice
 import com.eosoclub.ourhome.data.MAX_ALLOWED
 import com.eosoclub.ourhome.data.MAX_SCHEDULES
@@ -97,7 +103,8 @@ import java.time.LocalTime
 // adult supervises (the Head's supervision list). A summary card each; a card
 // opens that person's page, where this adult can ring their phone, make their
 // location sharing required, share their app usage, block apps from it, give
-// apps a daily limit and set schedules, choose which protections their phone must have on (PhoneRule). Only offered in the menu
+// apps a daily limit, set schedules and let them buy time with points,
+// choose which protections their phone must have on (PhoneRule). Only offered in the menu
 // to someone who supervises somebody; the server checks it again.
 
 /** A new app limit starts at this many minutes; its menu changes it. */
@@ -174,6 +181,8 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
         val savingLimit: Triple<String, String, Int?>? = null,
         /** Whose schedules are being saved or removed (person id). */
         val savingSchedule: String? = null,
+        /** Whose points for screen time, or extra time, is being saved (person id). */
+        val savingPoints: String? = null,
         /** Whose week of app usage is open, their loaded history, and whose failed to load. */
         val usageOpen: Set<String> = emptySet(),
         val usageHistory: Map<String, UsageHistory> = emptyMap(),
@@ -321,6 +330,35 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
             } catch (e: Exception) {
                 state.update { it.copy(savingSchedule = null) }
                 onDone(e.message ?: "Couldn't save it")
+            }
+        }
+    }
+
+    /** Lets [person] spend points on screen time at [minutesPerPoint] a point, up to [dailyCap] a day (null: stops it). */
+    fun setPointsForTime(person: LookedAfter, minutesPerPoint: Int?, dailyCap: Int, onDone: (String) -> Unit) =
+        savePoints(person, onDone) {
+            api.setPointsForTime(person.id, minutesPerPoint, dailyCap) to
+                if (minutesPerPoint == null) "${person.name} can no longer spend points on screen time"
+                else "${person.name} can spend points on screen time"
+        }
+
+    /** Gives [person] [minutes] more on today's limits. */
+    fun giveExtraTime(person: LookedAfter, minutes: Int, onDone: (String) -> Unit) =
+        savePoints(person, onDone) { api.giveExtraTime(person.id, minutes) to "${person.name} has ${formatMinutes(minutes)} more today" }
+
+    /** One points change at a time; [call] answers the page's new data and the message. */
+    private fun savePoints(person: LookedAfter, onDone: (String) -> Unit, call: suspend () -> Pair<LookAfter, String>) {
+        if (state.value.savingPoints != null) return
+        edits++
+        state.update { it.copy(savingPoints = person.id) }
+        viewModelScope.launch {
+            try {
+                val (next, message) = call()
+                state.update { it.copy(lookAfter = next, savingPoints = null) }
+                onDone(message)
+            } catch (e: Exception) {
+                state.update { it.copy(savingPoints = null) }
+                onDone(e.message ?: "Couldn't change it")
             }
         }
     }
@@ -489,6 +527,9 @@ internal fun LookAfterScreen(
                         vm.saveSchedule(person, id, preset, allowed, showMessage, onSaved)
                     },
                     onRemoveSchedule = { vm.removeSchedule(person, it, showMessage) },
+                    savingPoints = state.savingPoints == person.id,
+                    onPointsRule = { rate, cap -> vm.setPointsForTime(person, rate, cap, showMessage) },
+                    onGive = { vm.giveExtraTime(person, it, showMessage) },
                 )
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp))
             }
@@ -509,6 +550,9 @@ internal fun LookAfterScreen(
                         "Schedules close all their apps at set times, like bedtime or school, apart from calls, " +
                         "messages and any apps you leave open. Their phone warns them 5 minutes before. Schedules " +
                         "need Keep Our Home running on their phone. " +
+                        "Points for screen time lets them spend task points on more time on today's limits, at the " +
+                        "rate you set and up to a daily most; you're told each time. Their earned points in the " +
+                        "stats don't change. Give extra time adds minutes to today's limits without points. " +
                         "Require Keep Our Home running stops OurHome " +
                         "being closed on their phone, Require Prevent uninstall stops it being removed without " +
                         "your PIN, and Require Unrestricted battery stops battery saving from holding back rings " +
@@ -652,6 +696,9 @@ private fun LookedAfterRow(
     savingSchedule: Boolean,
     onSaveSchedule: (id: String?, preset: SchedulePreset, allowed: List<String>, onSaved: () -> Unit) -> Unit,
     onRemoveSchedule: (ScheduleEntry) -> Unit,
+    savingPoints: Boolean,
+    onPointsRule: (minutesPerPoint: Int?, dailyCap: Int) -> Unit,
+    onGive: (minutes: Int) -> Unit,
 ) {
     val blocking = person.blocking
     val blockAction: AppRowAction = { app ->
@@ -741,6 +788,13 @@ private fun LookedAfterRow(
             DailyLimits(person.limits, choices, blocking.works, icons, loadIcon, savingLimit, onLimit)
         }
         Schedules(person.schedules, person.usageApps, blocking.works, icons, loadIcon, savingSchedule, onSaveSchedule, onRemoveSchedule)
+        PointsForTime(
+            person.pointsTime,
+            hasLimits = !person.limits.isEmpty,
+            saving = savingPoints,
+            onRule = onPointsRule,
+            onGive = onGive,
+        )
         // Only from servers that send the rules.
         person.rules?.let { rules ->
             PhoneRule.entries.forEach { rule ->
@@ -1156,4 +1210,86 @@ private fun ScheduleDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") } },
     )
+}
+
+/**
+ * Points for screen time: whether they may spend points on more time, what a
+ * point buys and the most a day, their points to spend and today's extra
+ * minutes, and Give extra time. Only while the household uses Points.
+ */
+@Composable
+private fun PointsForTime(
+    points: LookedAfterPointsTime,
+    hasLimits: Boolean,
+    saving: Boolean,
+    onRule: (minutesPerPoint: Int?, dailyCap: Int) -> Unit,
+    onGive: (minutes: Int) -> Unit,
+) {
+    if (!points.available) return
+    val rule = points.rule
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text("Points for screen time", style = MaterialTheme.typography.titleSmall)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Let them spend points on more time", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Switch(
+                checked = rule != null,
+                enabled = !saving,
+                onCheckedChange = { on -> onRule(if (on) 5 else null, rule?.dailyCap ?: 30) },
+            )
+        }
+        if (rule != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("1 point buys", style = MaterialTheme.typography.bodySmall)
+                MinutesMenu(rule.minutesPerPoint, (RATE_CHOICES + rule.minutesPerPoint).distinct().sorted(), !saving) {
+                    onRule(it, rule.dailyCap)
+                }
+                Text("up to", style = MaterialTheme.typography.bodySmall)
+                MinutesMenu(rule.dailyCap, (CAP_CHOICES + rule.dailyCap).distinct().sorted(), !saving) {
+                    onRule(rule.minutesPerPoint, it)
+                }
+                Text("a day", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Text(
+            "${formatPoints(points.balanceCenti.coerceAtLeast(0))} points to spend" +
+                (if (points.bought > 0) " · bought ${formatMinutes(points.bought)} today" else "") +
+                (if (points.given > 0) " · given ${formatMinutes(points.given)} today" else "") +
+                (rule?.let { " · set by ${it.byName} ${relativeTime(it.at)}" } ?: ""),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (hasLimits) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Give extra time today:", style = MaterialTheme.typography.bodySmall)
+                GIVE_STEPS.forEach { minutes ->
+                    TextButton(onClick = { onGive(minutes) }, enabled = !saving, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                        Text("+${formatMinutes(minutes)}", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        } else {
+            Text(
+                "Extra time goes on top of their daily limits, and they have none yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** [minutes] as a small menu of [options]. */
+@Composable
+private fun MinutesMenu(minutes: Int, options: List<Int>, enabled: Boolean, onPick: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }, enabled = enabled, contentPadding = PaddingValues(start = 8.dp, end = 2.dp)) {
+            Text(formatMinutes(minutes), style = MaterialTheme.typography.labelMedium)
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(text = { Text(formatMinutes(option)) }, onClick = { open = false; onPick(option) })
+            }
+        }
+    }
 }

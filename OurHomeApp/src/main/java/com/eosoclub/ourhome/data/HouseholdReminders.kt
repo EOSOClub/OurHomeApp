@@ -12,6 +12,7 @@ package com.eosoclub.ourhome.data
 // access was turned off while needed (web phoneStatusService); its title says it all.
 // "new_app": a supervised child's phone has a new app (web reportNewApps); so does its title.
 // "limit_reached": a supervised child's phone used up a daily limit (web reportLimitsReached).
+// "extra_time": a supervised child spent points on more screen time (web buyExtraTime).
 // "request_update": someone answered this user's request (web requestNoticeService); its
 // title leads with the outcome ("Approved: LEGO set").
 val HOUSEHOLD_REMINDER_TYPES =
@@ -24,6 +25,7 @@ val HOUSEHOLD_REMINDER_TYPES =
         "phone_alert",
         "new_app",
         "limit_reached",
+        "extra_time",
         "request_update",
     )
 

@@ -83,13 +83,17 @@ fun limitLabel(minutes: Int): String = "${formatMinutes(minutes)} a day"
 fun limitTitle(rule: AppLimitRule): String =
     if (rule.isAllApps) "Your app time is up for today" else "Time's up for ${rule.label} today"
 
-/** The blocked screen's line under it: who set the limit and when it opens again. */
-fun limitReason(rule: AppLimitRule): String {
+/**
+ * The blocked screen's line under it: who set the limit, any [extra] minutes
+ * today (bought with points or given), and when it opens again.
+ */
+fun limitReason(rule: AppLimitRule, extra: Int = 0): String {
     val who = rule.by ?: "An adult who looks after you"
+    val more = if (extra > 0) ", and you had ${formatMinutes(extra)} more today" else ""
     return if (rule.isAllApps) {
-        "$who set ${limitLabel(rule.minutes)} for your apps. Calls and messages still work, and your apps open again tomorrow."
+        "$who set ${limitLabel(rule.minutes)} for your apps$more. Calls and messages still work, and your apps open again tomorrow."
     } else {
-        "$who set ${limitLabel(rule.minutes)} for ${rule.label}. It opens again tomorrow."
+        "$who set ${limitLabel(rule.minutes)} for ${rule.label}$more. It opens again tomorrow."
     }
 }
 

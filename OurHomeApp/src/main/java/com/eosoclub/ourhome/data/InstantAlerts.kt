@@ -32,8 +32,9 @@ data class TestPushResult(
  * POST /api/phone/checkin's answer. [stayConnectedRequired]: an adult looks
  * after this member, so the phone must Stay connected (false from an older
  * server, which doesn't say). [blockedApps]: the apps their supervisors
- * blocked; [appLimits]: their daily limits; [schedules]: their schedules
- * (none from an older server).
+ * blocked; [appLimits]: their daily limits; [schedules]: their schedules;
+ * [extraTime]: extra minutes on those limits, by day; [pointsForTime]: what a
+ * point buys (null: they can't buy time). None from an older server.
  */
 @Serializable
 data class CheckInResult(
@@ -41,6 +42,8 @@ data class CheckInResult(
     val blockedApps: List<BlockedAppRule> = emptyList(),
     val appLimits: List<AppLimitRule> = emptyList(),
     val schedules: List<AppScheduleRule> = emptyList(),
+    val extraTime: List<ExtraTimeDay> = emptyList(),
+    val pointsForTime: PointsRule? = null,
 )
 
 /**

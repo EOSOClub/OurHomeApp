@@ -1439,6 +1439,49 @@ class ApiClient(
             LookAfter.serializer(),
         )
 
+    /** My own points for screen time, for [day] (this phone's date, YYYY-MM-DD). */
+    suspend fun myExtraTime(day: String): MyExtraTime = call(get("/api/phone/extra-time?day=$day"), MyExtraTime.serializer())
+
+    /** Buys [minutes] more on my limits for [day] with points; refused with a reason when I can't. */
+    suspend fun buyExtraTime(minutes: Int, day: String): MyExtraTime =
+        call(
+            post(
+                "/api/phone/extra-time",
+                buildJsonObject {
+                    put("minutes", minutes)
+                    put("day", day)
+                },
+            ),
+            MyExtraTime.serializer(),
+        )
+
+    /** Lets a supervised child spend points on screen time ([minutesPerPoint] null: stops it). */
+    suspend fun setPointsForTime(supervisedId: String, minutesPerPoint: Int?, dailyCap: Int): LookAfter =
+        call(
+            post(
+                "/api/supervision/points-time",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    if (minutesPerPoint == null) put("minutesPerPoint", JsonNull) else put("minutesPerPoint", minutesPerPoint)
+                    put("dailyCap", dailyCap)
+                },
+            ),
+            LookAfter.serializer(),
+        )
+
+    /** Gives a supervised child [minutes] more on today's limits. */
+    suspend fun giveExtraTime(supervisedId: String, minutes: Int): LookAfter =
+        call(
+            post(
+                "/api/supervision/extra-time",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    put("minutes", minutes)
+                },
+            ),
+            LookAfter.serializer(),
+        )
+
     /** Blocks [app] (its package name) on a supervised child's phone, or unblocks it. */
     suspend fun setAppBlocked(supervisedId: String, app: String, blocked: Boolean): LookAfter =
         call(

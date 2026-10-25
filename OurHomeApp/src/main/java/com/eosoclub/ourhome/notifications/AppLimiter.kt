@@ -14,7 +14,11 @@ import androidx.core.content.edit
 import com.eosoclub.ourhome.R
 import com.eosoclub.ourhome.data.AppLimitRule
 import com.eosoclub.ourhome.data.AppScheduleRule
+import com.eosoclub.ourhome.data.ExtraTimeDay
 import com.eosoclub.ourhome.data.LimitsReached
+import com.eosoclub.ourhome.data.PointsRule
+import com.eosoclub.ourhome.data.extraOn
+import com.eosoclub.ourhome.data.withExtra
 import com.eosoclub.ourhome.data.limitFor
 import com.eosoclub.ourhome.data.limitPlan
 import com.eosoclub.ourhome.data.limitReason
@@ -42,14 +46,19 @@ import java.time.LocalDateTime
  * The child is warned 5 minutes before a limit runs out or a schedule starts,
  * and it looks again right when a warning, an end or a start is due, so an app
  * left open is covered on time. Each limit used up is said in the next
- * check-in ([reachedToday]), so the adults are told. Only while an adult looks
- * after this member; never the apps this phone always keeps open.
+ * check-in ([reachedToday]), so the adults are told. Extra minutes for today
+ * (bought with points or given by an adult) make every limit that much longer;
+ * while a point can buy time, the screen for a used-up limit offers it. Only
+ * while an adult looks after this member; never the apps this phone always
+ * keeps open.
  */
 object AppLimiter {
     private const val TAG = "AppLimiter"
     private const val PREFS = "app_limiter"
     private const val KEY_LIMITS = "limits"
     private const val KEY_SCHEDULES = "schedules"
+    private const val KEY_EXTRA = "extra"
+    private const val KEY_POINTS_RULE = "points_rule"
     private const val KEY_DAY = "day"
     private const val KEY_WARNED = "warned"
     private const val KEY_REACHED = "reached"
@@ -69,12 +78,16 @@ object AppLimiter {
     private val json = Json { ignoreUnknownKeys = true }
     private val serializer = ListSerializer(AppLimitRule.serializer())
     private val scheduleSerializer = ListSerializer(AppScheduleRule.serializer())
+    private val extraSerializer = ListSerializer(ExtraTimeDay.serializer())
 
     @Volatile
     private var cached: List<AppLimitRule>? = null
 
     @Volatile
     private var cachedSchedules: List<AppScheduleRule>? = null
+
+    @Volatile
+    private var cachedExtra: List<ExtraTimeDay>? = null
 
     /** Counting reads a day of Usage access events: off the main thread, one at a time. */
     private val worker: Handler by lazy { Handler(HandlerThread("app-limits").apply { start() }.looper) }
@@ -108,6 +121,34 @@ object AppLimiter {
         list
     }
 
+    /** Extra minutes on the limits by day, as last heard from the server. */
+    private fun extra(context: Context): List<ExtraTimeDay> = cachedExtra ?: run {
+        val stored = prefs(context).getString(KEY_EXTRA, null)
+        val list = stored?.let { runCatching { json.decodeFromString(extraSerializer, it) }.getOrNull() }.orEmpty()
+        cachedExtra = list
+        list
+    }
+
+    /** What a point buys, as last heard; null when they can't buy time. */
+    fun pointsRule(context: Context): PointsRule? =
+        prefs(context).getString(KEY_POINTS_RULE, null)?.let { runCatching { json.decodeFromString(PointsRule.serializer(), it) }.getOrNull() }
+
+    /**
+     * The extra minutes and points rule from a check-in's answer. More minutes
+     * are acted on at once: a covered app may have time again.
+     */
+    fun saveExtra(context: Context, extra: List<ExtraTimeDay>, rule: PointsRule?) {
+        val ruleJson = rule?.let { json.encodeToString(PointsRule.serializer(), it) }
+        if (extra == extra(context) && ruleJson == prefs(context).getString(KEY_POINTS_RULE, null)) return
+        prefs(context).edit {
+            putString(KEY_EXTRA, json.encodeToString(extraSerializer, extra))
+            if (ruleJson == null) remove(KEY_POINTS_RULE) else putString(KEY_POINTS_RULE, ruleJson)
+        }
+        cachedExtra = extra
+        Log.i(TAG, "extra time: ${extra.sumOf { it.minutes }} min over ${extra.size} day(s)")
+        check(context)
+    }
+
     /** The limits from a check-in's answer. A change is acted on at once (a tighter limit may be up already). */
     fun save(context: Context, limits: List<AppLimitRule>) {
         if (limits == limits(context)) return
@@ -131,6 +172,7 @@ object AppLimiter {
         prefs(context).edit { clear() }
         cached = emptyList()
         cachedSchedules = emptyList()
+        cachedExtra = emptyList()
         worker.removeCallbacks(recheck)
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
     }
@@ -204,13 +246,16 @@ object AppLimiter {
                 Log.w(TAG, "couldn't count today's app time", it)
                 return
             }
-            val state = limitFor(app, used, limits, alwaysAllowed) ?: return
-            // Warned per limit and length: a limit raised later in the day warns again before its new end.
+            // Today's extra minutes make every limit longer.
+            val extra = extraOn(extra(context), today)
+            val state = limitFor(app, used, withExtra(limits, extra), alwaysAllowed) ?: return
+            val rule = limits.first { it.app == state.rule.app }
+            // Warned per limit and length (extra time included): a longer limit later in the day warns again.
             val warnKey = "${state.rule.app}@${state.rule.minutes}"
             val plan = limitPlan(state, warned = warnKey in todaySet(context, today, KEY_WARNED))
             if (plan.cover) {
                 Log.i(TAG, "a daily limit is used up; covering the app")
-                service.coverLimit(app, limitTitle(state.rule), limitReason(state.rule))
+                service.coverLimit(app, limitTitle(rule), limitReason(rule, extra), moreTime = pointsRule(context) != null)
                 // The first time today: the adults are told with a check-in.
                 if (addToday(context, today, KEY_REACHED, state.rule.app)) PhoneCheckIn.sendNow(context)
             }

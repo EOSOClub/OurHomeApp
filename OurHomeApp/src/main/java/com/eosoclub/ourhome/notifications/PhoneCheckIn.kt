@@ -48,8 +48,9 @@ import java.util.UUID
  *
  * While looked after, it also sends the apps it never blocks and the daily
  * limits it used up today, and the answer brings the apps their supervisors
- * blocked ([AppBlocker]), their daily limits and their schedules ([AppLimiter]);
- * a change to any of them wakes the phone to check in at once.
+ * blocked ([AppBlocker]), their daily limits, schedules, extra minutes and
+ * what a point buys ([AppLimiter]); a change to any of them wakes the phone to
+ * check in at once.
  */
 object PhoneCheckIn {
     private const val TAG = "PhoneCheckIn"
@@ -113,6 +114,11 @@ object PhoneCheckIn {
         AppBlocker.save(context, if (result.stayConnectedRequired) result.blockedApps else emptyList())
         AppLimiter.save(context, if (result.stayConnectedRequired) result.appLimits else emptyList())
         AppLimiter.saveSchedules(context, if (result.stayConnectedRequired) result.schedules else emptyList())
+        AppLimiter.saveExtra(
+            context,
+            if (result.stayConnectedRequired) result.extraTime else emptyList(),
+            if (result.stayConnectedRequired) result.pointsForTime else null,
+        )
     }
 
     /** Schedules the parent notifications for the chosen [duration] (1h, 5h, or 10h). */

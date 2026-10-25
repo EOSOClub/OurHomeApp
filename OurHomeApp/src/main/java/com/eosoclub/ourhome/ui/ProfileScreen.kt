@@ -282,6 +282,8 @@ fun ProfileScreen(
                     }
                 }
                 state.members?.takeIf { it.size > 1 }?.let { CardSlot("household") { HouseholdCard(it, profile.id) } }
+                // Only while an adult who looks after them lets them buy time; nothing shows otherwise.
+                CardSlot("time") { ExtraTimeCard(session, showMessage) }
                 CardSlot("phone") {
                     // The long phone blocks, closed so a newly set up phone isn't a wall of
                     // switches (each section shows only when it applies to this member).

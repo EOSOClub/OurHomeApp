@@ -60,7 +60,8 @@ internal fun AppUsageCard(session: SessionManager) {
         Text(
             "This phone sends how long you spend in each app, about every 15 minutes. You and the adults who look " +
                 "after you can see it, and only the last two weeks are kept. They're also told when you install a new " +
-                "app. Nothing is blocked or limited.",
+                "app. They can also block apps, give apps a daily limit, and set times when apps close, like " +
+                "bedtime; this phone tells you when that happens.",
             style = MaterialTheme.typography.bodyMedium,
         )
         if (access) {

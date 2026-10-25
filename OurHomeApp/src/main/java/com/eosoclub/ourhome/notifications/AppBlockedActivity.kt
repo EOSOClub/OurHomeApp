@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.DisposableEffect
@@ -28,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.eosoclub.ourhome.MainActivity
 import com.eosoclub.ourhome.OurHomeApp
 import com.eosoclub.ourhome.data.BlockedAppRule
 import com.eosoclub.ourhome.data.ThemeMode
@@ -38,11 +40,13 @@ import com.eosoclub.ourhome.ui.theme.OurHomeTheme
  * The blocked screen: shown over an app a supervising adult blocked
  * ([AppBlocker]), saying who blocked it, or over one whose daily limit is used
  * up ([AppLimiter]). OK and Back go to the home screen, never back into the
- * app. Opening the app again shows it again.
+ * app. Opening the app again shows it again. For a used-up limit, while points
+ * can buy time, Get more time opens Profile, where they buy it.
  */
 class AppBlockedActivity : ComponentActivity() {
     private var title by mutableStateOf("")
     private var reason by mutableStateOf("")
+    private var moreTime by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,6 +87,9 @@ class AppBlockedActivity : ComponentActivity() {
                             textAlign = TextAlign.Center,
                         )
                         Button(onClick = { goHome() }) { Text("OK") }
+                        if (moreTime) {
+                            OutlinedButton(onClick = { openProfile() }) { Text("Get more time") }
+                        }
                     }
                 }
             }
@@ -98,6 +105,17 @@ class AppBlockedActivity : ComponentActivity() {
     private fun read(intent: Intent) {
         title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifEmpty { "This app is blocked" }
         reason = intent.getStringExtra(EXTRA_REASON).orEmpty()
+        moreTime = intent.getBooleanExtra(EXTRA_MORE_TIME, false)
+    }
+
+    /** Profile, where points buy more time; this screen goes. */
+    private fun openProfile() {
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .putExtra(RequestReminders.EXTRA_OPEN_TAB, AppUpdateAlerts.TAB_PROFILE)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        )
+        finish()
     }
 
     private fun goHome() {
@@ -108,15 +126,18 @@ class AppBlockedActivity : ComponentActivity() {
     companion object {
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_REASON = "reason"
+        private const val EXTRA_MORE_TIME = "more_time"
 
         /** Over an app [block] names: "YouTube is blocked", and who blocked it. */
         fun intent(context: Context, block: BlockedAppRule): Intent =
             intent(context, "${block.label.ifEmpty { "This app" }} is blocked", blockedReason(block.by))
 
-        fun intent(context: Context, title: String, reason: String): Intent =
+        /** [moreTime]: also offer Get more time (a used-up limit while points can buy time). */
+        fun intent(context: Context, title: String, reason: String, moreTime: Boolean = false): Intent =
             Intent(context, AppBlockedActivity::class.java)
                 .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_REASON, reason)
+                .putExtra(EXTRA_MORE_TIME, moreTime)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     }
 }

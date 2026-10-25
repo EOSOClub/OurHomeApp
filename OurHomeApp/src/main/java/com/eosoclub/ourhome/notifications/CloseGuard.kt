@@ -620,9 +620,12 @@ class CloseGuardService : AccessibilityService() {
     /** The blocked screen over [block]'s app. */
     private fun cover(block: BlockedAppRule) = coverOnce(block.app) { AppBlocker.cover(this, block) }
 
-    /** The blocked screen over [app], whose daily limit ran out or whose schedule is on (from [AppLimiter]'s thread). */
-    internal fun coverLimit(app: String, title: String, reason: String) {
-        mainHandler.post { coverOnce(app) { startActivity(AppBlockedActivity.intent(this, title, reason)) } }
+    /**
+     * The blocked screen over [app], whose daily limit ran out or whose schedule
+     * is on (from [AppLimiter]'s thread); [moreTime]: it offers buying more time.
+     */
+    internal fun coverLimit(app: String, title: String, reason: String, moreTime: Boolean = false) {
+        mainHandler.post { coverOnce(app) { startActivity(AppBlockedActivity.intent(this, title, reason, moreTime)) } }
     }
 
     /** An app's burst of window changes covers it once. */

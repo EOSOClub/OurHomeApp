@@ -223,6 +223,8 @@ data class LookedAfter(
     val limits: LookedAfterLimits = LookedAfterLimits(),
     /** Schedules on their phone, earliest start first; none from older servers. */
     val schedules: List<ScheduleEntry> = emptyList(),
+    /** Points for screen time; off from older servers. */
+    val pointsTime: LookedAfterPointsTime = LookedAfterPointsTime(),
     /** How far their phone got with Set up this phone; null from older servers. */
     val setup: LookedAfterSetup? = null,
     /** My last ring of their phone and what it said back; null when I haven't rung it lately. */
