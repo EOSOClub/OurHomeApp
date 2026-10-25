@@ -36,12 +36,13 @@ import com.eosoclub.ourhome.ui.theme.OurHomeTheme
 
 /**
  * The blocked screen: shown over an app a supervising adult blocked
- * ([AppBlocker]), saying who blocked it. OK and Back go to the home screen,
- * never back into the app. Opening the app again shows it again.
+ * ([AppBlocker]), saying who blocked it, or over one whose daily limit is used
+ * up ([AppLimiter]). OK and Back go to the home screen, never back into the
+ * app. Opening the app again shows it again.
  */
 class AppBlockedActivity : ComponentActivity() {
-    private var label by mutableStateOf("")
-    private var by by mutableStateOf<String?>(null)
+    private var title by mutableStateOf("")
+    private var reason by mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,12 +72,12 @@ class AppBlockedActivity : ComponentActivity() {
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
-                            "$label is blocked",
+                            title,
                             style = MaterialTheme.typography.headlineSmall,
                             textAlign = TextAlign.Center,
                         )
                         Text(
-                            blockedReason(by),
+                            reason,
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center,
@@ -88,15 +89,15 @@ class AppBlockedActivity : ComponentActivity() {
         }
     }
 
-    /** Another blocked app while this shows. */
+    /** Another blocked app (or used-up limit) while this shows. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         read(intent)
     }
 
     private fun read(intent: Intent) {
-        label = intent.getStringExtra(EXTRA_LABEL).orEmpty().ifEmpty { "This app" }
-        by = intent.getStringExtra(EXTRA_BY)
+        title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifEmpty { "This app is blocked" }
+        reason = intent.getStringExtra(EXTRA_REASON).orEmpty()
     }
 
     private fun goHome() {
@@ -105,13 +106,17 @@ class AppBlockedActivity : ComponentActivity() {
     }
 
     companion object {
-        private const val EXTRA_LABEL = "label"
-        private const val EXTRA_BY = "by"
+        private const val EXTRA_TITLE = "title"
+        private const val EXTRA_REASON = "reason"
 
+        /** Over an app [block] names: "YouTube is blocked", and who blocked it. */
         fun intent(context: Context, block: BlockedAppRule): Intent =
+            intent(context, "${block.label.ifEmpty { "This app" }} is blocked", blockedReason(block.by))
+
+        fun intent(context: Context, title: String, reason: String): Intent =
             Intent(context, AppBlockedActivity::class.java)
-                .putExtra(EXTRA_LABEL, block.label)
-                .putExtra(EXTRA_BY, block.by)
+                .putExtra(EXTRA_TITLE, title)
+                .putExtra(EXTRA_REASON, reason)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     }
 }

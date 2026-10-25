@@ -1158,6 +1158,7 @@ class ApiClient(
         status: DeviceStatus?,
         shuttingDown: Boolean,
         alwaysAllowed: Collection<String>? = null,
+        limitsReached: LimitsReached? = null,
     ): CheckInResult =
         call(
             post(
@@ -1185,6 +1186,13 @@ class ApiClient(
                     status?.let { put("status", it.toJson()) }
                     // Also only while an adult looks after this member: the apps it never blocks.
                     alwaysAllowed?.let { apps -> putJsonArray("alwaysAllowed") { apps.take(50).forEach { add(it) } } }
+                    // And the daily limits it used up today, so the adults are told.
+                    limitsReached?.let { reached ->
+                        putJsonObject("limitsReached") {
+                            put("day", reached.day)
+                            putJsonArray("apps") { reached.apps.take(60).forEach { add(it) } }
+                        }
+                    }
                     if (shuttingDown) put("shuttingDown", true)
                 },
             ),
@@ -1366,6 +1374,66 @@ class ApiClient(
                     put("supervisedId", supervisedId)
                     put("rule", rule.key)
                     put("required", required)
+                },
+            ),
+            LookAfter.serializer(),
+        )
+
+    /**
+     * Gives [app] (its package name, or [ALL_APPS] for all apps together) a
+     * daily limit of [minutes] on a supervised child's phone, or removes it (null).
+     */
+    suspend fun setAppLimit(supervisedId: String, app: String, minutes: Int?): LookAfter =
+        call(
+            post(
+                "/api/supervision/app-limits",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    put("app", app)
+                    if (minutes == null) put("minutes", JsonNull) else put("minutes", minutes)
+                },
+            ),
+            LookAfter.serializer(),
+        )
+
+    /**
+     * Adds a schedule to a supervised child's phone, or changes one ([id]):
+     * [days] 0 (Sunday) to 6, [start] and [end] in minutes after midnight,
+     * [allowed] the package names still open meanwhile.
+     */
+    suspend fun saveSchedule(
+        supervisedId: String,
+        id: String?,
+        name: String,
+        days: List<Int>,
+        start: Int,
+        end: Int,
+        allowed: List<String>,
+    ): LookAfter =
+        call(
+            post(
+                "/api/supervision/schedules",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    id?.let { put("id", it) }
+                    put("name", name)
+                    putJsonArray("days") { days.forEach { add(it) } }
+                    put("start", start)
+                    put("end", end)
+                    putJsonArray("allowed") { allowed.forEach { add(it) } }
+                },
+            ),
+            LookAfter.serializer(),
+        )
+
+    /** Removes a schedule from a supervised child's phone. */
+    suspend fun removeSchedule(supervisedId: String, id: String): LookAfter =
+        call(
+            post(
+                "/api/supervision/schedules/remove",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    put("id", id)
                 },
             ),
             LookAfter.serializer(),

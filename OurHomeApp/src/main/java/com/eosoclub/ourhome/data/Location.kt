@@ -217,6 +217,12 @@ data class LookedAfter(
     val rules: PhoneRules? = null,
     /** Apps blocked on their phone; none from older servers. */
     val blocking: LookedAfterBlocking = LookedAfterBlocking(),
+    /** The apps in their stored usage, apart from the ones their phone always keeps open (for limits and schedules). */
+    val usageApps: List<LimitChoice> = emptyList(),
+    /** Daily limits on their phone; none from older servers. */
+    val limits: LookedAfterLimits = LookedAfterLimits(),
+    /** Schedules on their phone, earliest start first; none from older servers. */
+    val schedules: List<ScheduleEntry> = emptyList(),
     /** How far their phone got with Set up this phone; null from older servers. */
     val setup: LookedAfterSetup? = null,
     /** My last ring of their phone and what it said back; null when I haven't rung it lately. */

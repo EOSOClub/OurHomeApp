@@ -4,9 +4,11 @@ import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.app.admin.DeviceAdminReceiver
 import android.app.admin.DevicePolicyManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -15,6 +17,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import com.eosoclub.ourhome.R
@@ -42,7 +45,9 @@ import java.security.SecureRandom
  *      updates), and this service's own Accessibility pages, by going to the
  *      home screen.
  *    - Covers an app a supervising adult blocked with the blocked screen
- *      ([AppBlocker]).
+ *      ([AppBlocker]), and says which app opens for daily limits and schedules
+ *      ([AppLimiter]), which cover it the same way once its time is used up or
+ *      while a schedule is on.
  * 3. **Emergency offline recovery without PIN**: if the parent PIN is lost and
  *    there is no internet connection, an in-app emergency unlock timer (its
  *    length chosen by the parent with the PIN, [EmergencyDuration]) or
@@ -535,14 +540,22 @@ class CloseGuardService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var tornDown = false
 
+    /** The screen coming on, or the phone unlocked: daily limits look at the app in front again. */
+    private val screenOn = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) = AppLimiter.check(context)
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         forceStopLabels = CloseGuard.forceStopLabels(this)
         deactivateLabels = CloseGuard.deactivateAdminLabels(this)
         activateLabels = CloseGuard.activateAdminLabels(this)
         CloseGuard.service = this
+        val wake = IntentFilter(Intent.ACTION_SCREEN_ON).apply { addAction(Intent.ACTION_USER_PRESENT) }
+        runCatching { ContextCompat.registerReceiver(this, screenOn, wake, ContextCompat.RECEIVER_NOT_EXPORTED) }
         // Same rules as any other start (an adult's Stop is still respected).
         StayConnected.ensureRunning(applicationContext)
+        AppLimiter.check(this)
     }
 
     /** Holds Stay connected's connection while it's on, in place of the foreground service. */
@@ -573,6 +586,7 @@ class CloseGuardService : AccessibilityService() {
                 cover(block)
                 return
             }
+            AppLimiter.opened(this, event.packageName?.toString())
         }
         if (!CloseGuard.isGuarding(this)) return
         // Content changes come often: look at most twice a second.
@@ -603,14 +617,25 @@ class CloseGuardService : AccessibilityService() {
         }
     }
 
-    /** The blocked screen over [block]'s app; an app's burst of window changes covers it once. */
-    private fun cover(block: BlockedAppRule) {
-        val now = SystemClock.elapsedRealtime()
-        if (block.app == lastCoveredApp && now - lastCoveredAt < COVER_EVERY_MS) return
-        lastCoveredApp = block.app
-        lastCoveredAt = now
-        AppBlocker.cover(this, block)
+    /** The blocked screen over [block]'s app. */
+    private fun cover(block: BlockedAppRule) = coverOnce(block.app) { AppBlocker.cover(this, block) }
+
+    /** The blocked screen over [app], whose daily limit ran out or whose schedule is on (from [AppLimiter]'s thread). */
+    internal fun coverLimit(app: String, title: String, reason: String) {
+        mainHandler.post { coverOnce(app) { startActivity(AppBlockedActivity.intent(this, title, reason)) } }
     }
+
+    /** An app's burst of window changes covers it once. */
+    private fun coverOnce(app: String, show: () -> Unit) {
+        val now = SystemClock.elapsedRealtime()
+        if (app == lastCoveredApp && now - lastCoveredAt < COVER_EVERY_MS) return
+        lastCoveredApp = app
+        lastCoveredAt = now
+        show()
+    }
+
+    /** The app whose window is active (the one being used; a keyboard's window never is), or null. */
+    internal fun activeApp(): String? = runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull()
 
     /** The blocked list changed: covers a blocked app that's already open. */
     internal fun checkBlockedNow() {
@@ -644,6 +669,7 @@ class CloseGuardService : AccessibilityService() {
         if (tornDown) return
         tornDown = true
         if (CloseGuard.service === this) CloseGuard.service = null
+        runCatching { unregisterReceiver(screenOn) }
         disconnect()
         StayConnected.ensureRunning(applicationContext)
     }

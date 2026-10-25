@@ -1,7 +1,11 @@
 package com.eosoclub.ourhome.ui
 
+import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.graphics.ImageBitmap
@@ -22,8 +26,15 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -34,11 +45,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.eosoclub.ourhome.data.setupSummary
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,23 +62,46 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.eosoclub.ourhome.data.ALL_APPS
+import com.eosoclub.ourhome.data.ALL_APPS_LABEL
 import com.eosoclub.ourhome.data.ApiClient
+import com.eosoclub.ourhome.data.AppLimitEntry
+import com.eosoclub.ourhome.data.EVERY_DAY
+import com.eosoclub.ourhome.data.LimitChoice
+import com.eosoclub.ourhome.data.MAX_ALLOWED
+import com.eosoclub.ourhome.data.MAX_SCHEDULES
+import com.eosoclub.ourhome.data.SCHEDULE_DAYS
+import com.eosoclub.ourhome.data.SCHEDULE_PRESETS
+import com.eosoclub.ourhome.data.ScheduleEntry
+import com.eosoclub.ourhome.data.SchedulePreset
+import com.eosoclub.ourhome.data.WEEKDAYS
+import com.eosoclub.ourhome.data.daysLabel
+import com.eosoclub.ourhome.data.scheduleTimes
+import com.eosoclub.ourhome.data.schedulesSummary
 import com.eosoclub.ourhome.data.LookAfter
 import com.eosoclub.ourhome.data.LookedAfter
 import com.eosoclub.ourhome.data.LookedAfterBlocking
+import com.eosoclub.ourhome.data.LookedAfterLimits
 import com.eosoclub.ourhome.data.PhoneRule
 import com.eosoclub.ourhome.data.blockedSummary
+import com.eosoclub.ourhome.data.limitLabel
+import com.eosoclub.ourhome.data.limitOptions
+import com.eosoclub.ourhome.data.limitsSummary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.time.LocalTime
 
 // "People you look after" (web: /look-after): the children and teens this
 // adult supervises (the Head's supervision list). A summary card each; a card
 // opens that person's page, where this adult can ring their phone, make their
-// location sharing required, share their app usage and block apps from it,
-// choose which protections their phone must have on (PhoneRule). Only offered in the menu
+// location sharing required, share their app usage, block apps from it, give
+// apps a daily limit and set schedules, choose which protections their phone must have on (PhoneRule). Only offered in the menu
 // to someone who supervises somebody; the server checks it again.
+
+/** A new app limit starts at this many minutes; its menu changes it. */
+private const val NEW_LIMIT_MINUTES = 60
 
 /** Refetched this often while showing, so phone check-ins and usage stay current. */
 private const val LOOK_AFTER_REFRESH_MS = 60_000L
@@ -134,6 +170,10 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
         val savingRule: Triple<String, PhoneRule, Boolean>? = null,
         /** Whose app is being blocked or unblocked (person id, package name), and to what. */
         val savingBlock: Triple<String, String, Boolean>? = null,
+        /** Whose daily limit is being saved (person id, package name or ALL_APPS), and to what (null: removed). */
+        val savingLimit: Triple<String, String, Int?>? = null,
+        /** Whose schedules are being saved or removed (person id). */
+        val savingSchedule: String? = null,
         /** Whose week of app usage is open, their loaded history, and whose failed to load. */
         val usageOpen: Set<String> = emptySet(),
         val usageHistory: Map<String, UsageHistory> = emptyMap(),
@@ -256,6 +296,75 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
             }
         }
     }
+
+    /**
+     * Adds a schedule to [person]'s phone, or changes one ([id]); [onSaved]
+     * closes the form once it's saved. One save at a time.
+     */
+    fun saveSchedule(
+        person: LookedAfter,
+        id: String?,
+        preset: SchedulePreset,
+        allowed: List<String>,
+        onDone: (String) -> Unit,
+        onSaved: () -> Unit,
+    ) {
+        if (state.value.savingSchedule != null) return
+        edits++
+        state.update { it.copy(savingSchedule = person.id) }
+        viewModelScope.launch {
+            try {
+                val next = api.saveSchedule(person.id, id, preset.name, preset.days, preset.start, preset.end, allowed)
+                state.update { it.copy(lookAfter = next, savingSchedule = null) }
+                onSaved()
+                onDone("${preset.name} is set on ${person.name}'s phone")
+            } catch (e: Exception) {
+                state.update { it.copy(savingSchedule = null) }
+                onDone(e.message ?: "Couldn't save it")
+            }
+        }
+    }
+
+    /** Removes [schedule] from [person]'s phone. */
+    fun removeSchedule(person: LookedAfter, schedule: ScheduleEntry, onDone: (String) -> Unit) {
+        if (state.value.savingSchedule != null) return
+        edits++
+        state.update { it.copy(savingSchedule = person.id) }
+        viewModelScope.launch {
+            try {
+                val next = api.removeSchedule(person.id, schedule.id)
+                state.update { it.copy(lookAfter = next, savingSchedule = null) }
+                onDone("${schedule.name} is off ${person.name}'s phone")
+            } catch (e: Exception) {
+                state.update { it.copy(savingSchedule = null) }
+                onDone(e.message ?: "Couldn't remove it")
+            }
+        }
+    }
+
+    /**
+     * Gives [app] (or [ALL_APPS]; [label] for the message) a daily limit of
+     * [minutes] on [person]'s phone, or removes it (null). One at a time.
+     */
+    fun setLimit(person: LookedAfter, app: String, label: String, minutes: Int?, onDone: (String) -> Unit) {
+        if (state.value.savingLimit != null) return
+        edits++
+        state.update { it.copy(savingLimit = Triple(person.id, app, minutes)) }
+        viewModelScope.launch {
+            try {
+                val next = api.setAppLimit(person.id, app, minutes)
+                // Set before the saving state ends, so the menu never flicks back.
+                state.update { it.copy(lookAfter = next, savingLimit = null) }
+                onDone(
+                    if (minutes == null) "$label: no limit on ${person.name}'s phone"
+                    else "$label: ${limitLabel(minutes)} on ${person.name}'s phone",
+                )
+            } catch (e: Exception) {
+                state.update { it.copy(savingLimit = null) }
+                onDone(e.message ?: "Couldn't change it")
+            }
+        }
+    }
 }
 
 /**
@@ -373,6 +482,13 @@ internal fun LookAfterScreen(
                     onToggleUsage = { vm.toggleUsageHistory(person.id) },
                     savingBlock = state.savingBlock?.takeIf { it.first == person.id }?.let { it.second to it.third },
                     onBlock = { app, label, blocked -> vm.setBlocked(person, app, label, blocked, showMessage) },
+                    savingLimit = state.savingLimit?.takeIf { it.first == person.id }?.let { it.second to it.third },
+                    onLimit = { app, label, minutes -> vm.setLimit(person, app, label, minutes, showMessage) },
+                    savingSchedule = state.savingSchedule == person.id,
+                    onSaveSchedule = { id, preset, allowed, onSaved ->
+                        vm.saveSchedule(person, id, preset, allowed, showMessage, onSaved)
+                    },
+                    onRemoveSchedule = { vm.removeSchedule(person, it, showMessage) },
                 )
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp))
             }
@@ -387,6 +503,12 @@ internal fun LookAfterScreen(
                         "it's shared, you're also told when a new app turns up on their phone. Block next to an app " +
                         "stops it opening on their phone: they see a screen saying you blocked it. Blocking needs " +
                         "Keep Our Home running on their phone. Phone calls, messages and OurHome always stay open. " +
+                        "Daily limits give all their apps together, or one app, so much time a day. Their phone " +
+                        "warns them 5 minutes before, then closes the app until midnight, and you're told. Limits " +
+                        "need Usage access and Keep Our Home running on their phone. " +
+                        "Schedules close all their apps at set times, like bedtime or school, apart from calls, " +
+                        "messages and any apps you leave open. Their phone warns them 5 minutes before. Schedules " +
+                        "need Keep Our Home running on their phone. " +
                         "Require Keep Our Home running stops OurHome " +
                         "being closed on their phone, Require Prevent uninstall stops it being removed without " +
                         "your PIN, and Require Unrestricted battery stops battery saving from holding back rings " +
@@ -471,6 +593,8 @@ private fun PersonCard(person: LookedAfter, canRing: Boolean, onOpen: () -> Unit
                 },
             )
             blockedSummary(person.blocking.apps)?.let { CardLine(it) }
+            limitsSummary(person.limits)?.let { CardLine(it) }
+            schedulesSummary(person.schedules)?.let { CardLine(it) }
             person.setupSummary()?.let { CardLine(it) }
             person.ring?.let { ring ->
                 CardLine("You rang ${relativeTime(ring.sentAt)}: ${ring.outcome}", error = ring.phase == "no_answer")
@@ -522,6 +646,12 @@ private fun LookedAfterRow(
     /** The app being blocked or unblocked for them, and to what. */
     savingBlock: Pair<String, Boolean>?,
     onBlock: (app: String, label: String, blocked: Boolean) -> Unit,
+    /** The daily limit being saved for them (package name or ALL_APPS), and to what (null: removed). */
+    savingLimit: Pair<String, Int?>?,
+    onLimit: (app: String, label: String, minutes: Int?) -> Unit,
+    savingSchedule: Boolean,
+    onSaveSchedule: (id: String?, preset: SchedulePreset, allowed: List<String>, onSaved: () -> Unit) -> Unit,
+    onRemoveSchedule: (ScheduleEntry) -> Unit,
 ) {
     val blocking = person.blocking
     val blockAction: AppRowAction = { app ->
@@ -604,6 +734,13 @@ private fun LookedAfterRow(
             }
         }
         BlockedApps(blocking, icons, loadIcon, savingBlock, onUnblock = { app, label -> onBlock(app, label, false) })
+        // While their usage is shared, or while a limit is left from before.
+        if (person.appUsage.shared || !person.limits.isEmpty) {
+            // Any app from their usage without a limit of its own yet.
+            val choices = person.usageApps.filter { a -> person.limits.apps.none { it.app == a.app } }
+            DailyLimits(person.limits, choices, blocking.works, icons, loadIcon, savingLimit, onLimit)
+        }
+        Schedules(person.schedules, person.usageApps, blocking.works, icons, loadIcon, savingSchedule, onSaveSchedule, onRemoveSchedule)
         // Only from servers that send the rules.
         person.rules?.let { rules ->
             PhoneRule.entries.forEach { rule ->
@@ -689,4 +826,334 @@ private fun BlockedApps(
             }
         }
     }
+}
+
+/**
+ * Their daily limits: all apps together, then each app's own with who set it
+ * (each changed or removed from its menu), and adding one for an app from
+ * their usage ([NEW_LIMIT_MINUTES] to start). [blocksWork]: Keep Our Home
+ * running is on there, which does the covering.
+ */
+@Composable
+private fun DailyLimits(
+    limits: LookedAfterLimits,
+    choices: List<LimitChoice>,
+    blocksWork: Boolean?,
+    icons: Map<String, ImageBitmap?>,
+    loadIcon: (String) -> Unit,
+    saving: Pair<String, Int?>?,
+    onLimit: (app: String, label: String, minutes: Int?) -> Unit,
+) {
+    val minutesOf = { app: String, stored: Int? -> saving?.takeIf { it.first == app }?.let { it.second } ?: stored }
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text("Daily limits", style = MaterialTheme.typography.titleSmall)
+        if (limits.counts == false) {
+            Text(
+                "Usage access is off on their phone, so it can't count their time until it's back on.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (blocksWork == false && !limits.isEmpty) {
+            Text(
+                "Keep Our Home running is off on their phone, so nothing closes when time runs out until it's back on.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text(ALL_APPS_LABEL, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    limits.total?.let { "Set by ${it.byName} ${relativeTime(it.at)}" } ?: "Together, apart from calls and messages",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            LimitMenu(
+                minutes = if (saving?.first == ALL_APPS) saving.second else limits.total?.minutes,
+                noneLabel = "No limit",
+                enabled = saving == null,
+                onPick = { onLimit(ALL_APPS, ALL_APPS_LABEL, it) },
+            )
+        }
+        limits.apps.forEach { limit ->
+            LimitRow(limit, minutesOf(limit.app, limit.minutes), saving == null, icons, loadIcon, onLimit)
+        }
+        if (choices.isNotEmpty()) {
+            var open by remember { mutableStateOf(false) }
+            Box {
+                TextButton(onClick = { open = true }, enabled = saving == null, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                    Text("Add a limit for an app", style = MaterialTheme.typography.labelMedium)
+                }
+                DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                    choices.forEach { choice ->
+                        DropdownMenuItem(
+                            text = { Text(choice.label) },
+                            leadingIcon = { AppIconBox(choice.app, choice.label, choice.icon, icons, loadIcon) },
+                            onClick = {
+                                open = false
+                                onLimit(choice.app, choice.label, NEW_LIMIT_MINUTES)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** One app's own limit: who set it, and its minutes as a menu that also removes it. */
+@Composable
+private fun LimitRow(
+    limit: AppLimitEntry,
+    minutes: Int?,
+    enabled: Boolean,
+    icons: Map<String, ImageBitmap?>,
+    loadIcon: (String) -> Unit,
+    onLimit: (app: String, label: String, minutes: Int?) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        AppIconBox(limit.app, limit.label, limit.icon, icons, loadIcon)
+        Column(Modifier.weight(1f).padding(start = 8.dp)) {
+            Text(limit.label, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "Set by ${limit.byName} ${relativeTime(limit.at)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        LimitMenu(minutes, noneLabel = "Remove limit", enabled = enabled, onPick = { onLimit(limit.app, limit.label, it) })
+    }
+}
+
+/** A limit's minutes ("No limit" when null), opening a menu of [limitOptions] with [noneLabel] (minutes null) first. */
+@Composable
+private fun LimitMenu(minutes: Int?, noneLabel: String, enabled: Boolean, onPick: (Int?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }, enabled = enabled, contentPadding = PaddingValues(start = 12.dp, end = 4.dp)) {
+            Text(minutes?.let(::limitLabel) ?: "No limit", style = MaterialTheme.typography.labelMedium)
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text(noneLabel) }, onClick = { open = false; onPick(null) })
+            limitOptions(minutes).forEach { option ->
+                DropdownMenuItem(text = { Text(limitLabel(option)) }, onClick = { open = false; onPick(option) })
+            }
+        }
+    }
+}
+
+/**
+ * Their schedules, each with Edit and Remove, and Add a schedule; both open
+ * [ScheduleDialog]. [apps]: what a schedule can leave open.
+ */
+@Composable
+private fun Schedules(
+    schedules: List<ScheduleEntry>,
+    apps: List<LimitChoice>,
+    blocksWork: Boolean?,
+    icons: Map<String, ImageBitmap?>,
+    loadIcon: (String) -> Unit,
+    saving: Boolean,
+    onSave: (id: String?, preset: SchedulePreset, allowed: List<String>, onSaved: () -> Unit) -> Unit,
+    onRemove: (ScheduleEntry) -> Unit,
+) {
+    val is24 = DateFormat.is24HourFormat(LocalContext.current)
+    var adding by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<ScheduleEntry?>(null) }
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text("Schedules", style = MaterialTheme.typography.titleSmall)
+        if (blocksWork == false && schedules.isNotEmpty()) {
+            Text(
+                "Keep Our Home running is off on their phone, so their apps stay open during these until it's back on.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (schedules.isEmpty()) {
+            Text(
+                "Times when their apps close, like bedtime or school. Calls and messages always work.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        schedules.forEach { schedule ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text(schedule.name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                    Text(
+                        "${daysLabel(schedule.days)} · ${scheduleTimes(schedule.start, schedule.end, is24)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (schedule.allowed.isNotEmpty()) {
+                        Text(
+                            "Still open: ${schedule.allowed.joinToString(", ") { it.label }}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        "Set by ${schedule.byName} ${relativeTime(schedule.at)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = { editing = schedule }, enabled = !saving, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text("Edit", style = MaterialTheme.typography.labelMedium)
+                }
+                TextButton(onClick = { onRemove(schedule) }, enabled = !saving, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text("Remove", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+        if (schedules.size < MAX_SCHEDULES) {
+            TextButton(onClick = { adding = true }, enabled = !saving, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                Text("Add a schedule", style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+    if (adding || editing != null) {
+        val current = editing
+        ScheduleDialog(
+            schedule = current,
+            apps = apps,
+            icons = icons,
+            loadIcon = loadIcon,
+            saving = saving,
+            onDismiss = {
+                adding = false
+                editing = null
+            },
+            onSave = { preset, allowed ->
+                onSave(current?.id, preset, allowed) {
+                    adding = false
+                    editing = null
+                }
+            },
+        )
+    }
+}
+
+/**
+ * A schedule's name, days, times and the apps still open meanwhile. A new one
+ * starts as Bedtime, and the presets fill it in with a tap.
+ */
+@Composable
+private fun ScheduleDialog(
+    schedule: ScheduleEntry?,
+    apps: List<LimitChoice>,
+    icons: Map<String, ImageBitmap?>,
+    loadIcon: (String) -> Unit,
+    saving: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (preset: SchedulePreset, allowed: List<String>) -> Unit,
+) {
+    val first = schedule?.let { SchedulePreset(it.name, it.days, it.start, it.end) } ?: SCHEDULE_PRESETS[0]
+    val timeOf = { minutes: Int -> LocalTime.of(minutes / 60, minutes % 60) }
+    var name by remember { mutableStateOf(first.name) }
+    var days by remember { mutableStateOf(first.days.toSet()) }
+    var start by remember { mutableStateOf<LocalTime?>(timeOf(first.start)) }
+    var end by remember { mutableStateOf<LocalTime?>(timeOf(first.end)) }
+    var allowed by remember { mutableStateOf(schedule?.allowed?.map { it.app }.orEmpty()) }
+    var errors by remember { mutableStateOf(emptyMap<String, String>()) }
+    // Apps already allowed that have left their usage still show, so they can be unticked.
+    val choices = apps + schedule?.allowed.orEmpty().filter { a -> apps.none { it.app == a.app } }
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text(if (schedule == null) "Add a schedule" else "Edit ${schedule.name}") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (schedule == null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SCHEDULE_PRESETS.forEach { preset ->
+                            FilterChip(
+                                selected = name == preset.name,
+                                onClick = {
+                                    name = preset.name
+                                    days = preset.days.toSet()
+                                    start = timeOf(preset.start)
+                                    end = timeOf(preset.end)
+                                },
+                                label = { Text(preset.name) },
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.take(40) },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    isError = errors["name"] != null,
+                    supportingText = errors["name"]?.let { { Text(it) } },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                FieldLabel("Days")
+                DayToggleRow(EVERY_DAY, days, { SCHEDULE_DAYS[it] }) { day -> days = if (day in days) days - day else days + day }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { days = WEEKDAYS.toSet() }) { Text("Weekdays") }
+                    TextButton(onClick = { days = EVERY_DAY.toSet() }) { Text("Every day") }
+                }
+                FieldError(errors["days"])
+                TimeField("From", start, errors["start"]) { start = it }
+                TimeField("To", end, errors["end"]) { end = it }
+                val from = start
+                val to = end
+                if (from != null && to != null && to < from) {
+                    Text(
+                        "It ends the next morning.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (choices.isNotEmpty()) {
+                    FieldLabel("Still open (calls and messages always are)")
+                    choices.forEach { app ->
+                        val on = app.app in allowed
+                        val canTick = on || allowed.size < MAX_ALLOWED
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = canTick) { allowed = if (on) allowed - app.app else allowed + app.app },
+                        ) {
+                            Checkbox(checked = on, onCheckedChange = null, enabled = canTick)
+                            AppIconBox(app.app, app.label, app.icon, icons, loadIcon)
+                            Text(
+                                app.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !saving,
+                onClick = {
+                    val from = start
+                    val to = end
+                    val found = buildMap {
+                        if (name.isBlank()) put("name", "Give it a name.")
+                        if (days.isEmpty()) put("days", "Pick at least one day.")
+                        if (from == null) put("start", "Choose a start time.")
+                        if (to == null) put("end", "Choose an end time.") else if (from == to) put("end", "The end has to be a different time from the start.")
+                    }
+                    errors = found
+                    if (found.isEmpty() && from != null && to != null) {
+                        val minutes = { t: LocalTime -> t.hour * 60 + t.minute }
+                        onSave(SchedulePreset(name.trim(), days.sorted(), minutes(from), minutes(to)), allowed)
+                    }
+                },
+            ) { Text(if (saving) "Saving..." else "Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") } },
+    )
 }

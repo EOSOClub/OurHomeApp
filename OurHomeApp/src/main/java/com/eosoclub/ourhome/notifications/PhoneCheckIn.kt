@@ -46,9 +46,10 @@ import java.util.UUID
  * at once when the server asks (a "ping" push, after it lost the phone's
  * connection), and when the battery runs low or nearly flat ([StreamConnection]).
  *
- * While looked after, it also sends the apps it never blocks, and the answer
- * brings the apps their supervisors blocked ([AppBlocker]); a block or unblock
- * wakes the phone to check in at once.
+ * While looked after, it also sends the apps it never blocks and the daily
+ * limits it used up today, and the answer brings the apps their supervisors
+ * blocked ([AppBlocker]), their daily limits and their schedules ([AppLimiter]);
+ * a change to any of them wakes the phone to check in at once.
  */
 object PhoneCheckIn {
     private const val TAG = "PhoneCheckIn"
@@ -101,14 +102,17 @@ object PhoneCheckIn {
             status = if (lookedAfter) readStatus(context) else null,
             shuttingDown = shuttingDown,
             alwaysAllowed = if (lookedAfter) AppBlocker.alwaysAllowed(context) else null,
+            limitsReached = if (lookedAfter) AppLimiter.reachedToday(context) else null,
         )
         due.forEach { CloseGuard.markEmergencyStageSent(context, it.wire) }
         // Switching off: the next check-in (after it's back) sets this again.
         if (shuttingDown) return
         // An adult looks after this member: Stay connected is kept on.
         StayConnected.setRequired(context, result.stayConnectedRequired)
-        // And the apps they blocked (nothing is blocked once nobody looks after them).
+        // And the apps they blocked, their limits and schedules (none once nobody looks after them).
         AppBlocker.save(context, if (result.stayConnectedRequired) result.blockedApps else emptyList())
+        AppLimiter.save(context, if (result.stayConnectedRequired) result.appLimits else emptyList())
+        AppLimiter.saveSchedules(context, if (result.stayConnectedRequired) result.schedules else emptyList())
     }
 
     /** Schedules the parent notifications for the chosen [duration] (1h, 5h, or 10h). */

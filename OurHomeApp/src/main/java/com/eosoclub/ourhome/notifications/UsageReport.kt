@@ -45,7 +45,7 @@ import java.util.concurrent.TimeUnit
  * App usage (parental controls; web appUsageService). Only while an adult who
  * looks after this member has turned sharing it on, and only with Android's
  * Usage access allowed: measures how long each app was on screen today and
- * yesterday, and sends it. Nothing is blocked.
+ * yesterday, and sends it. Daily limits ([AppLimiter]) count the same way.
  *
  * When: the hourly check ([RequestReminders.Worker]) asks whether usage is
  * shared and, while it is, keeps a 15-minute job of its own going (the
@@ -242,6 +242,20 @@ object UsageReport {
         val zone = ZoneId.systemDefault()
         val start = day.atStartOfDay(zone).toInstant().toEpochMilli()
         val end = minOf(day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli(), System.currentTimeMillis())
+        val pm = context.packageManager
+        return usageDay(day.toString(), screenMillis(context, start, end)) { app ->
+            runCatching { pm.getApplicationLabel(pm.getApplicationInfo(app, 0)).toString() }.getOrDefault(app)
+        }
+    }
+
+    /** Today's time on screen so far, per app, as [measure] counts it: for daily limits ([AppLimiter]). */
+    fun todayMillis(context: Context): Map<String, Long> {
+        val start = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        return screenMillis(context, start, System.currentTimeMillis())
+    }
+
+    /** How long each app someone can open was on screen between [start] and [end]; the home screen left out. */
+    private fun screenMillis(context: Context, start: Long, end: Long): Map<String, Long> {
         val stats = context.getSystemService(UsageStatsManager::class.java)
         val pm = context.packageManager
         val launcher = pm.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)
@@ -263,9 +277,6 @@ object UsageReport {
             }
         }
         // Only apps someone can open (not system parts that show a screen now and then).
-        val millis = foregroundMillis(events, start, end).filterKeys { pm.getLaunchIntentForPackage(it) != null }
-        return usageDay(day.toString(), millis) { app ->
-            runCatching { pm.getApplicationLabel(pm.getApplicationInfo(app, 0)).toString() }.getOrDefault(app)
-        }
+        return foregroundMillis(events, start, end).filterKeys { pm.getLaunchIntentForPackage(it) != null }
     }
 }

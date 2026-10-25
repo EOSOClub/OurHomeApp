@@ -32,12 +32,15 @@ data class TestPushResult(
  * POST /api/phone/checkin's answer. [stayConnectedRequired]: an adult looks
  * after this member, so the phone must Stay connected (false from an older
  * server, which doesn't say). [blockedApps]: the apps their supervisors
- * blocked (none from an older server).
+ * blocked; [appLimits]: their daily limits; [schedules]: their schedules
+ * (none from an older server).
  */
 @Serializable
 data class CheckInResult(
     val stayConnectedRequired: Boolean = false,
     val blockedApps: List<BlockedAppRule> = emptyList(),
+    val appLimits: List<AppLimitRule> = emptyList(),
+    val schedules: List<AppScheduleRule> = emptyList(),
 )
 
 /**
