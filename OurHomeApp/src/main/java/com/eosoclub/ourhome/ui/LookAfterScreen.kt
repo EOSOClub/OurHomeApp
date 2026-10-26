@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
@@ -44,6 +43,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -101,7 +101,9 @@ import java.time.LocalTime
 
 // "People you look after" (web: /look-after): the children and teens this
 // adult supervises (the Head's supervision list). A summary card each; a card
-// opens that person's page, where this adult can ring their phone, make their
+// opens that person's page: their phone with Ring, then a folded card per
+// subject, each saying in its title row how it stands and explaining itself
+// inside. There this adult can make their
 // location sharing required, share their app usage, block apps from it, give
 // apps a daily limit, set schedules and let them buy time with points,
 // choose which protections their phone must have on (PhoneRule). Only offered in the menu
@@ -484,19 +486,18 @@ internal fun LookAfterScreen(
             }
             return@Box
         }
-        LazyColumn(contentPadding = PaddingValues(vertical = 8.dp), modifier = Modifier.fillMaxSize()) {
-            item {
-                TextButton(onClick = { selectedId = null }, modifier = Modifier.padding(start = 4.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null)
-                    Text("People you look after")
-                }
-                Text(
-                    selected.name,
-                    style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+            TextButton(onClick = { selectedId = null }, modifier = Modifier.padding(start = 4.dp)) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null)
+                Text("People you look after")
             }
-            item(key = selected.id) {
+            Text(
+                selected.name,
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            // Keyed, so opening someone else's page starts with their cards folded.
+            key(selected.id) {
                 val person = selected
                 val saving = state.savingRequired?.takeIf { it.first == person.id }
                 val savingUsage = state.savingUsage?.takeIf { it.first == person.id }
@@ -531,44 +532,30 @@ internal fun LookAfterScreen(
                     onPointsRule = { rate, cap -> vm.setPointsForTime(person, rate, cap, showMessage) },
                     onGive = { vm.giveExtraTime(person, it, showMessage) },
                 )
-                HorizontalDivider(Modifier.padding(horizontal = 16.dp))
-            }
-            item {
-                LookAfterNote(
-                    "Ring rings their phone loudly for up to 30 seconds, even on silent. You see when it starts " +
-                        "ringing, and whether someone tapped Stop. Location required keeps " +
-                        "their location sharing on, and lets you check where they are on the Map without them allowing it. " +
-                        "They always see when you check. Share app usage shows how long they spend in each app; " +
-                        "their phone needs Usage access for it. Their phone sends it every 15 minutes, and opening " +
-                        "this page asks it for the latest numbers. They see the same numbers on their Profile. While " +
-                        "it's shared, you're also told when a new app turns up on their phone. Block next to an app " +
-                        "stops it opening on their phone: they see a screen saying you blocked it. Blocking needs " +
-                        "Keep Our Home running on their phone. Phone calls, messages and OurHome always stay open. " +
-                        "Daily limits give all their apps together, or one app, so much time a day. Their phone " +
-                        "warns them 5 minutes before, then closes the app until midnight, and you're told. Limits " +
-                        "need Usage access and Keep Our Home running on their phone. " +
-                        "Schedules close all their apps at set times, like bedtime or school, apart from calls, " +
-                        "messages and any apps you leave open. Their phone warns them 5 minutes before. Schedules " +
-                        "need Keep Our Home running on their phone. " +
-                        "Points for screen time lets them spend task points on more time on today's limits, at the " +
-                        "rate you set and up to a daily most; you're told each time. Their earned points in the " +
-                        "stats don't change. Give extra time adds minutes to today's limits without points. " +
-                        "Require Keep Our Home running stops OurHome " +
-                        "being closed on their phone, Require Prevent uninstall stops it being removed without " +
-                        "your PIN, and Require Unrestricted battery stops battery saving from holding back rings " +
-                        "and alerts. Each one you require is a step in Set up this phone on their phone, and " +
-                        "you're told if it gets turned off. Not requiring one only stops the step and the alert: " +
-                        "whatever is already on stays on." +
-                        if (lookAfter.canRing) {
-                            ""
-                        } else {
-                            " Ringing needs instant phone alerts: Firebase on this server, or Stay connected turned on " +
-                                "in the app on their phone."
-                        },
-                )
             }
         }
     }
+}
+
+/** A card's explanation, under the switch or list it's about. */
+@Composable
+private fun Help(text: String, modifier: Modifier = Modifier) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
+}
+
+/** A switch with its label before it. */
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Switch(checked = checked, enabled = enabled, onCheckedChange = onChange)
+    }
+}
+
+/** A red line about something that stops a card's settings working on their phone. */
+@Composable
+private fun Warning(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
 }
 
 /** [padded]: its own side margins (off inside the cards' grid, which has them). */
@@ -662,9 +649,13 @@ private fun CardLine(text: String, error: Boolean = false) {
 }
 
 /**
- * One child or teen: their phone, Ring, the Location required and Share app
- * usage switches, a switch per protection their phone must have on, and how
- * far their phone got with Set up this phone.
+ * Everything about one child or teen, as Profile is laid out (two stacks when
+ * there's room, one list in the same order upright): their phone with Ring,
+ * then a folded card each for Location, App usage (with what's blocked), Daily
+ * limits, Schedules, Points for screen time and Phone protections (a switch
+ * per protection their phone must have on, and how far Set up this phone has
+ * got). Each title row says how it stands; a card opens by itself while
+ * something in it isn't working.
  */
 @Composable
 private fun LookedAfterRow(
@@ -710,108 +701,203 @@ private fun LookedAfterRow(
             onClick = { blocked -> onBlock(app.app, app.label, blocked) },
         )
     }
-    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                // Their name is the page's heading.
-                person.sharingNote?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Box(Modifier.padding(16.dp)) {
+        TwoStacks(
+            first = {
+                PhoneCard(person, canRing, onRing)
+                CollapsibleCard("Location", if (person.required) "Location required" else person.sharingNote.orEmpty()) {
+                    Column {
+                        SwitchRow("Location required", required, enabled = !saving, onChange = onRequired)
+                        Help(
+                            "Keeps their location sharing on, and lets you check where they are on the Map without " +
+                                "them allowing it. They always see when you check.",
+                        )
+                    }
                 }
-                val phone = person.phone
-                val (status, problem) = phoneStatus(person)
-                Text(
-                    status,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                // Opens by itself while their blocked apps open anyway.
+                val blockedOpen = blocking.works == false && blocking.apps.isNotEmpty()
+                CollapsibleCard("App usage", usageSummary(person), startOpen = blockedOpen, openWhen = blockedOpen) {
+                    Column {
+                        SwitchRow("Share app usage", sharesUsage, enabled = !savingUsage, onChange = onUsage)
+                        Help(
+                            "Shows you how long they spend in each app; their phone needs Usage access for it. Their " +
+                                "phone sends it every 15 minutes, and opening this page asks it for the latest " +
+                                "numbers. They see the same numbers on their Profile. While it's shared, you're also " +
+                                "told when a new app turns up on their phone.",
+                        )
+                    }
+                    if (person.appUsage.shared) {
+                        Column {
+                            val latest = person.appUsage.latest
+                            Text(
+                                latest?.let { "${it.header(java.time.LocalDate.now().toString())} · updated ${relativeTime(it.updatedAt)}" }
+                                    ?: "No app usage from their phone yet. It needs the latest OurHome app, and Usage access allowed.",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = if (latest != null) FontWeight.Medium else null,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            when {
+                                latest == null -> Unit
+                                !usageOpen -> latest.top.forEach { app -> UsageAppRow(app, icons, loadIcon, blockAction) }
+                                usageHistory != null -> UsageHistoryView(usageHistory, icons, loadIcon, blockAction)
+                                usageHistoryFailed -> Warning("Couldn't load their app usage.")
+                                else -> Help("Loading...")
+                            }
+                            if (latest != null) {
+                                TextButton(onClick = onToggleUsage, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                                    Text(if (usageOpen) "Show less" else "All apps and the last 7 days")
+                                }
+                            }
+                            Help(
+                                "Block next to an app stops it opening on their phone: they see a screen saying you " +
+                                    "blocked it. Blocking needs Keep Our Home running on their phone. Phone calls, " +
+                                    "messages and OurHome always stay open.",
+                            )
+                        }
+                    }
+                    BlockedApps(blocking, icons, loadIcon, savingBlock, onUnblock = { app, label -> onBlock(app, label, false) })
+                }
+            },
+            second = {
+                // While their usage is shared, or while a limit is left from before.
+                if (person.appUsage.shared || !person.limits.isEmpty) {
+                    // Any app from their usage without a limit of its own yet.
+                    val choices = person.usageApps.filter { a -> person.limits.apps.none { it.app == a.app } }
+                    DailyLimits(person.limits, choices, blocking.works, icons, loadIcon, savingLimit, onLimit)
+                }
+                Schedules(person.schedules, person.usageApps, blocking.works, icons, loadIcon, savingSchedule, onSaveSchedule, onRemoveSchedule)
+                PointsForTime(
+                    person.pointsTime,
+                    hasLimits = !person.limits.isEmpty,
+                    saving = savingPoints,
+                    onRule = onPointsRule,
+                    onGive = onGive,
                 )
-                // How instant alerts reach it; nothing for an app too old to say.
-                val alerts = when {
-                    phone == null -> null
-                    phone.stayConnected && phone.connected -> "Stay connected: connected now"
-                    phone.stayConnected -> "Stay connected is on, but it isn't connected right now"
-                    phone.lastPushAt != null -> "Last instant alert reached it ${relativeTime(phone.lastPushAt)}"
-                    else -> null
-                }
-                alerts?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                // My last ring of their phone and what it said back.
-                person.ring?.let { ring ->
-                    Text(
-                        "You rang ${relativeTime(ring.sentAt)}: ${ring.outcome}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (ring.phase == "no_answer") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            if (canRing) TextButton(onClick = onRing) { Text("Ring") }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Location required", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            Switch(checked = required, enabled = !saving, onCheckedChange = onRequired)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Share app usage", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            Switch(checked = sharesUsage, enabled = !savingUsage, onCheckedChange = onUsage)
-        }
-        if (person.appUsage.shared) {
-            val latest = person.appUsage.latest
-            Text(
-                latest?.let { "${it.header(java.time.LocalDate.now().toString())} · updated ${relativeTime(it.updatedAt)}" }
-                    ?: "No app usage from their phone yet. It needs the latest OurHome app, and Usage access allowed.",
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = if (latest != null) FontWeight.Medium else null,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            when {
-                latest == null -> Unit
-                !usageOpen -> latest.top.forEach { app -> UsageAppRow(app, icons, loadIcon, blockAction) }
-                usageHistory != null -> UsageHistoryView(usageHistory, icons, loadIcon, blockAction)
-                usageHistoryFailed -> Text(
-                    "Couldn't load their app usage.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                else -> Text("Loading...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (latest != null) {
-                TextButton(onClick = onToggleUsage) {
-                    Text(if (usageOpen) "Show less" else "All apps and the last 7 days")
-                }
-            }
-        }
-        BlockedApps(blocking, icons, loadIcon, savingBlock, onUnblock = { app, label -> onBlock(app, label, false) })
-        // While their usage is shared, or while a limit is left from before.
-        if (person.appUsage.shared || !person.limits.isEmpty) {
-            // Any app from their usage without a limit of its own yet.
-            val choices = person.usageApps.filter { a -> person.limits.apps.none { it.app == a.app } }
-            DailyLimits(person.limits, choices, blocking.works, icons, loadIcon, savingLimit, onLimit)
-        }
-        Schedules(person.schedules, person.usageApps, blocking.works, icons, loadIcon, savingSchedule, onSaveSchedule, onRemoveSchedule)
-        PointsForTime(
-            person.pointsTime,
-            hasLimits = !person.limits.isEmpty,
-            saving = savingPoints,
-            onRule = onPointsRule,
-            onGive = onGive,
+                PhoneProtections(person, savingRule, onRule)
+            },
         )
-        // Only from servers that send the rules.
-        person.rules?.let { rules ->
+    }
+}
+
+/** The App usage card's title line: their latest day, and what's blocked. */
+private fun usageSummary(person: LookedAfter): String {
+    val latest = person.appUsage.latest
+    val usage = when {
+        !person.appUsage.shared -> "Not shared"
+        latest != null -> "${latest.header(java.time.LocalDate.now().toString())} in apps"
+        else -> "No app usage from their phone yet"
+    }
+    return blockedSummary(person.blocking.apps)?.let { "$usage · $it" } ?: usage
+}
+
+/**
+ * Their phone, open at the top of their page: what's wrong with it or when it
+ * last checked in, how instant alerts reach it, my last ring, and Ring. A red
+ * edge while their phone has a problem, as on their summary card.
+ */
+@Composable
+private fun PhoneCard(person: LookedAfter, canRing: Boolean, onRing: () -> Unit) {
+    val phone = person.phone
+    val (status, problem) = phoneStatus(person)
+    Card(
+        border = if (problem) BorderStroke(1.dp, MaterialTheme.colorScheme.error) else null,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
+                    Text("Their phone", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        status,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // How instant alerts reach it; nothing for an app too old to say.
+                    val alerts = when {
+                        phone == null -> null
+                        phone.stayConnected && phone.connected -> "Stay connected: connected now"
+                        phone.stayConnected -> "Stay connected is on, but it isn't connected right now"
+                        phone.lastPushAt != null -> "Last instant alert reached it ${relativeTime(phone.lastPushAt)}"
+                        else -> null
+                    }
+                    alerts?.let { Help(it) }
+                    // My last ring of their phone and what it said back.
+                    person.ring?.let { ring ->
+                        Text(
+                            "You rang ${relativeTime(ring.sentAt)}: ${ring.outcome}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (ring.phase == "no_answer") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (canRing) TextButton(onClick = onRing) { Text("Ring") }
+            }
+            Help(
+                if (canRing) {
+                    "Ring rings their phone loudly for up to 30 seconds, even on silent. You see when it starts " +
+                        "ringing, and whether someone tapped Stop."
+                } else {
+                    "Ringing needs instant phone alerts: Firebase on this server, or Stay connected turned on in the " +
+                        "app on their phone."
+                },
+            )
+        }
+    }
+}
+
+/** What each protection does, under its switch. */
+private val PhoneRule.help: String
+    get() = when (this) {
+        PhoneRule.KeepRunning -> "Stops OurHome being closed on their phone."
+        PhoneRule.PreventUninstall -> "Stops it being removed without your PIN."
+        PhoneRule.BatteryUnrestricted -> "Stops battery saving from holding back rings and alerts."
+    }
+
+/**
+ * The protections their phone must have on (one saves at a time), then how far
+ * their phone got with Set up this phone. Each only from servers that send it.
+ */
+@Composable
+private fun PhoneProtections(
+    person: LookedAfter,
+    savingRule: Pair<PhoneRule, Boolean>?,
+    onRule: (PhoneRule, Boolean) -> Unit,
+) {
+    val rules = person.rules
+    val setup = person.setupSummary()
+    if (rules == null && setup == null) return
+    val subtitle = listOfNotNull(
+        rules?.let { r ->
+            val count = PhoneRule.entries.count { it.of(r) }
+            if (count == 0) "None required" else "$count of ${PhoneRule.entries.size} required"
+        },
+        setup,
+    ).joinToString(" · ")
+    CollapsibleCard("Phone protections", subtitle) {
+        rules?.let {
             PhoneRule.entries.forEach { rule ->
                 val pending = savingRule?.takeIf { it.first == rule }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Require ${rule.label}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    Switch(
+                Column {
+                    SwitchRow(
+                        "Require ${rule.label}",
                         checked = pending?.second ?: rule.of(rules),
                         // One rule saves at a time per person.
                         enabled = savingRule == null,
-                        onCheckedChange = { onRule(rule, it) },
+                        onChange = { onRule(rule, it) },
                     )
+                    Help(rule.help)
                 }
             }
+            Help(
+                "Each one you require is a step in Set up this phone on their phone, and you're told if it gets " +
+                    "turned off. Not requiring one only stops the step and the alert: whatever is already on stays on.",
+            )
         }
-        // How far their phone got with Set up this phone (only from servers that send it).
-        SetupProgress(person)
+        if (setup != null) {
+            HorizontalDivider()
+            Text("Set up this phone", style = MaterialTheme.typography.titleSmall)
+            SetupSteps(person)
+        }
     }
 }
 
@@ -850,14 +936,10 @@ private fun BlockedApps(
     onUnblock: (app: String, label: String) -> Unit,
 ) {
     if (blocking.apps.isEmpty()) return
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+    Column(Modifier.fillMaxWidth()) {
         Text("Blocked apps", style = MaterialTheme.typography.titleSmall)
         if (blocking.works == false) {
-            Text(
-                "Keep Our Home running is off on their phone, so these apps open anyway until it's back on.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
+            Warning("Keep Our Home running is off on their phone, so these apps open anyway until it's back on.")
         }
         blocking.apps.forEach { app ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -899,57 +981,58 @@ private fun DailyLimits(
     onLimit: (app: String, label: String, minutes: Int?) -> Unit,
 ) {
     val minutesOf = { app: String, stored: Int? -> saving?.takeIf { it.first == app }?.let { it.second } ?: stored }
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        Text("Daily limits", style = MaterialTheme.typography.titleSmall)
+    // Opens by itself while something stops their limits working.
+    val warn = !limits.isEmpty && (limits.counts == false || blocksWork == false)
+    CollapsibleCard("Daily limits", limitsSummary(limits) ?: "No limits yet", startOpen = warn, openWhen = warn) {
+        Help(
+            "Give all their apps together, or one app, so much time a day. Their phone warns them 5 minutes " +
+                "before, then closes the app until midnight, and you're told. Limits need Usage access and Keep " +
+                "Our Home running on their phone.",
+        )
         if (limits.counts == false) {
-            Text(
-                "Usage access is off on their phone, so it can't count their time until it's back on.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
+            Warning("Usage access is off on their phone, so it can't count their time until it's back on.")
         }
         if (blocksWork == false && !limits.isEmpty) {
-            Text(
-                "Keep Our Home running is off on their phone, so nothing closes when time runs out until it's back on.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
+            Warning("Keep Our Home running is off on their phone, so nothing closes when time runs out until it's back on.")
         }
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.weight(1f)) {
-                Text(ALL_APPS_LABEL, style = MaterialTheme.typography.bodySmall)
-                Text(
-                    limits.total?.let { "Set by ${it.byName} ${relativeTime(it.at)}" } ?: "Together, apart from calls and messages",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        // The rows close together, as a list.
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text(ALL_APPS_LABEL, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        limits.total?.let { "Set by ${it.byName} ${relativeTime(it.at)}" } ?: "Together, apart from calls and messages",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                LimitMenu(
+                    minutes = if (saving?.first == ALL_APPS) saving.second else limits.total?.minutes,
+                    noneLabel = "No limit",
+                    enabled = saving == null,
+                    onPick = { onLimit(ALL_APPS, ALL_APPS_LABEL, it) },
                 )
             }
-            LimitMenu(
-                minutes = if (saving?.first == ALL_APPS) saving.second else limits.total?.minutes,
-                noneLabel = "No limit",
-                enabled = saving == null,
-                onPick = { onLimit(ALL_APPS, ALL_APPS_LABEL, it) },
-            )
-        }
-        limits.apps.forEach { limit ->
-            LimitRow(limit, minutesOf(limit.app, limit.minutes), saving == null, icons, loadIcon, onLimit)
-        }
-        if (choices.isNotEmpty()) {
-            var open by remember { mutableStateOf(false) }
-            Box {
-                TextButton(onClick = { open = true }, enabled = saving == null, contentPadding = PaddingValues(horizontal = 0.dp)) {
-                    Text("Add a limit for an app", style = MaterialTheme.typography.labelMedium)
-                }
-                DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                    choices.forEach { choice ->
-                        DropdownMenuItem(
-                            text = { Text(choice.label) },
-                            leadingIcon = { AppIconBox(choice.app, choice.label, choice.icon, icons, loadIcon) },
-                            onClick = {
-                                open = false
-                                onLimit(choice.app, choice.label, NEW_LIMIT_MINUTES)
-                            },
-                        )
+            limits.apps.forEach { limit ->
+                LimitRow(limit, minutesOf(limit.app, limit.minutes), saving == null, icons, loadIcon, onLimit)
+            }
+            if (choices.isNotEmpty()) {
+                var open by remember { mutableStateOf(false) }
+                Box {
+                    TextButton(onClick = { open = true }, enabled = saving == null, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                        Text("Add a limit for an app", style = MaterialTheme.typography.labelMedium)
+                    }
+                    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                        choices.forEach { choice ->
+                            DropdownMenuItem(
+                                text = { Text(choice.label) },
+                                leadingIcon = { AppIconBox(choice.app, choice.label, choice.icon, icons, loadIcon) },
+                                onClick = {
+                                    open = false
+                                    onLimit(choice.app, choice.label, NEW_LIMIT_MINUTES)
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -1017,24 +1100,19 @@ private fun Schedules(
     val is24 = DateFormat.is24HourFormat(LocalContext.current)
     var adding by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<ScheduleEntry?>(null) }
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        Text("Schedules", style = MaterialTheme.typography.titleSmall)
-        if (blocksWork == false && schedules.isNotEmpty()) {
-            Text(
-                "Keep Our Home running is off on their phone, so their apps stay open during these until it's back on.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        if (schedules.isEmpty()) {
-            Text(
-                "Times when their apps close, like bedtime or school. Calls and messages always work.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    // Opens by itself while their apps stay open during these.
+    val warn = blocksWork == false && schedules.isNotEmpty()
+    CollapsibleCard("Schedules", schedulesSummary(schedules) ?: "No schedules yet", startOpen = warn, openWhen = warn) {
+        Help(
+            "Close all their apps at set times, like bedtime or school, apart from calls, messages and any apps " +
+                "you leave open. Their phone warns them 5 minutes before. Schedules need Keep Our Home running on " +
+                "their phone.",
+        )
+        if (warn) {
+            Warning("Keep Our Home running is off on their phone, so their apps stay open during these until it's back on.")
         }
         schedules.forEach { schedule ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.weight(1f)) {
                     Text(schedule.name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                     Text(
@@ -1227,52 +1305,56 @@ private fun PointsForTime(
 ) {
     if (!points.available) return
     val rule = points.rule
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        Text("Points for screen time", style = MaterialTheme.typography.titleSmall)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Let them spend points on more time", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            Switch(
+    val subtitle = rule?.let { "1 point buys ${formatMinutes(it.minutesPerPoint)}, up to ${formatMinutes(it.dailyCap)} a day" } ?: "Off"
+    CollapsibleCard("Points for screen time", subtitle) {
+        Help(
+            "Lets them spend task points on more time on today's limits, at the rate you set and up to a daily " +
+                "most; you're told each time. Their earned points in the stats don't change.",
+        )
+        // The switch, its menus and the balance close together.
+        Column {
+            SwitchRow(
+                "Let them spend points on more time",
                 checked = rule != null,
                 enabled = !saving,
-                onCheckedChange = { on -> onRule(if (on) 5 else null, rule?.dailyCap ?: 30) },
+                onChange = { on -> onRule(if (on) 5 else null, rule?.dailyCap ?: 30) },
             )
-        }
-        if (rule != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("1 point buys", style = MaterialTheme.typography.bodySmall)
-                MinutesMenu(rule.minutesPerPoint, (RATE_CHOICES + rule.minutesPerPoint).distinct().sorted(), !saving) {
-                    onRule(it, rule.dailyCap)
-                }
-                Text("up to", style = MaterialTheme.typography.bodySmall)
-                MinutesMenu(rule.dailyCap, (CAP_CHOICES + rule.dailyCap).distinct().sorted(), !saving) {
-                    onRule(rule.minutesPerPoint, it)
-                }
-                Text("a day", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        Text(
-            "${formatPoints(points.balanceCenti.coerceAtLeast(0))} points to spend" +
-                (if (points.bought > 0) " · bought ${formatMinutes(points.bought)} today" else "") +
-                (if (points.given > 0) " · given ${formatMinutes(points.given)} today" else "") +
-                (rule?.let { " · set by ${it.byName} ${relativeTime(it.at)}" } ?: ""),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (hasLimits) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Give extra time today:", style = MaterialTheme.typography.bodySmall)
-                GIVE_STEPS.forEach { minutes ->
-                    TextButton(onClick = { onGive(minutes) }, enabled = !saving, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                        Text("+${formatMinutes(minutes)}", style = MaterialTheme.typography.labelMedium)
+            if (rule != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("1 point buys", style = MaterialTheme.typography.bodySmall)
+                    MinutesMenu(rule.minutesPerPoint, (RATE_CHOICES + rule.minutesPerPoint).distinct().sorted(), !saving) {
+                        onRule(it, rule.dailyCap)
                     }
+                    Text("up to", style = MaterialTheme.typography.bodySmall)
+                    MinutesMenu(rule.dailyCap, (CAP_CHOICES + rule.dailyCap).distinct().sorted(), !saving) {
+                        onRule(rule.minutesPerPoint, it)
+                    }
+                    Text("a day", style = MaterialTheme.typography.bodySmall)
                 }
             }
-        } else {
             Text(
-                "Extra time goes on top of their daily limits, and they have none yet.",
-                style = MaterialTheme.typography.bodySmall,
+                "${formatPoints(points.balanceCenti.coerceAtLeast(0))} points to spend" +
+                    (if (points.bought > 0) " · bought ${formatMinutes(points.bought)} today" else "") +
+                    (if (points.given > 0) " · given ${formatMinutes(points.given)} today" else "") +
+                    (rule?.let { " · set by ${it.byName} ${relativeTime(it.at)}" } ?: ""),
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        if (hasLimits) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Give extra time today:", style = MaterialTheme.typography.bodySmall)
+                    GIVE_STEPS.forEach { minutes ->
+                        TextButton(onClick = { onGive(minutes) }, enabled = !saving, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Text("+${formatMinutes(minutes)}", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+                Help("Adds minutes to today's limits without points.")
+            }
+        } else {
+            Help("Extra time goes on top of their daily limits, and they have none yet.")
         }
     }
 }
