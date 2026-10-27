@@ -37,6 +37,7 @@ import com.eosoclub.ourhome.data.SessionManager
 import com.eosoclub.ourhome.notifications.BatteryAccess
 import com.eosoclub.ourhome.notifications.CloseGuard
 import com.eosoclub.ourhome.notifications.Push
+import com.eosoclub.ourhome.notifications.parentPinField
 import com.eosoclub.ourhome.notifications.StayConnected
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -391,7 +392,7 @@ internal fun SetParentPinDialog(
                         supportingText = currentError?.let { msg -> { Text(msg) } },
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.parentPinField().fillMaxWidth(),
                     )
                 }
                 OutlinedTextField(
@@ -401,7 +402,7 @@ internal fun SetParentPinDialog(
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.parentPinField().fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = confirm,
@@ -410,7 +411,7 @@ internal fun SetParentPinDialog(
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.parentPinField().fillMaxWidth(),
                 )
                 DropdownField(
                     label = "Forgot-PIN unlock timer",
@@ -482,7 +483,7 @@ internal fun SignOutDialog(who: String, onDismiss: () -> Unit, onSignOut: () -> 
                         supportingText = error?.let { msg -> { Text(msg) } },
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.parentPinField().fillMaxWidth(),
                     )
                 }
             }
@@ -572,7 +573,7 @@ internal fun UnlockOurHomeDialog(
                             ?.let { msg -> { Text(msg) } },
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.parentPinField().fillMaxWidth(),
                     )
                 }
 

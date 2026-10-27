@@ -37,9 +37,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.ContentDataType
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDataType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -159,6 +162,14 @@ class ParentPinActivity : ComponentActivity() {
     }
 }
 
+/**
+ * A parent PIN field, hidden from password managers: it's not a password to
+ * save (saved on a child's phone, the child could read it), and their save
+ * prompt over a protected screen counted as leaving it. Set on the field's
+ * own modifier, it wins over the text field's own autofill type.
+ */
+internal fun Modifier.parentPinField(): Modifier = semantics { contentDataType = ContentDataType.None }
+
 /** The PIN, its wrong-PIN wait, Open and Cancel. [onOpen]: false for a wrong PIN. */
 @Composable
 private fun PinForm(screen: CloseGuard.Screen, onOpen: (String) -> Boolean, onCancel: () -> Unit) {
@@ -215,7 +226,7 @@ private fun PinForm(screen: CloseGuard.Screen, onOpen: (String) -> Boolean, onCa
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { tryOpen() }),
-            modifier = Modifier.fillMaxWidth().focusRequester(focus),
+            modifier = Modifier.parentPinField().fillMaxWidth().focusRequester(focus),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(onClick = onCancel) { Text("Cancel") }

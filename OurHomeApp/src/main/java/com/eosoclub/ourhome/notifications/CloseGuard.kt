@@ -16,6 +16,7 @@ import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.autofill.AutofillManager
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -85,6 +86,7 @@ object CloseGuard {
     private const val KEY_PASS_UNTIL_MS = "pass_until_ms"
     private const val KEY_PIN_EVENTS = "pin_events"
     private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
+    private const val SYSTEM_PACKAGE = "android"
     private val json = Json { ignoreUnknownKeys = true }
     private val pinEventsSerializer = ListSerializer(PinEvent.serializer())
 
@@ -389,22 +391,28 @@ object CloseGuard {
      * window of another app came up ([windowPackage], the one that changed,
      * not the active window, which still says the old app for a moment while
      * the home screen opens). Never for Our Home itself (its PIN screen), the
-     * notification shade, or the keyboard ([keyboardPackage]), which opens
-     * over Settings to type in the Private DNS box.
+     * notification shade, Android's own dialogs, or [overPackages]: the
+     * keyboard, which opens over Settings to type in the Private DNS box, and
+     * the password manager, whose save prompt opens over it (it ended the pass,
+     * so the PIN screen came back after each prompt).
      */
     internal fun shouldEndPass(
         passPackage: String,
         windowPackage: String?,
         ownPackage: String,
-        keyboardPackage: String? = null,
+        overPackages: Set<String> = emptySet(),
     ): Boolean =
         windowPackage != null && windowPackage != passPackage && windowPackage != ownPackage &&
-            windowPackage != SYSTEM_UI_PACKAGE && windowPackage != keyboardPackage
+            windowPackage != SYSTEM_UI_PACKAGE && windowPackage != SYSTEM_PACKAGE && windowPackage !in overPackages
 
-    /** The keyboard app in use (Android's default input method), or null. */
-    internal fun keyboardPackage(context: Context): String? =
+    /** The apps that open over others: the keyboard in use and the password manager (autofill service). */
+    internal fun overPackages(context: Context): Set<String> = setOfNotNull(
         Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-            ?.substringBefore('/')?.takeIf { it.isNotEmpty() }
+            ?.substringBefore('/')?.takeIf { it.isNotEmpty() },
+        runCatching {
+            context.getSystemService(AutofillManager::class.java)?.autofillServiceComponentName?.packageName
+        }.getOrNull(),
+    )
 
     // --- What the parent PIN did, for the supervising adults ------------------
 
@@ -824,7 +832,7 @@ class CloseGuardService : AccessibilityService() {
             // Left the screen the parent PIN opened: it's protected again.
             CloseGuard.passPackage(this)?.let { passed ->
                 val window = event.packageName?.toString()
-                if (CloseGuard.shouldEndPass(passed, window, packageName, CloseGuard.keyboardPackage(this))) {
+                if (CloseGuard.shouldEndPass(passed, window, packageName, CloseGuard.overPackages(this))) {
                     CloseGuard.endPass(this)
                 }
             }

@@ -231,6 +231,8 @@ class CloseGuardTest {
         assertFalse(CloseGuard.shouldEndPass(settings, own, own))
         assertFalse(CloseGuard.shouldEndPass(settings, "com.android.systemui", own))
         assertFalse(CloseGuard.shouldEndPass(settings, null, own))
+        // Android's own dialogs over it (the autofill save prompt draws as "android").
+        assertFalse(CloseGuard.shouldEndPass(settings, "android", own))
         // The home screen or any other app.
         assertTrue(CloseGuard.shouldEndPass(settings, "com.google.android.apps.nexuslauncher", own))
         assertTrue(CloseGuard.shouldEndPass(settings, "com.android.chrome", own))
@@ -238,8 +240,11 @@ class CloseGuardTest {
         assertTrue(CloseGuard.shouldEndPass("com.miui.securitycenter", settings, own))
         // The keyboard opening over Settings, to type in the Private DNS box, isn't leaving.
         val keyboard = "com.google.android.inputmethod.latin"
-        assertFalse(CloseGuard.shouldEndPass(settings, keyboard, own, keyboard))
-        assertTrue(CloseGuard.shouldEndPass(settings, keyboard, own, null))
+        assertFalse(CloseGuard.shouldEndPass(settings, keyboard, own, setOf(keyboard)))
+        assertTrue(CloseGuard.shouldEndPass(settings, keyboard, own))
+        // Nor the password manager's prompt over it: dismissing it went back to the PIN screen.
+        val passwords = "com.x8bit.bitwarden"
+        assertFalse(CloseGuard.shouldEndPass(settings, passwords, own, setOf(keyboard, passwords)))
     }
 
     private class Node(val text: String?, val description: String? = null, val children: List<Node> = emptyList())
