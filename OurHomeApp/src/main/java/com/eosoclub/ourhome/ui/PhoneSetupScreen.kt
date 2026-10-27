@@ -2,6 +2,7 @@ package com.eosoclub.ourhome.ui
 
 import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
@@ -33,10 +34,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
@@ -56,7 +61,10 @@ import com.eosoclub.ourhome.notifications.CloseGuard
 import com.eosoclub.ourhome.notifications.PhoneCheckIn
 import com.eosoclub.ourhome.notifications.RequestReminders
 import com.eosoclub.ourhome.notifications.UsageReport
+import com.eosoclub.ourhome.notifications.WebFilter
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 // Set up this phone: on a supervised child's phone, one checklist of what the
 // adults who look after them asked for (web GET /api/phone/setup), in the
@@ -67,17 +75,19 @@ import kotlinx.coroutines.CancellationException
 
 /** Reads what this phone has on, for Set up this phone. */
 internal object PhoneSetupDevice {
-    fun checks(context: Context): PhoneSetupChecks = PhoneSetupChecks(
+    /** [webFilterHost]: the chosen web filter's hostname, which Private DNS must be (null: none chosen). */
+    fun checks(context: Context, webFilterHost: String? = WebFilter.expected(context)): PhoneSetupChecks = PhoneSetupChecks(
         notifications = NotificationManagerCompat.from(context).areNotificationsEnabled(),
         locationAlways = Geofences.hasFineLocation(context) && Geofences.hasBackgroundLocation(context),
         batteryUnrestricted = BatteryAccess.isUnrestricted(context),
         usageAccess = UsageReport.hasAccess(context),
         preventUninstall = CloseGuard.isAdminActive(context) && CloseGuard.hasPin(context),
         keepRunning = CloseGuard.isEnabled(context),
+        webFilter = webFilterHost != null && WebFilter.isOn(context, webFilterHost),
     )
 
     fun steps(context: Context, setup: PhoneSetup): List<SetupStepState> =
-        if (setup.supervised) setupSteps(setup.required, checks(context)) else emptyList()
+        if (setup.supervised) setupSteps(setup.required, checks(context, setup.webFilter?.hostname)) else emptyList()
 
     /**
      * Whether Android restricts settings for this install: installed from a
@@ -109,12 +119,17 @@ internal fun PhoneSetupScreen(
     var hasPin by remember { mutableStateOf(CloseGuard.hasPin(context)) }
     var showSetPinDialog by remember { mutableStateOf(false) }
     val restrictedInstall = remember { PhoneSetupDevice.restrictedInstall(context) }
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
 
     // Each Try again loads once more.
     var attempt by remember { mutableIntStateOf(0) }
     LaunchedEffect(attempt) {
         try {
-            setup = api.phoneSetup()
+            val loaded = api.phoneSetup()
+            setup = loaded
+            // The server's word on the filter may be newer than the last check-in's.
+            checks = PhoneSetupDevice.checks(context, loaded.webFilter?.hostname)
             error = null
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -125,7 +140,7 @@ internal fun PhoneSetupScreen(
     /** Re-reads the phone; anything that changed is told to the server at once. */
     fun recheck() {
         val before = checks
-        val now = PhoneSetupDevice.checks(context)
+        val now = PhoneSetupDevice.checks(context, setup?.webFilter?.hostname ?: WebFilter.expected(context))
         fine = Geofences.hasFineLocation(context)
         hasPin = CloseGuard.hasPin(context)
         checks = now
@@ -136,6 +151,14 @@ internal fun PhoneSetupScreen(
     }
     // Back from Android's settings, a permission prompt or the Device admin page.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { recheck() }
+    // Android takes a moment to switch Private DNS over, so the web filter step looks again until it's done.
+    val waitingForFilter = setup?.required?.webFilter == true && !checks.webFilter
+    LaunchedEffect(waitingForFilter) {
+        while (waitingForFilter) {
+            delay(2_000)
+            recheck()
+        }
+    }
 
     fun open(intent: Intent) {
         try {
@@ -259,6 +282,33 @@ internal fun PhoneSetupScreen(
                         if (!state.done) {
                             Button(onClick = { open(UsageReport.settingsIntent()) }) { Text("Open Usage access") }
                             RestrictedHint(state.step, restrictedInstall, onAppInfo = { open(CloseGuard.appInfo(context)) })
+                        }
+                    }
+                    SetupStep.WebFilter -> {
+                        val filter = current.webFilter
+                        StepText(
+                            "So websites are filtered on this phone" + (filter?.let { " (${it.label})" } ?: "") + ". " +
+                                "Copy the name below, then tap Open settings and find Private DNS (on some phones " +
+                                "it's under Connections, then More connection settings). Choose Private DNS " +
+                                "provider hostname, paste the name and tap Save.",
+                        )
+                        if (!state.done && filter != null) {
+                            Text(
+                                filter.hostname,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = {
+                                        scope.launch {
+                                            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Private DNS", filter.hostname)))
+                                            showMessage("Copied. Paste it into Private DNS.")
+                                        }
+                                    },
+                                ) { Text("Copy name") }
+                                OutlinedButton(onClick = { open(WebFilter.settingsIntent()) }) { Text("Open settings") }
+                            }
                         }
                     }
                     SetupStep.PreventUninstall -> {

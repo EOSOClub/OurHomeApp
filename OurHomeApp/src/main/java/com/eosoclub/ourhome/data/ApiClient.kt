@@ -1146,6 +1146,7 @@ class ApiClient(
         locationAlways: Boolean,
         notifications: Boolean,
         usageAccess: Boolean,
+        privateDns: String? = null,
         lastPushAtMs: Long?,
         lastPushVia: String?,
         batteryUnrestricted: Boolean,
@@ -1170,6 +1171,8 @@ class ApiClient(
                     put("locationAlways", locationAlways)
                     put("notifications", notifications)
                     put("usageAccess", usageAccess)
+                    // What Private DNS is set to, for the web filter; left out when it can't tell.
+                    privateDns?.let { put("privateDns", it) }
                     // Left out until the first instant alert arrives (the server wants both or neither).
                     if (lastPushAtMs != null && lastPushVia != null) {
                         put("lastPushAtMs", lastPushAtMs)
@@ -1374,6 +1377,19 @@ class ApiClient(
                     put("supervisedId", supervisedId)
                     put("rule", rule.key)
                     put("required", required)
+                },
+            ),
+            LookAfter.serializer(),
+        )
+
+    /** Chooses the web filter ([WebFilterChoice]) on a supervised child's phone, or turns it off (null). */
+    suspend fun setWebFilter(supervisedId: String, filter: WebFilterChoice?): LookAfter =
+        call(
+            post(
+                "/api/supervision/web-filter",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    put("filter", filter?.key ?: "off")
                 },
             ),
             LookAfter.serializer(),

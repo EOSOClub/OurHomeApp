@@ -34,7 +34,8 @@ data class TestPushResult(
  * server, which doesn't say). [blockedApps]: the apps their supervisors
  * blocked; [appLimits]: their daily limits; [schedules]: their schedules;
  * [extraTime]: extra minutes on those limits, by day; [pointsForTime]: what a
- * point buys (null: they can't buy time). None from an older server.
+ * point buys (null: they can't buy time); [webFilter]: the chosen web filter's
+ * hostname (null: none). None from an older server.
  */
 @Serializable
 data class CheckInResult(
@@ -44,6 +45,7 @@ data class CheckInResult(
     val schedules: List<AppScheduleRule> = emptyList(),
     val extraTime: List<ExtraTimeDay> = emptyList(),
     val pointsForTime: PointsRule? = null,
+    val webFilter: String? = null,
 )
 
 /**

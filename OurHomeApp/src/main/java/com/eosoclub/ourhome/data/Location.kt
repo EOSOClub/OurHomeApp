@@ -215,6 +215,8 @@ data class LookedAfter(
     val appUsage: LookedAfterUsage = LookedAfterUsage(),
     /** The protections their phone must have on; null from older servers (no switches then). */
     val rules: PhoneRules? = null,
+    /** The web filter on their phone; null from older servers (no card then). */
+    val webFilter: LookedAfterWebFilter? = null,
     /** Apps blocked on their phone; none from older servers. */
     val blocking: LookedAfterBlocking = LookedAfterBlocking(),
     /** The apps in their stored usage, apart from the ones their phone always keeps open (for limits and schedules). */
@@ -276,7 +278,7 @@ data class LookedAfterRing(
 /**
  * [problems]: "quiet" | "app_removed" | "switched_off" | "battery_flat" |
  * "no_signal" (why it went quiet, at most one) | "notifications_off" |
- * "location_off" | "usage_off" | "battery_low"
+ * "location_off" | "usage_off" | "web_filter_off" | "battery_low"
  * | "battery_restricted" | "close_guard_off" | "uninstall_guard_off" |
  * "emergency_unlock_*" (web lib/phoneHealth.ts PHONE_PROBLEMS). [lastPushAt]:
  * when an instant alert last reached it (null: none yet, or an older app).
@@ -304,6 +306,7 @@ data class LookedAfterPhone(
                 "notifications_off" -> "Notifications turned off on their phone"
                 "location_off" -> "Location turned off on their phone"
                 "usage_off" -> "Usage access turned off on their phone"
+                "web_filter_off" -> "Web filter turned off on their phone"
                 "battery_low" -> "Their phone battery is low"
                 "battery_restricted" -> "Battery saving can delay OurHome on their phone"
                 "close_guard_off" -> "OurHome can be closed on their phone"
@@ -364,10 +367,16 @@ enum class PhoneRule(val key: String, val label: String) {
 /**
  * GET /api/phone/setup: what this member's phone must have on, for Set up
  * this phone. Nothing while nobody looks after them; older servers have no
- * such endpoint (the call fails, and the checklist stays away).
+ * such endpoint (the call fails, and the checklist stays away). [webFilter]:
+ * the web filter chosen for them, with the hostname Private DNS needs (null:
+ * none, or an older server).
  */
 @Serializable
-data class PhoneSetup(val supervised: Boolean = false, val required: PhoneSetupRequired = PhoneSetupRequired())
+data class PhoneSetup(
+    val supervised: Boolean = false,
+    val required: PhoneSetupRequired = PhoneSetupRequired(),
+    val webFilter: PhoneSetupWebFilter? = null,
+)
 
 @Serializable
 data class PhoneSetupRequired(
@@ -377,6 +386,7 @@ data class PhoneSetupRequired(
     val keepRunning: Boolean = false,
     val preventUninstall: Boolean = false,
     val batteryUnrestricted: Boolean = false,
+    val webFilter: Boolean = false,
 )
 
 /** "5 minutes", "1 hour", "2 hours". */

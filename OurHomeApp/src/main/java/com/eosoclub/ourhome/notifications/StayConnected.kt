@@ -129,12 +129,13 @@ object StayConnected {
         }
     }
 
-    /** Signed out: stop, release any Device admin lock, unblock every app, drop its limits and schedules, and forget "required" (the next account may be an adult). */
+    /** Signed out: stop, release any Device admin lock, unblock every app, drop its limits, schedules and web filter, and forget "required" (the next account may be an adult). */
     fun signedOut(context: Context) {
         prefs(context).edit { remove(KEY_REQUIRED) }
         CloseGuard.signedOut(context)
         AppBlocker.signedOut(context)
         AppLimiter.signedOut(context)
+        WebFilter.signedOut(context)
         WorkManager.getInstance(context).cancelUniqueWork(WATCHDOG_WORK)
         stop(context)
     }

@@ -23,7 +23,15 @@ class ChildSetupTest {
     @Test
     fun `the step keys are the web's (lib-phoneHealth PHONE_SETUP_STEPS), in its order`() {
         assertEquals(
-            listOf("notifications", "location", "batteryUnrestricted", "usageAccess", "preventUninstall", "keepRunning"),
+            listOf(
+                "notifications",
+                "location",
+                "batteryUnrestricted",
+                "usageAccess",
+                "webFilter",
+                "preventUninstall",
+                "keepRunning",
+            ),
             SetupStep.entries.map { it.key },
         )
         assertEquals("Allow unrestricted battery", setupStepTitle("batteryUnrestricted"))

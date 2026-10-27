@@ -7,6 +7,8 @@ package com.eosoclub.ourhome.data
  * - Keep Our Home running comes last: once it's on, App info, Device admin
  *   and Accessibility pages close on this phone, so nothing that needs them
  *   (Allow restricted settings is in App info) can be done after it.
+ * - The web filter before both guards. (The guard only closes Private DNS
+ *   once it's set to the filter, so a filter chosen later can still be set.)
  * [key]: the web's name for it (lib/phoneHealth.ts PHONE_SETUP_STEPS), as a
  * supervisor's setup progress names it.
  */
@@ -15,6 +17,7 @@ enum class SetupStep(val key: String, val title: String) {
     Location("location", "Allow location all the time"),
     Battery("batteryUnrestricted", "Allow unrestricted battery"),
     UsageAccess("usageAccess", "Allow usage access"),
+    WebFilter("webFilter", "Turn on the web filter"),
     PreventUninstall("preventUninstall", "Prevent uninstall"),
     KeepRunning("keepRunning", "Keep Our Home running"),
 }
@@ -29,6 +32,8 @@ data class PhoneSetupChecks(
     /** Device admin active with a parent PIN set. */
     val preventUninstall: Boolean,
     val keepRunning: Boolean,
+    /** Private DNS is set to the chosen web filter's hostname (false while none is chosen). */
+    val webFilter: Boolean = false,
 )
 
 data class SetupStepState(val step: SetupStep, val done: Boolean)
@@ -39,6 +44,7 @@ fun setupSteps(required: PhoneSetupRequired, checks: PhoneSetupChecks): List<Set
     if (required.location) add(SetupStepState(SetupStep.Location, checks.locationAlways))
     if (required.batteryUnrestricted) add(SetupStepState(SetupStep.Battery, checks.batteryUnrestricted))
     if (required.usageAccess) add(SetupStepState(SetupStep.UsageAccess, checks.usageAccess))
+    if (required.webFilter) add(SetupStepState(SetupStep.WebFilter, checks.webFilter))
     if (required.preventUninstall) add(SetupStepState(SetupStep.PreventUninstall, checks.preventUninstall))
     if (required.keepRunning) add(SetupStepState(SetupStep.KeepRunning, checks.keepRunning))
 }

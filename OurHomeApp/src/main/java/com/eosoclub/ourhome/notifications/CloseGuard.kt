@@ -44,6 +44,9 @@ import java.security.SecureRandom
  *      package-installer uninstall dialog for OurHome (without blocking app
  *      updates), and this service's own Accessibility pages, by going to the
  *      home screen.
+ *    - While this phone uses the web filter a supervising adult chose
+ *      ([WebFilter]), closes Android's Private DNS dialog the same way, so it
+ *      can't be changed here ([shouldClosePrivateDns]).
  *    - Covers an app a supervising adult blocked with the blocked screen
  *      ([AppBlocker]), and says which app opens for daily limits and schedules
  *      ([AppLimiter]), which cover it the same way once its time is used up or
@@ -502,6 +505,20 @@ object CloseGuard {
         return forceStopLabels.any(shows) || deactivateLabels.any(shows)
     }
 
+    /**
+     * Whether a screen is Android's Private DNS dialog, to be closed while
+     * this phone uses the web filter ([guarded]): a Settings screen showing
+     * the dialog's "Private DNS provider hostname" choice ([providerLabels]),
+     * which the Network & internet page it opens from doesn't show.
+     */
+    internal fun shouldClosePrivateDns(
+        windowPackage: String?,
+        guarded: Boolean,
+        providerLabels: Set<String>,
+        shows: (String) -> Boolean,
+    ): Boolean = guarded && windowPackage != null && windowPackage.contains("settings", ignoreCase = true) &&
+        providerLabels.any(shows)
+
     internal val DEFAULT_UNINSTALL_LABELS = setOf(
         "Do you want to uninstall this app?",
         "Uninstall",
@@ -533,6 +550,7 @@ class CloseGuardService : AccessibilityService() {
     private var forceStopLabels: Set<String> = emptySet()
     private var deactivateLabels: Set<String> = emptySet()
     private var activateLabels: Set<String> = emptySet()
+    private var privateDnsLabels: Set<String> = emptySet()
     private var lastCheckAt = 0L
     private var lastToastAt = 0L
     private var lastCoveredApp: String? = null
@@ -550,6 +568,7 @@ class CloseGuardService : AccessibilityService() {
         forceStopLabels = CloseGuard.forceStopLabels(this)
         deactivateLabels = CloseGuard.deactivateAdminLabels(this)
         activateLabels = CloseGuard.activateAdminLabels(this)
+        privateDnsLabels = WebFilter.providerLabels(this)
         CloseGuard.service = this
         val wake = IntentFilter(Intent.ACTION_SCREEN_ON).apply { addAction(Intent.ACTION_USER_PRESENT) }
         runCatching { ContextCompat.registerReceiver(this, screenOn, wake, ContextCompat.RECEIVER_NOT_EXPORTED) }
@@ -594,8 +613,16 @@ class CloseGuardService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && now - lastCheckAt < CHECK_EVERY_MS) return
         lastCheckAt = now
         val root = rootInActiveWindow ?: return
+        val windowPackage = root.packageName?.toString()
+        // Only on a Settings screen is it worth asking the network.
+        val dnsGuarded = windowPackage?.contains("settings", ignoreCase = true) == true && WebFilter.guarded(this)
+        if (CloseGuard.shouldClosePrivateDns(windowPackage, dnsGuarded, privateDnsLabels) { text -> root.shows(text) }) {
+            Log.i(TAG, "closing Private DNS while the web filter is on")
+            goHome(now, "An adult who looks after you chose this phone's web filter, so Private DNS can't be changed here.")
+            return
+        }
         val close = CloseGuard.shouldClose(
-            windowPackage = root.packageName?.toString(),
+            windowPackage = windowPackage,
             ownPackage = packageName,
             appName = getString(R.string.app_name),
             guardName = getString(R.string.close_guard_name),
@@ -606,14 +633,15 @@ class CloseGuardService : AccessibilityService() {
         ) { text -> root.shows(text) }
         if (!close) return
         Log.i(TAG, "closing a settings or installer page that could stop or remove OurHome")
+        goHome(now, "An adult who looks after you keeps Our Home on this phone. Use the parent PIN in Our Home to unlock it.")
+    }
+
+    /** To the home screen, saying why (at most every few seconds). */
+    private fun goHome(now: Long, why: String) {
         performGlobalAction(GLOBAL_ACTION_HOME)
         if (now - lastToastAt > TOAST_EVERY_MS) {
             lastToastAt = now
-            Toast.makeText(
-                this,
-                "An adult who looks after you keeps Our Home on this phone. Use the parent PIN in Our Home to unlock it.",
-                Toast.LENGTH_SHORT,
-            ).show()
+            Toast.makeText(this, why, Toast.LENGTH_SHORT).show()
         }
     }
 

@@ -186,5 +186,29 @@ class CloseGuardTest {
         org.junit.Assert.assertEquals("unlocked", CloseGuard.stageToSend(emptyList(), forced = "unlocked", running = false))
         org.junit.Assert.assertNull(CloseGuard.stageToSend(emptyList(), forced = null, running = false))
     }
-}
 
+    private fun closeDns(pkg: String?, guarded: Boolean, vararg texts: String) = CloseGuard.shouldClosePrivateDns(
+        windowPackage = pkg,
+        guarded = guarded,
+        providerLabels = setOf("Private DNS provider hostname", "Nom d'hôte du fournisseur DNS privé"),
+    ) { text -> texts.any { it.equals(text, ignoreCase = true) } }
+
+    @Test
+    fun `closes the Private DNS dialog while the web filter is on, in any language Settings uses`() {
+        assertTrue(closeDns("com.android.settings", true, "Private DNS", "Off", "Automatic", "Private DNS provider hostname"))
+        assertTrue(closeDns("com.android.settings", true, "Nom d'hôte du fournisseur DNS privé"))
+        // Samsung's Settings is the same package; other makers' have "settings" in theirs.
+        assertTrue(closeDns("com.coloros.settings", true, "Private DNS provider hostname"))
+    }
+
+    @Test
+    fun `leaves Private DNS alone while the filter isn't on, and the page it opens from`() {
+        // Not set yet: they need the dialog to set it.
+        assertFalse(closeDns("com.android.settings", false, "Private DNS provider hostname"))
+        // Network & internet only names the row.
+        assertFalse(closeDns("com.android.settings", true, "Network & internet", "Private DNS", "Automatic"))
+        // The words in another app (a web page about it) aren't Settings.
+        assertFalse(closeDns("com.android.chrome", true, "Private DNS provider hostname"))
+        assertFalse(closeDns(null, true, "Private DNS provider hostname"))
+    }
+}

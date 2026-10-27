@@ -4,6 +4,8 @@ import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +39,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,6 +55,7 @@ import com.eosoclub.ourhome.data.setupSummary
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,6 +74,8 @@ import com.eosoclub.ourhome.data.CAP_CHOICES
 import com.eosoclub.ourhome.data.EVERY_DAY
 import com.eosoclub.ourhome.data.GIVE_STEPS
 import com.eosoclub.ourhome.data.LookedAfterPointsTime
+import com.eosoclub.ourhome.data.LookedAfterWebFilter
+import com.eosoclub.ourhome.data.WebFilterChoice
 import com.eosoclub.ourhome.data.RATE_CHOICES
 import com.eosoclub.ourhome.data.formatMinutes
 import com.eosoclub.ourhome.data.formatPoints
@@ -177,6 +183,8 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
         val savingUsage: Pair<String, Boolean>? = null,
         /** Which of whose phone rules is being saved, and to what. */
         val savingRule: Triple<String, PhoneRule, Boolean>? = null,
+        /** Whose web filter is being saved, and to what (null: off). */
+        val savingWebFilter: Pair<String, WebFilterChoice?>? = null,
         /** Whose app is being blocked or unblocked (person id, package name), and to what. */
         val savingBlock: Triple<String, String, Boolean>? = null,
         /** Whose daily limit is being saved (person id, package name or ALL_APPS), and to what (null: removed). */
@@ -286,6 +294,21 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
             )
         } catch (e: Exception) {
             state.update { it.copy(savingRule = null) }
+            onDone(e.message ?: "Couldn't change it")
+        }
+    }
+
+    /** Chooses the web filter on [person]'s phone, or turns it off ([choice] null). */
+    fun setWebFilter(person: LookedAfter, choice: WebFilterChoice?, onDone: (String) -> Unit) = viewModelScope.launch {
+        edits++
+        state.update { it.copy(savingWebFilter = person.id to choice) }
+        try {
+            val next = api.setWebFilter(person.id, choice)
+            // Set before the saving state ends, so the choice never flicks back.
+            state.update { it.copy(lookAfter = next, savingWebFilter = null) }
+            onDone(choice?.let { "${person.name}'s web filter is now ${it.label}" } ?: "${person.name}'s web filter is off")
+        } catch (e: Exception) {
+            state.update { it.copy(savingWebFilter = null) }
             onDone(e.message ?: "Couldn't change it")
         }
     }
@@ -513,6 +536,9 @@ internal fun LookAfterScreen(
                     onUsage = { vm.setUsage(person, it, showMessage) },
                     savingRule = state.savingRule?.takeIf { it.first == person.id }?.let { it.second to it.third },
                     onRule = { rule, required -> vm.setRule(person, rule, required, showMessage) },
+                    savingWebFilter = state.savingWebFilter?.takeIf { it.first == person.id }?.let { it.second },
+                    webFilterSaving = state.savingWebFilter?.first == person.id,
+                    onWebFilter = { vm.setWebFilter(person, it, showMessage) },
                     icons = icons,
                     loadIcon = vm::loadIcon,
                     usageOpen = person.id in state.usageOpen,
@@ -671,6 +697,10 @@ private fun LookedAfterRow(
     /** The rule being saved for them, and to what. */
     savingRule: Pair<PhoneRule, Boolean>?,
     onRule: (PhoneRule, Boolean) -> Unit,
+    /** The web filter being saved for them ([webFilterSaving]), and to what (null: off). */
+    savingWebFilter: WebFilterChoice?,
+    webFilterSaving: Boolean,
+    onWebFilter: (WebFilterChoice?) -> Unit,
     icons: Map<String, ImageBitmap?>,
     loadIcon: (String) -> Unit,
     /** Whether the week's chart and every app show under their latest day, and what loaded for it. */
@@ -757,6 +787,14 @@ private fun LookedAfterRow(
                     }
                     BlockedApps(blocking, icons, loadIcon, savingBlock, onUnblock = { app, label -> onBlock(app, label, false) })
                 }
+                person.webFilter?.let { webFilter ->
+                    WebFilterCard(
+                        webFilter,
+                        chosen = if (webFilterSaving) savingWebFilter else webFilter.choice,
+                        saving = webFilterSaving,
+                        onPick = onWebFilter,
+                    )
+                }
             },
             second = {
                 // While their usage is shared, or while a limit is left from before.
@@ -842,6 +880,54 @@ private fun PhoneCard(person: LookedAfter, canRing: Boolean, onRing: () -> Unit)
                 },
             )
         }
+    }
+}
+
+/**
+ * The web filter on their phone: Off or one of [WebFilterChoice] ([chosen]:
+ * what's saved, or being saved). Opens by itself while their phone isn't
+ * using the one chosen.
+ */
+@Composable
+private fun WebFilterCard(
+    webFilter: LookedAfterWebFilter,
+    chosen: WebFilterChoice?,
+    saving: Boolean,
+    onPick: (WebFilterChoice?) -> Unit,
+) {
+    val warn = webFilter.choice != null && webFilter.on == false
+    CollapsibleCard("Web filter", webFilter.summary, startOpen = warn, openWhen = warn) {
+        Help(
+            "Filters websites in every browser and app on their phone, through Android's Private DNS. Set up this " +
+                "phone shows them how to turn it on, and you're told if it's turned off.",
+        )
+        if (warn) Warning("Their phone isn't using it. On their phone, open OurHome and follow Set up this phone.")
+        if (webFilter.choice != null && webFilter.on == null) {
+            Help("Waiting for their phone to say it's on. It needs the latest OurHome app.")
+        }
+        Column(Modifier.selectableGroup()) {
+            (listOf(null) + WebFilterChoice.entries).forEach { choice ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = chosen == choice,
+                            enabled = !saving,
+                            role = Role.RadioButton,
+                            onClick = { if (chosen != choice) onPick(choice) },
+                        )
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    RadioButton(selected = chosen == choice, onClick = null, enabled = !saving)
+                    Column(Modifier.padding(start = 8.dp).weight(1f)) {
+                        Text(choice?.label ?: "Off", style = MaterialTheme.typography.bodyMedium)
+                        Help(choice?.blurb ?: "Websites aren't filtered.")
+                    }
+                }
+            }
+        }
+        if (webFilter.choice != null) Help("While Keep Our Home running is on, they can't change it on their phone.")
     }
 }
 

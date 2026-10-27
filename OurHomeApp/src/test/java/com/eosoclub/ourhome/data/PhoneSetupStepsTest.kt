@@ -41,6 +41,39 @@ class PhoneSetupStepsTest {
     }
 
     @Test
+    fun `the web filter, while one is chosen, comes before both guards`() {
+        val required = everything.copy(webFilter = true)
+        assertEquals(
+            listOf(
+                SetupStep.Notifications,
+                SetupStep.Location,
+                SetupStep.Battery,
+                SetupStep.UsageAccess,
+                SetupStep.WebFilter,
+                SetupStep.PreventUninstall,
+                SetupStep.KeepRunning,
+            ),
+            setupSteps(required, nothingOn).map { it.step },
+        )
+        assertTrue(setupSteps(required, nothingOn.copy(webFilter = true)).first { it.step == SetupStep.WebFilter }.done)
+    }
+
+    @Test
+    fun `reads the web filter from setup, and none from an older server`() {
+        val json = Json { ignoreUnknownKeys = true }
+        val setup = json.decodeFromString(
+            PhoneSetup.serializer(),
+            """{"supervised":true,"required":{"notifications":true,"webFilter":true},""" +
+                """"webFilter":{"filter":"family","label":"Family filter","hostname":"family-filter-dns.cleanbrowsing.org"}}""",
+        )
+        assertTrue(setup.required.webFilter)
+        assertEquals("family-filter-dns.cleanbrowsing.org", setup.webFilter?.hostname)
+        val old = json.decodeFromString(PhoneSetup.serializer(), """{"supervised":true,"required":{"notifications":true}}""")
+        assertFalse(old.required.webFilter)
+        assertEquals(null, old.webFilter)
+    }
+
+    @Test
     fun `only the steps asked for, each done or not from the phone`() {
         val required = PhoneSetupRequired(notifications = true, keepRunning = true)
         val steps = setupSteps(required, nothingOn.copy(notifications = true))

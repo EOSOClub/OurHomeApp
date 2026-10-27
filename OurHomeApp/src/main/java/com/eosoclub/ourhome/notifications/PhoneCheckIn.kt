@@ -49,8 +49,9 @@ import java.util.UUID
  * While looked after, it also sends the apps it never blocks and the daily
  * limits it used up today, and the answer brings the apps their supervisors
  * blocked ([AppBlocker]), their daily limits, schedules, extra minutes and
- * what a point buys ([AppLimiter]); a change to any of them wakes the phone to
- * check in at once.
+ * what a point buys ([AppLimiter]), and their web filter ([WebFilter]: it also
+ * sends what Private DNS is set to); a change to any of them wakes the phone
+ * to check in at once.
  */
 object PhoneCheckIn {
     private const val TAG = "PhoneCheckIn"
@@ -91,6 +92,7 @@ object PhoneCheckIn {
             locationAlways = Geofences.hasFineLocation(context) && Geofences.hasBackgroundLocation(context),
             notifications = NotificationManagerCompat.from(context).areNotificationsEnabled(),
             usageAccess = UsageReport.hasAccess(context),
+            privateDns = WebFilter.privateDns(context),
             lastPushAtMs = lastPush?.first,
             lastPushVia = lastPush?.second?.wire,
             batteryUnrestricted = BatteryAccess.isUnrestricted(context),
@@ -119,6 +121,8 @@ object PhoneCheckIn {
             if (result.stayConnectedRequired) result.extraTime else emptyList(),
             if (result.stayConnectedRequired) result.pointsForTime else null,
         )
+        // And the web filter they chose, whose Private DNS setting the guard keeps them out of.
+        WebFilter.save(context, if (result.stayConnectedRequired) result.webFilter else null)
     }
 
     /** Schedules the parent notifications for the chosen [duration] (1h, 5h, or 10h). */
