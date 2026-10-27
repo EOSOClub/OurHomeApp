@@ -105,6 +105,16 @@
             android:launchMode="singleTask"
             android:taskAffinity="" />
 
+        <!-- The parent PIN screen over a protected Settings screen
+             (notifications/CloseGuard). Its own task, out of Recents. -->
+        <activity
+            android:name=".notifications.ParentPinActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- Tags scanned while the app isn't open. Invisible: it looks the tag up,
              then posts the quick notification or opens MainActivity, and finishes.
              Never shows over the lock screen (no showWhenLocked). -->

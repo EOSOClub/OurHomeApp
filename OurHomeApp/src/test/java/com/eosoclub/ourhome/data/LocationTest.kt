@@ -74,6 +74,7 @@ class LocationTest {
     @Test
     fun `phone alerts join the household reminder notification`() {
         assertTrue("phone_alert" in HOUSEHOLD_REMINDER_TYPES)
+        assertTrue("parent_pin" in HOUSEHOLD_REMINDER_TYPES)
     }
 
     private val now = java.time.Instant.parse("2026-10-12T18:00:00Z").toEpochMilli()

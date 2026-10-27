@@ -1160,6 +1160,7 @@ class ApiClient(
         shuttingDown: Boolean,
         alwaysAllowed: Collection<String>? = null,
         limitsReached: LimitsReached? = null,
+        pinEvents: List<PinEvent> = emptyList(),
     ): CheckInResult =
         call(
             post(
@@ -1194,6 +1195,19 @@ class ApiClient(
                         putJsonObject("limitsReached") {
                             put("day", reached.day)
                             putJsonArray("apps") { reached.apps.take(60).forEach { add(it) } }
+                        }
+                    }
+                    // What the parent PIN did here, so the adults who look after this member are told.
+                    if (pinEvents.isNotEmpty()) {
+                        putJsonArray("pinEvents") {
+                            pinEvents.takeLast(PinEvents.MAX_KEPT).forEach { event ->
+                                addJsonObject {
+                                    put("id", event.id)
+                                    put("kind", event.kind)
+                                    put("atMs", event.atMs)
+                                    event.screen?.let { put("screen", it) }
+                                }
+                            }
                         }
                     }
                     if (shuttingDown) put("shuttingDown", true)

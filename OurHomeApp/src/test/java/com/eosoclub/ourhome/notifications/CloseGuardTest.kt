@@ -1,6 +1,8 @@
 package com.eosoclub.ourhome.notifications
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -185,6 +187,98 @@ class CloseGuardTest {
         // The "unlocked" notice after completing cleared the countdown.
         org.junit.Assert.assertEquals("unlocked", CloseGuard.stageToSend(emptyList(), forced = "unlocked", running = false))
         org.junit.Assert.assertNull(CloseGuard.stageToSend(emptyList(), forced = null, running = false))
+    }
+
+    private fun screen(pkg: String?, vararg texts: String) = CloseGuard.protectedScreen(
+        windowPackage = pkg,
+        ownPackage = own,
+        appName = "Our Home",
+        guardName = "Keep Our Home running",
+        forceStopLabels = setOf("Force stop"),
+        adminName = "Keep Our Home on this phone",
+        deactivateLabels = setOf("Deactivate this device admin app"),
+    ) { text -> texts.any { it.equals(text, ignoreCase = true) } }
+
+    @Test
+    fun `says which protected screen it is, and the PIN opens all but the uninstall prompt`() {
+        assertEquals(CloseGuard.Screen.AppInfo, screen("com.android.settings", "Our Home", "Force stop"))
+        assertEquals(CloseGuard.Screen.Accessibility, screen("com.android.settings", "Keep Our Home running"))
+        assertEquals(CloseGuard.Screen.DeviceAdmin, screen("com.android.settings", "Keep Our Home on this phone"))
+        assertEquals(CloseGuard.Screen.DeviceAdmin, screen("com.android.settings", "Our Home", "Deactivate this device admin app"))
+        assertEquals(CloseGuard.Screen.Uninstall, screen("com.android.packageinstaller", "Our Home", "Uninstall"))
+        assertNull(screen("com.android.settings", "Chrome", "Force stop"))
+        assertNull(screen("com.android.settings", "Activate device admin app", "Keep Our Home on this phone"))
+        assertEquals(
+            listOf(true, true, true, true, false),
+            CloseGuard.Screen.entries.map { it.pinOpens },
+        )
+    }
+
+    @Test
+    fun `every screen the PIN opens is one the server can name`() {
+        // web lib/parentPin.ts PIN_SCREENS
+        val server = setOf("app_info", "device_admin", "accessibility", "private_dns")
+        assertEquals(server, CloseGuard.Screen.entries.filter { it.pinOpens }.map { it.wire }.toSet())
+        assertEquals(CloseGuard.Screen.PrivateDns, CloseGuard.Screen.of("private_dns"))
+        assertNull(CloseGuard.Screen.of("something_else"))
+    }
+
+    @Test
+    fun `a screen the PIN opened stays open until they go to another app`() {
+        val settings = "com.android.settings"
+        // Still in Settings, on Our Home's own PIN screen, the notification shade, or nothing to tell.
+        assertFalse(CloseGuard.shouldEndPass(settings, settings, own))
+        assertFalse(CloseGuard.shouldEndPass(settings, own, own))
+        assertFalse(CloseGuard.shouldEndPass(settings, "com.android.systemui", own))
+        assertFalse(CloseGuard.shouldEndPass(settings, null, own))
+        // The home screen or any other app.
+        assertTrue(CloseGuard.shouldEndPass(settings, "com.google.android.apps.nexuslauncher", own))
+        assertTrue(CloseGuard.shouldEndPass(settings, "com.android.chrome", own))
+        // Opened in another maker's app (MIUI's Accessibility page): Settings is another app then.
+        assertTrue(CloseGuard.shouldEndPass("com.miui.securitycenter", settings, own))
+        // The keyboard opening over Settings, to type in the Private DNS box, isn't leaving.
+        val keyboard = "com.google.android.inputmethod.latin"
+        assertFalse(CloseGuard.shouldEndPass(settings, keyboard, own, keyboard))
+        assertTrue(CloseGuard.shouldEndPass(settings, keyboard, own, null))
+    }
+
+    private class Node(val text: String?, val description: String? = null, val children: List<Node> = emptyList())
+
+    private fun texts(root: Node, max: Int = CloseGuard.MAX_NODES) =
+        CloseGuard.collectTexts(root, { it.children }, { listOf(it.text, it.description) }, max)
+
+    @Test
+    fun `reads every text and description on the screen, however deep, ignoring case and spaces`() {
+        // App info on Android 16 and later: Android's text search finds none of these.
+        val appInfo = Node(
+            null,
+            children = listOf(
+                Node(" Our Home "),
+                Node(null, children = listOf(Node("Archive"), Node("Uninstall"), Node(null, "FORCE STOP"))),
+                Node(""),
+            ),
+        )
+        val found = texts(appInfo)
+        assertEquals(setOf("our home", "archive", "uninstall", "force stop"), found)
+        // As the guard asks: exactly the label, not part of one.
+        assertTrue(CloseGuard.normalize("Force stop") in found)
+        assertFalse(CloseGuard.normalize("Force") in found)
+        assertEquals(
+            CloseGuard.Screen.AppInfo,
+            CloseGuard.protectedScreen(
+                windowPackage = "com.android.settings",
+                ownPackage = own,
+                appName = "Our Home",
+                guardName = "Keep Our Home running",
+                forceStopLabels = setOf("Force stop"),
+            ) { CloseGuard.normalize(it) in found },
+        )
+    }
+
+    @Test
+    fun `stops reading a huge screen after so many elements`() {
+        val wide = Node(null, children = List(50) { Node("row $it") })
+        assertEquals(9, texts(wide, max = 10).size)
     }
 
     private fun closeDns(pkg: String?, guarded: Boolean, vararg texts: String) = CloseGuard.shouldClosePrivateDns(

@@ -22,8 +22,14 @@ import androidx.core.content.edit
 import androidx.core.net.toUri
 import com.eosoclub.ourhome.R
 import com.eosoclub.ourhome.data.BlockedAppRule
+import com.eosoclub.ourhome.data.PinEvent
+import com.eosoclub.ourhome.data.PinEvents
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.Locale
+import java.util.UUID
 
 /**
  * "Keep Our Home running" and "Keep Our Home on this phone" (like Alli360):
@@ -39,14 +45,20 @@ import java.security.SecureRandom
  *      Android's active apps list (the one with the Stop button) only shows
  *      apps running a foreground service, so OurHome isn't in it.
  *    - While an adult looks after this member ([StayConnected.isRequired]) or
- *      Device admin is active, closes OurHome's App info page (where Force
+ *      Device admin is active, protects OurHome's App info page (where Force
  *      stop is), its Device admin page (where Deactivate is), Android's
  *      package-installer uninstall dialog for OurHome (without blocking app
- *      updates), and this service's own Accessibility pages, by going to the
- *      home screen.
+ *      updates), and this service's own Accessibility pages ([protectedScreen]).
  *    - While this phone uses the web filter a supervising adult chose
- *      ([WebFilter]), closes Android's Private DNS dialog the same way, so it
+ *      ([WebFilter]), protects Android's Private DNS dialog the same way, so it
  *      can't be changed here ([shouldClosePrivateDns]).
+ *    - Protecting one: with a parent PIN set, the PIN screen covers it
+ *      ([ParentPinActivity]); the right PIN opens it until they leave it or
+ *      the screen turns off ([openWithPin]), anything else goes to the home
+ *      screen. Without a PIN, and always for the uninstall prompt (Prevent
+ *      uninstall refuses it anyway), straight to the home screen.
+ *    - The adults who look after this member are told when the PIN opens a
+ *      screen, unlocks Our Home, or is wrong too often ([PinEvent]).
  *    - Covers an app a supervising adult blocked with the blocked screen
  *      ([AppBlocker]), and says which app opens for daily limits and schedules
  *      ([AppLimiter]), which cover it the same way once its time is used up or
@@ -69,9 +81,36 @@ object CloseGuard {
     private const val KEY_EMERGENCY_STARTED_AT_MS = "emergency_started_at_ms"
     private const val KEY_EMERGENCY_READY_AT_MS = "emergency_ready_at_ms"
     private const val KEY_EMERGENCY_SENT_STAGES = "emergency_sent_stages"
+    private const val KEY_PASS_PACKAGE = "pass_package"
+    private const val KEY_PASS_UNTIL_MS = "pass_until_ms"
+    private const val KEY_PIN_EVENTS = "pin_events"
+    private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
+    private val json = Json { ignoreUnknownKeys = true }
+    private val pinEventsSerializer = ListSerializer(PinEvent.serializer())
 
     /** How long after unlocking Settings / Package Installer stay unblocked. */
     internal const val UNLOCK_WINDOW_MS = 2 * 60_000L
+
+    /** The longest a screen the parent PIN opened stays open, even if they never leave it. */
+    internal const val PASS_MAX_MS = 10 * 60_000L
+
+    /**
+     * The screens the guard protects. [wire]: the server's name for it (web
+     * lib/parentPin.ts PIN_SCREENS). [pinOpens]: whether the parent PIN screen
+     * covers it; never the uninstall prompt, which Prevent uninstall refuses
+     * anyway (Unlock Our Home in Profile is the way to uninstall).
+     */
+    enum class Screen(val wire: String, val pinOpens: Boolean = true) {
+        AppInfo("app_info"),
+        DeviceAdmin("device_admin"),
+        Accessibility("accessibility"),
+        PrivateDns("private_dns"),
+        Uninstall("uninstall", pinOpens = false);
+
+        companion object {
+            fun of(wire: String?): Screen? = entries.firstOrNull { it.wire == wire }
+        }
+    }
 
     /** Brute-force protection: after this many wrong tries, wait [PIN_LOCKOUT_MS]. */
     internal const val MAX_PIN_ATTEMPTS = 5
@@ -260,7 +299,10 @@ object CloseGuard {
         return if (until > nowMs) (((until - nowMs) + 999L) / 1000L).toInt() else 0
     }
 
-    /** Checks [pin] against the saved parent PIN, enforcing a 30 s cooldown every 5 wrong tries. */
+    /**
+     * Checks [pin] against the saved parent PIN, enforcing a 30 s cooldown
+     * every 5 wrong tries; each cooldown is told to the supervising adults.
+     */
     fun verifyPin(context: Context, pin: String, nowMs: Long = System.currentTimeMillis()): Boolean {
         if (pinLockoutRemainingSec(context, nowMs) > 0) return false
         val p = prefs(context)
@@ -283,18 +325,120 @@ object CloseGuard {
                 putInt(KEY_FAILED_ATTEMPTS, attempts)
             }
         }
+        if (attempts >= MAX_PIN_ATTEMPTS) recordPinEvent(context, PinEvents.WRONG_PIN, nowMs = nowMs)
         return false
     }
 
     /**
      * Checks [pin]; when right, pauses the Accessibility close guard for two
      * minutes (persisted across process restarts), clears the PIN, and tells
-     * Android to remove Our Home's Device admin so it can be uninstalled.
+     * Android to remove Our Home's Device admin so it can be uninstalled. The
+     * supervising adults are told.
      */
     fun unlockWithPin(context: Context, pin: String): Boolean {
         if (!verifyPin(context, pin)) return false
+        recordPinEvent(context, PinEvents.UNLOCKED)
         unlockAndRemoveAdmin(context)
         return true
+    }
+
+    // --- The parent PIN screen over a protected screen (ParentPinActivity) --
+
+    /**
+     * Checks [pin] on the PIN screen over a protected [screen] in
+     * [windowPackage]; when right, that screen opens until they leave
+     * [windowPackage] ([shouldEndPass]) or the screen turns off, [PASS_MAX_MS]
+     * at most, and the supervising adults are told. Prevent uninstall, Keep
+     * Our Home running and the PIN all stay.
+     */
+    fun openWithPin(
+        context: Context,
+        pin: String,
+        screen: Screen,
+        windowPackage: String,
+        nowMs: Long = System.currentTimeMillis(),
+    ): Boolean {
+        if (!verifyPin(context, pin, nowMs)) return false
+        prefs(context).edit {
+            putString(KEY_PASS_PACKAGE, windowPackage)
+            putLong(KEY_PASS_UNTIL_MS, nowMs + PASS_MAX_MS)
+        }
+        recordPinEvent(context, PinEvents.OPENED, screen.wire, nowMs)
+        return true
+    }
+
+    /** The app whose protected screen the parent PIN opened, while it's open; null otherwise. */
+    internal fun passPackage(context: Context, nowMs: Long = System.currentTimeMillis()): String? {
+        val p = prefs(context)
+        if (p.getLong(KEY_PASS_UNTIL_MS, 0L) <= nowMs) return null
+        return p.getString(KEY_PASS_PACKAGE, null)
+    }
+
+    /** They left the screen the parent PIN opened, or the screen turned off: it's protected again. */
+    fun endPass(context: Context) {
+        val p = prefs(context)
+        if (!p.contains(KEY_PASS_PACKAGE) && !p.contains(KEY_PASS_UNTIL_MS)) return
+        p.edit {
+            remove(KEY_PASS_PACKAGE)
+            remove(KEY_PASS_UNTIL_MS)
+        }
+    }
+
+    /**
+     * Whether the screen the parent PIN opened in [passPackage] was left: a
+     * window of another app came up ([windowPackage], the one that changed,
+     * not the active window, which still says the old app for a moment while
+     * the home screen opens). Never for Our Home itself (its PIN screen), the
+     * notification shade, or the keyboard ([keyboardPackage]), which opens
+     * over Settings to type in the Private DNS box.
+     */
+    internal fun shouldEndPass(
+        passPackage: String,
+        windowPackage: String?,
+        ownPackage: String,
+        keyboardPackage: String? = null,
+    ): Boolean =
+        windowPackage != null && windowPackage != passPackage && windowPackage != ownPackage &&
+            windowPackage != SYSTEM_UI_PACKAGE && windowPackage != keyboardPackage
+
+    /** The keyboard app in use (Android's default input method), or null. */
+    internal fun keyboardPackage(context: Context): String? =
+        Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+            ?.substringBefore('/')?.takeIf { it.isNotEmpty() }
+
+    // --- What the parent PIN did, for the supervising adults ------------------
+
+    /** Kept until a check-in gets it through ([PhoneCheckIn]), which this asks for at once. */
+    internal fun recordPinEvent(
+        context: Context,
+        kind: String,
+        screen: String? = null,
+        nowMs: Long = System.currentTimeMillis(),
+    ) {
+        val event = PinEvent(UUID.randomUUID().toString(), kind, nowMs, screen)
+        synchronized(this) {
+            val kept = PinEvents.add(pendingPinEvents(context), event)
+            prefs(context).edit { putString(KEY_PIN_EVENTS, json.encodeToString(pinEventsSerializer, kept)) }
+        }
+        PhoneCheckIn.sendNow(context.applicationContext)
+    }
+
+    /** What the parent PIN did that no check-in has got through yet, oldest first. */
+    internal fun pendingPinEvents(context: Context): List<PinEvent> =
+        prefs(context).getString(KEY_PIN_EVENTS, null)
+            ?.let { runCatching { json.decodeFromString(pinEventsSerializer, it) }.getOrNull() }
+            .orEmpty()
+
+    /** A check-in got these through ([sent]: their ids). */
+    internal fun pinEventsSent(context: Context, sent: Collection<String>) {
+        if (sent.isEmpty()) return
+        synchronized(this) {
+            val left = PinEvents.withoutSent(pendingPinEvents(context), sent)
+            prefs(context).edit {
+                if (left.isEmpty()) remove(KEY_PIN_EVENTS)
+                else putString(KEY_PIN_EVENTS, json.encodeToString(pinEventsSerializer, left))
+            }
+        }
     }
 
     // --- Configurable emergency unlock (cannot be canceled; notifies parents)
@@ -384,10 +528,12 @@ object CloseGuard {
     /**
      * Whether the Accessibility service should guard Settings / uninstall screens
      * right now: only while supervised ([StayConnected.isRequired]) or Device
-     * admin is active, and not inside the parent unlock window.
+     * admin is active, not inside the parent unlock window, and not while a
+     * screen the parent PIN opened is open ([passPackage]).
      */
     internal fun isGuarding(context: Context): Boolean =
-        !isUnlockedNow(context) && (StayConnected.isRequired(context) || isAdminActive(context))
+        !isUnlockedNow(context) && passPackage(context) == null &&
+            (StayConnected.isRequired(context) || isAdminActive(context))
 
     /**
      * Whether Android's list of enabled Accessibility services ("pkg/cls:...",
@@ -469,18 +615,7 @@ object CloseGuard {
         return labels
     }
 
-    /**
-     * Whether a screen must be closed on a guarded phone:
-     * - OurHome's App info (its name and a Force stop button on one screen)
-     * - This service's own page in Accessibility ([guardName])
-     * - OurHome's Device admin deactivation page ([adminName], or [appName] with a Deactivate button)
-     * - Android's package installer *uninstall* prompt for [appName] (never its
-     *   update/install prompt, so self-hosted app updates still install cleanly)
-     * Never OurHome itself, and never the "Activate device admin app" prompt
-     * ([activateLabels]): the parent needs that to turn protection on, and it
-     * shows the same [adminName] label as the deactivation page.
-     * [shows]: whether the screen has a piece of text exactly so (ignoring case).
-     */
+    /** Whether a screen must be closed on a guarded phone: it's a [protectedScreen]. */
     internal fun shouldClose(
         windowPackage: String?,
         ownPackage: String,
@@ -492,17 +627,51 @@ object CloseGuard {
         activateLabels: Set<String> = DEFAULT_ACTIVATE_LABELS,
         uninstallLabels: Set<String> = DEFAULT_UNINSTALL_LABELS,
         shows: (String) -> Boolean,
-    ): Boolean {
-        if (windowPackage == null || windowPackage == ownPackage) return false
+    ): Boolean = protectedScreen(
+        windowPackage, ownPackage, appName, guardName, forceStopLabels,
+        adminName, deactivateLabels, activateLabels, uninstallLabels, shows,
+    ) != null
+
+    /**
+     * Which protected screen this is on a guarded phone, or null for any other:
+     * - [Screen.AppInfo]: OurHome's App info (its name and a Force stop button on one screen)
+     * - [Screen.Accessibility]: this service's own page in Accessibility ([guardName])
+     * - [Screen.DeviceAdmin]: OurHome's Device admin deactivation page ([adminName],
+     *   or [appName] with a Deactivate button)
+     * - [Screen.Uninstall]: Android's package installer *uninstall* prompt for [appName]
+     *   (never its update/install prompt, so self-hosted app updates still install cleanly)
+     * Never OurHome itself, and never the "Activate device admin app" prompt
+     * ([activateLabels]): the parent needs that to turn protection on, and it
+     * shows the same [adminName] label as the deactivation page.
+     * [shows]: whether the screen has a piece of text exactly so (ignoring case).
+     */
+    internal fun protectedScreen(
+        windowPackage: String?,
+        ownPackage: String,
+        appName: String,
+        guardName: String,
+        forceStopLabels: Set<String>,
+        adminName: String = "Keep Our Home on this phone",
+        deactivateLabels: Set<String> = emptySet(),
+        activateLabels: Set<String> = DEFAULT_ACTIVATE_LABELS,
+        uninstallLabels: Set<String> = DEFAULT_UNINSTALL_LABELS,
+        shows: (String) -> Boolean,
+    ): Screen? {
+        if (windowPackage == null || windowPackage == ownPackage) return null
         // The "Activate device admin app" prompt shows [adminName] too, but the
         // parent needs it to turn protection on, so leave it open.
-        if (activateLabels.any(shows)) return false
-        if (shows(guardName) || shows(adminName)) return true
-        if (!shows(appName)) return false
+        if (activateLabels.any(shows)) return null
+        if (shows(guardName)) return Screen.Accessibility
+        if (shows(adminName)) return Screen.DeviceAdmin
+        if (!shows(appName)) return null
         if (windowPackage.contains("packageinstaller", ignoreCase = true)) {
-            return uninstallLabels.any(shows)
+            return if (uninstallLabels.any(shows)) Screen.Uninstall else null
         }
-        return forceStopLabels.any(shows) || deactivateLabels.any(shows)
+        return when {
+            forceStopLabels.any(shows) -> Screen.AppInfo
+            deactivateLabels.any(shows) -> Screen.DeviceAdmin
+            else -> null
+        }
     }
 
     /**
@@ -518,6 +687,43 @@ object CloseGuard {
         shows: (String) -> Boolean,
     ): Boolean = guarded && windowPackage != null && windowPackage.contains("settings", ignoreCase = true) &&
         providerLabels.any(shows)
+
+    /** The most screen elements one look reads ([collectTexts]). */
+    internal const val MAX_NODES = 1500
+
+    /** How a piece of screen text is compared: trimmed, ignoring case. */
+    internal fun normalize(text: CharSequence): String = text.toString().trim().lowercase(Locale.ROOT)
+
+    /**
+     * Every text and description on the screen under [root], [normalize]d.
+     * Walked, because Android's own text search finds nothing in Settings'
+     * newer pages (App info on Android 16 and later is built with Compose),
+     * though the words are on screen (seen 2026-10-27).
+     */
+    internal fun textsOn(root: AccessibilityNodeInfo): Set<String> = collectTexts(
+        root,
+        children = { node -> (0 until node.childCount).mapNotNull { node.getChild(it) } },
+        labels = { node -> listOf(node.text, node.contentDescription) },
+    )
+
+    /** The labels of [root] and everything under it, [normalize]d, reading at most [max] elements. */
+    internal fun <T> collectTexts(
+        root: T,
+        children: (T) -> List<T>,
+        labels: (T) -> List<CharSequence?>,
+        max: Int = MAX_NODES,
+    ): Set<String> {
+        val out = mutableSetOf<String>()
+        val queue = ArrayDeque(listOf(root))
+        var read = 0
+        while (queue.isNotEmpty() && read < max) {
+            val node = queue.removeFirst()
+            read++
+            labels(node).forEach { if (!it.isNullOrBlank()) out += normalize(it) }
+            queue.addAll(children(node))
+        }
+        return out
+    }
 
     internal val DEFAULT_UNINSTALL_LABELS = setOf(
         "Do you want to uninstall this app?",
@@ -558,9 +764,15 @@ class CloseGuardService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var tornDown = false
 
-    /** The screen coming on, or the phone unlocked: daily limits look at the app in front again. */
-    private val screenOn = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) = AppLimiter.check(context)
+    /**
+     * The screen coming on, or the phone unlocked: daily limits look at the app
+     * in front again. The screen going off: a screen the parent PIN opened is
+     * protected again.
+     */
+    private val screenChanges = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_SCREEN_OFF) CloseGuard.endPass(context) else AppLimiter.check(context)
+        }
     }
 
     override fun onServiceConnected() {
@@ -570,8 +782,11 @@ class CloseGuardService : AccessibilityService() {
         activateLabels = CloseGuard.activateAdminLabels(this)
         privateDnsLabels = WebFilter.providerLabels(this)
         CloseGuard.service = this
-        val wake = IntentFilter(Intent.ACTION_SCREEN_ON).apply { addAction(Intent.ACTION_USER_PRESENT) }
-        runCatching { ContextCompat.registerReceiver(this, screenOn, wake, ContextCompat.RECEIVER_NOT_EXPORTED) }
+        val wake = IntentFilter(Intent.ACTION_SCREEN_ON).apply {
+            addAction(Intent.ACTION_USER_PRESENT)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
+        runCatching { ContextCompat.registerReceiver(this, screenChanges, wake, ContextCompat.RECEIVER_NOT_EXPORTED) }
         // Same rules as any other start (an adult's Stop is still respected).
         StayConnected.ensureRunning(applicationContext)
         AppLimiter.check(this)
@@ -606,6 +821,13 @@ class CloseGuardService : AccessibilityService() {
                 return
             }
             AppLimiter.opened(this, event.packageName?.toString())
+            // Left the screen the parent PIN opened: it's protected again.
+            CloseGuard.passPackage(this)?.let { passed ->
+                val window = event.packageName?.toString()
+                if (CloseGuard.shouldEndPass(passed, window, packageName, CloseGuard.keyboardPackage(this))) {
+                    CloseGuard.endPass(this)
+                }
+            }
         }
         if (!CloseGuard.isGuarding(this)) return
         // Content changes come often: look at most twice a second.
@@ -613,15 +835,22 @@ class CloseGuardService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && now - lastCheckAt < CHECK_EVERY_MS) return
         lastCheckAt = now
         val root = rootInActiveWindow ?: return
-        val windowPackage = root.packageName?.toString()
+        val windowPackage = root.packageName?.toString() ?: return
+        val onScreen = CloseGuard.textsOn(root)
+        val shows = { text: String -> CloseGuard.normalize(text) in onScreen }
         // Only on a Settings screen is it worth asking the network.
-        val dnsGuarded = windowPackage?.contains("settings", ignoreCase = true) == true && WebFilter.guarded(this)
-        if (CloseGuard.shouldClosePrivateDns(windowPackage, dnsGuarded, privateDnsLabels) { text -> root.shows(text) }) {
-            Log.i(TAG, "closing Private DNS while the web filter is on")
-            goHome(now, "An adult who looks after you chose this phone's web filter, so Private DNS can't be changed here.")
+        val dnsGuarded = windowPackage.contains("settings", ignoreCase = true) && WebFilter.guarded(this)
+        if (CloseGuard.shouldClosePrivateDns(windowPackage, dnsGuarded, privateDnsLabels, shows)) {
+            Log.i(TAG, "protecting Private DNS while the web filter is on")
+            protect(
+                now,
+                CloseGuard.Screen.PrivateDns,
+                windowPackage,
+                "An adult who looks after you chose this phone's web filter, so Private DNS can't be changed here.",
+            )
             return
         }
-        val close = CloseGuard.shouldClose(
+        val screen = CloseGuard.protectedScreen(
             windowPackage = windowPackage,
             ownPackage = packageName,
             appName = getString(R.string.app_name),
@@ -630,10 +859,35 @@ class CloseGuardService : AccessibilityService() {
             adminName = getString(R.string.close_guard_admin_name),
             deactivateLabels = deactivateLabels,
             activateLabels = activateLabels,
-        ) { text -> root.shows(text) }
-        if (!close) return
-        Log.i(TAG, "closing a settings or installer page that could stop or remove OurHome")
-        goHome(now, "An adult who looks after you keeps Our Home on this phone. Use the parent PIN in Our Home to unlock it.")
+            shows = shows,
+        ) ?: return
+        Log.i(TAG, "protecting a settings or installer page that could stop or remove OurHome (${screen.wire})")
+        protect(
+            now,
+            screen,
+            windowPackage,
+            "An adult who looks after you keeps Our Home on this phone. Use the parent PIN in Our Home to unlock it.",
+        )
+    }
+
+    /**
+     * A protected [screen] in [windowPackage]: the parent PIN screen over it
+     * when the PIN can open it ([ParentPinActivity]); otherwise (the uninstall
+     * prompt, or no parent PIN set) to the home screen, saying [why]. Asked
+     * again on every look while it's in front: once the PIN screen is, the
+     * app in front is Our Home, so it isn't.
+     */
+    private fun protect(now: Long, screen: CloseGuard.Screen, windowPackage: String, why: String) {
+        if (screen.pinOpens && CloseGuard.hasPin(this)) {
+            startActivity(ParentPinActivity.intent(this, screen, windowPackage))
+        } else {
+            goHome(now, why)
+        }
+    }
+
+    /** To the home screen at once (the PIN screen left without the PIN). */
+    internal fun goHomeNow() {
+        performGlobalAction(GLOBAL_ACTION_HOME)
     }
 
     /** To the home screen, saying why (at most every few seconds). */
@@ -676,13 +930,6 @@ class CloseGuardService : AccessibilityService() {
         }
     }
 
-    /** Android's own text search (part of a word counts), then an exact match. */
-    private fun AccessibilityNodeInfo.shows(text: String): Boolean =
-        findAccessibilityNodeInfosByText(text).any { node ->
-            node.text?.toString()?.trim().equals(text, ignoreCase = true) ||
-                node.contentDescription?.toString()?.trim().equals(text, ignoreCase = true)
-        }
-
     override fun onInterrupt() {}
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -700,7 +947,7 @@ class CloseGuardService : AccessibilityService() {
         if (tornDown) return
         tornDown = true
         if (CloseGuard.service === this) CloseGuard.service = null
-        runCatching { unregisterReceiver(screenOn) }
+        runCatching { unregisterReceiver(screenChanges) }
         disconnect()
         StayConnected.ensureRunning(applicationContext)
     }

@@ -52,6 +52,10 @@ import java.util.UUID
  * what a point buys ([AppLimiter]), and their web filter ([WebFilter]: it also
  * sends what Private DNS is set to); a change to any of them wakes the phone
  * to check in at once.
+ *
+ * Also what the parent PIN did here since a check-in last got through
+ * ([CloseGuard.pendingPinEvents]), which checks in at once, so the adults who
+ * look after this member are told.
  */
 object PhoneCheckIn {
     private const val TAG = "PhoneCheckIn"
@@ -85,6 +89,7 @@ object PhoneCheckIn {
 
         val emergencyActive = readyAt != null || dueStage != null
         val lookedAfter = StayConnected.isRequired(context)
+        val pinEvents = CloseGuard.pendingPinEvents(context)
         val result = api.checkIn(
             installId = installId(context),
             appVersion = BuildConfig.VERSION_NAME,
@@ -106,8 +111,10 @@ object PhoneCheckIn {
             shuttingDown = shuttingDown,
             alwaysAllowed = if (lookedAfter) AppBlocker.alwaysAllowed(context) else null,
             limitsReached = if (lookedAfter) AppLimiter.reachedToday(context) else null,
+            pinEvents = pinEvents,
         )
         due.forEach { CloseGuard.markEmergencyStageSent(context, it.wire) }
+        CloseGuard.pinEventsSent(context, pinEvents.map { it.id })
         // Switching off: the next check-in (after it's back) sets this again.
         if (shuttingDown) return
         // An adult looks after this member: Stay connected is kept on.

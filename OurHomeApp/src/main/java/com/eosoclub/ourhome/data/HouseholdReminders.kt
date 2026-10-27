@@ -13,6 +13,8 @@ package com.eosoclub.ourhome.data
 // "new_app": a supervised child's phone has a new app (web reportNewApps); so does its title.
 // "limit_reached": a supervised child's phone used up a daily limit (web reportLimitsReached).
 // "extra_time": a supervised child spent points on more screen time (web buyExtraTime).
+// "parent_pin": the parent PIN opened a protected screen or unlocked Our Home on a supervised
+// child's phone, or was entered wrong too often there (web reportPinEvents).
 // "request_update": someone answered this user's request (web requestNoticeService); its
 // title leads with the outcome ("Approved: LEGO set").
 val HOUSEHOLD_REMINDER_TYPES =
@@ -26,6 +28,7 @@ val HOUSEHOLD_REMINDER_TYPES =
         "new_app",
         "limit_reached",
         "extra_time",
+        "parent_pin",
         "request_update",
     )
 
