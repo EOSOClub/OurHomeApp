@@ -187,6 +187,53 @@ internal fun TaskEditor(
     val stepsValid = steps.all { it.resetIntervalDays() != 0 }
     val cycleValid = !recurring || !rollover ||
         (repeatKind != "weekly" || cycleWeekdays.isNotEmpty()) && (repeatKind != "monthly" || cycleMonthdays.isNotEmpty())
+    // A new task worth 0 points: Add goes red and asks first (like the web).
+    // Skipped when the household has points turned off.
+    val noPoints = task == null && showPoints && liveTotals(points).pointsCenti == 0
+    var confirmNoPoints by remember { mutableStateOf(false) }
+
+    fun save() {
+        val base = points.task
+        onSave(
+            TaskEdit(
+                input = TaskInput(
+                    title = title.trim(),
+                    notes = notes.trim().ifEmpty { null },
+                    type = type,
+                    priority = priority,
+                    // Like the web: a blank time means noon local.
+                    dueDate = dueDate?.atTime(dueTime ?: LocalTime.NOON)?.atZone(zone)?.toInstant(),
+                    estimatedMinutes = base.baseMinutes?.takeIf { it > 0 },
+                    points = if (base.pointsFollowTime) null else base.basePointsCenti?.asPoints(),
+                    pointsFollowTime = base.pointsFollowTime,
+                    categoryId = categoryId.ifEmpty { null },
+                    // Without the rooms loaded the picker wasn't shown: keep the places.
+                    places = placeValues.takeIf { places?.isEmpty == false },
+                    assigneeId = currentTurn.ifEmpty { null },
+                    rotationUserIds = if (rotating) rotation else emptyList(),
+                    recurrence = if (recurring) {
+                        RecurrenceInput(
+                            kind = repeatKind,
+                            interval = intervalValue ?: 1,
+                            byWeekday = weekdays.sorted(),
+                            byMonthday = monthdays.sorted(),
+                            until = until?.atTime(LocalTime.NOON)?.atZone(zone)?.toInstant(),
+                            rollover = rollover,
+                            cycleWeekdays = cycleWeekdays.sorted(),
+                            cycleMonthdays = cycleMonthdays.sorted(),
+                        )
+                    } else {
+                        null
+                    },
+                ),
+                steps = steps.mapIndexedNotNull { i, s ->
+                    s.title.trim().takeIf { it.isNotEmpty() }?.let {
+                        StepInput(s.id, it, s.resetIntervalDays(), points.steps[i])
+                    }
+                },
+            ),
+        )
+    }
 
     EditorDialog(
         title = when {
@@ -195,51 +242,11 @@ internal fun TaskEditor(
             else -> "Task"
         },
         saveLabel = if (task == null) "Add" else "Save",
+        saveWarning = noPoints,
         saving = saving,
         saveEnabled = canSave && title.isNotBlank() && intervalValid && stepsValid && cycleValid,
         onDismiss = onDismiss,
-        onSave = {
-            val base = points.task
-            onSave(
-                TaskEdit(
-                    input = TaskInput(
-                        title = title.trim(),
-                        notes = notes.trim().ifEmpty { null },
-                        type = type,
-                        priority = priority,
-                        // Like the web: a blank time means noon local.
-                        dueDate = dueDate?.atTime(dueTime ?: LocalTime.NOON)?.atZone(zone)?.toInstant(),
-                        estimatedMinutes = base.baseMinutes?.takeIf { it > 0 },
-                        points = if (base.pointsFollowTime) null else base.basePointsCenti?.asPoints(),
-                        pointsFollowTime = base.pointsFollowTime,
-                        categoryId = categoryId.ifEmpty { null },
-                        // Without the rooms loaded the picker wasn't shown: keep the places.
-                        places = placeValues.takeIf { places?.isEmpty == false },
-                        assigneeId = currentTurn.ifEmpty { null },
-                        rotationUserIds = if (rotating) rotation else emptyList(),
-                        recurrence = if (recurring) {
-                            RecurrenceInput(
-                                kind = repeatKind,
-                                interval = intervalValue ?: 1,
-                                byWeekday = weekdays.sorted(),
-                                byMonthday = monthdays.sorted(),
-                                until = until?.atTime(LocalTime.NOON)?.atZone(zone)?.toInstant(),
-                                rollover = rollover,
-                                cycleWeekdays = cycleWeekdays.sorted(),
-                                cycleMonthdays = cycleMonthdays.sorted(),
-                            )
-                        } else {
-                            null
-                        },
-                    ),
-                    steps = steps.mapIndexedNotNull { i, s ->
-                        s.title.trim().takeIf { it.isNotEmpty() }?.let {
-                            StepInput(s.id, it, s.resetIntervalDays(), points.steps[i])
-                        }
-                    },
-                ),
-            )
-        },
+        onSave = { if (noPoints) confirmNoPoints = true else save() },
         deleteLabel = "Delete task",
         onDelete = onDelete,
         error = errors.message,
@@ -460,6 +467,25 @@ internal fun TaskEditor(
                 TextButton(onClick = { points = run(true).state; pendingTotal = null }) { Text("Rescale steps") }
             },
             dismissButton = { TextButton(onClick = { pendingTotal = null }) { Text("Cancel") } },
+        )
+    }
+
+    if (confirmNoPoints) {
+        AlertDialog(
+            onDismissRequest = { confirmNoPoints = false },
+            title = { Text("No points for this task?") },
+            text = {
+                Text(
+                    "Nobody will earn points for completing this task. Go back to set a time to complete " +
+                        "or points, or add it anyway.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmNoPoints = false; save() }) {
+                    Text("Add anyway", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmNoPoints = false }) { Text("Go back") } },
         )
     }
 }

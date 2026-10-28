@@ -86,6 +86,8 @@ internal fun EditorDialog(
     deleteLabel: String? = null,
     onDelete: (() -> Unit)? = null,
     saveLabel: String = "Save",
+    /** Shows Save in the error colour, as a warning about what it will save. */
+    saveWarning: Boolean = false,
     error: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -99,7 +101,15 @@ internal fun EditorDialog(
                         IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = "Close") }
                     },
                     actions = {
-                        TextButton(onClick = onSave, enabled = saveEnabled && !saving) {
+                        TextButton(
+                            onClick = onSave,
+                            enabled = saveEnabled && !saving,
+                            colors = if (saveWarning) {
+                                ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                            } else {
+                                ButtonDefaults.textButtonColors()
+                            },
+                        ) {
                             if (saving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                             else Text(saveLabel)
                         }
