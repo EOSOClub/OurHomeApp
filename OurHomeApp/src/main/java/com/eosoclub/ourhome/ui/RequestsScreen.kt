@@ -175,7 +175,9 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         /** A purchase being approved: which shopping list to put it on. */
         val approving: HouseholdRequest? = null,
         val declining: HouseholdRequest? = null,
-        /** An own declined request waiting for "Remove?" to be confirmed. */
+        /** A maintenance request the head is giving to someone else. */
+        val reassigning: HouseholdRequest? = null,
+        /** A request removed from its card (own declined, or the head's), waiting for "Remove?" to be confirmed. */
         val removing: HouseholdRequest? = null,
         val saving: Boolean = false,
         val busy: Set<String> = emptySet(),
@@ -361,7 +363,29 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         _messages.send("Declined “${r.title}”")
     }
 
-    /** A declined request can't be edited, only removed: asks first. */
+    fun startReassign(r: HouseholdRequest) {
+        form.clear()
+        state.update { it.copy(reassigning = r) }
+        loadMembers()
+    }
+
+    fun cancelReassign() {
+        form.clear()
+        state.update { it.copy(reassigning = null) }
+    }
+
+    /** The head gives a maintenance request to [assigneeId]; it goes back to waiting for them. */
+    fun reassign(r: HouseholdRequest, assigneeId: String) = runBusy(r, inDialog = true) {
+        val updated = api.reassignRequest(r.id, assigneeId)
+        replace(updated)
+        state.update { it.copy(reassigning = null) }
+        _messages.send("Sent to ${updated.assignee?.name ?: "them"}")
+    }
+
+    /**
+     * Removing from the card (a declined request can't be edited, only removed;
+     * the head removing someone else's maintenance request): asks first.
+     */
     fun askRemove(r: HouseholdRequest?) = state.update { it.copy(removing = r) }
 
     /** No editor is open, so a failure goes to the snackbar. */
@@ -411,6 +435,8 @@ fun RequestsScreen(
     val vm = viewModel { RequestsViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
     val canWrite = can(user.role, Permission.RequestsWrite)
+    // The head may reassign or remove anyone's maintenance request.
+    val isHead = user.role == "head"
     // The kinds that are on (Settings → Request types on the website).
     val modules = state.modules ?: defaultRequestModules(canSubmit, canApproveMedia)
     val mediaModule = modules.firstOrNull { it.id == "media" }
@@ -480,6 +506,8 @@ fun RequestsScreen(
                         items(items, key = { it.id }) { r ->
                             val isOwn = r.requester.id == user.id
                             val declined = r.status == "declined"
+                            // On their own request the head has the requester's edit and remove.
+                            val headActions = isHead && !isOwn
                             MaintenanceCard(
                                 r = r,
                                 me = user.id,
@@ -489,9 +517,14 @@ fun RequestsScreen(
                                 onAccept = { vm.startAccept(r) },
                                 onComplete = { vm.complete(r) },
                                 onDecline = { vm.startDecline(r) },
+                                onReassign = if (headActions && (r.status == "pending" || r.status == "accepted")) {
+                                    { vm.startReassign(r) }
+                                } else {
+                                    null
+                                },
                                 // A declined request can't be edited, only removed.
                                 onEdit = if (isOwn && canWrite && !declined) ({ vm.startEdit(r) }) else null,
-                                onRemove = if (isOwn && canWrite && declined) ({ vm.askRemove(r) }) else null,
+                                onRemove = if ((isOwn && canWrite && declined) || headActions) ({ vm.askRemove(r) }) else null,
                             )
                         }
                     }
@@ -604,6 +637,18 @@ fun RequestsScreen(
             busy = r.id in state.busy,
             onDismiss = vm::cancelDecline,
             onDecline = { reply -> vm.decline(r, reply) },
+        )
+    }
+
+    state.reassigning?.let { r ->
+        ReassignDialog(
+            r = r,
+            choices = state.members?.filter { it.id != r.requester.id },
+            membersError = state.membersError,
+            error = vm.form["assigneeId"] ?: vm.form.message,
+            busy = r.id in state.busy,
+            onDismiss = vm::cancelReassign,
+            onReassign = { assigneeId -> vm.reassign(r, assigneeId) },
         )
     }
 
@@ -752,13 +797,16 @@ private fun MaintenanceCard(
     onAccept: () -> Unit,
     onComplete: () -> Unit,
     onDecline: () -> Unit,
+    /** The head, on someone else's open request. */
+    onReassign: (() -> Unit)?,
     onEdit: (() -> Unit)?,
-    /** Own declined request: removing is all that's left. */
+    /** Own declined request (removing is all that's left), or the head on someone else's. */
     onRemove: (() -> Unit)?,
 ) {
     val isAssignee = r.assignee?.id == me
     val done = r.status == "completed"
     val declined = r.status == "declined"
+    val assigneeActions = isAssignee && !done && !declined
     // Highlight requests waiting on *you*.
     val colors = if (isAssignee && r.status == "pending") {
         CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
@@ -812,22 +860,27 @@ private fun MaintenanceCard(
                     IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${r.title}") }
                 }
             }
-            if (isAssignee && !done && !declined) {
+            if (assigneeActions || onReassign != null) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 ) {
-                    if (canDecline) {
-                        TextButton(onClick = onDecline, enabled = !busy) { Text("Decline") }
+                    if (onReassign != null) {
+                        TextButton(onClick = onReassign, enabled = !busy) { Text("Reassign") }
                     }
-                    if (r.status == "pending") {
-                        Button(onClick = onAccept, enabled = !busy) { Text("Accept") }
-                    } else {
-                        // Accepted without a date (the head made it optional): one can still be set.
-                        TextButton(onClick = onAccept, enabled = !busy) {
-                            Text(if (r.dueAt != null || requireDueDate) "Change date" else "Set a date")
+                    if (assigneeActions) {
+                        if (canDecline) {
+                            TextButton(onClick = onDecline, enabled = !busy) { Text("Decline") }
                         }
-                        OutlinedButton(onClick = onComplete, enabled = !busy) { Text(if (busy) "Saving…" else "Mark done") }
+                        if (r.status == "pending") {
+                            Button(onClick = onAccept, enabled = !busy) { Text("Accept") }
+                        } else {
+                            // Accepted without a date (the head made it optional): one can still be set.
+                            TextButton(onClick = onAccept, enabled = !busy) {
+                                Text(if (r.dueAt != null || requireDueDate) "Change date" else "Set a date")
+                            }
+                            OutlinedButton(onClick = onComplete, enabled = !busy) { Text(if (busy) "Saving…" else "Mark done") }
+                        }
                     }
                 }
             }
@@ -1084,6 +1137,65 @@ private fun DeclineDialog(
         confirmButton = {
             TextButton(enabled = !busy, onClick = { onDecline(reply.trim().ifEmpty { null }) }) {
                 Text(if (busy) "Saving…" else "Decline")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/**
+ * The head gives a maintenance request to someone else: anyone but the
+ * requester ([choices], null while the members load). Matches the web's
+ * Reassign request window.
+ */
+@Composable
+private fun ReassignDialog(
+    r: HouseholdRequest,
+    choices: List<Member>?,
+    membersError: String?,
+    error: String?,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onReassign: (String) -> Unit,
+) {
+    var assigneeId by remember { mutableStateOf(r.assignee?.id.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Reassign request") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("“${r.title}” from ${r.requester.name ?: "someone"}")
+                if (choices == null) {
+                    Text(
+                        membersError?.let { "Couldn't load household members: $it" } ?: "Loading household members…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (membersError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    DropdownField(
+                        "Who should do it?",
+                        choices.map { it.id to it.name },
+                        assigneeId,
+                        { assigneeId = it },
+                        placeholder = "Choose someone…",
+                        error = error,
+                    )
+                    if (error == null) {
+                        Text(
+                            "It goes back to waiting, for them to accept with their own date.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !busy && choices != null && assigneeId.isNotEmpty() && assigneeId != r.assignee?.id,
+                onClick = { onReassign(assigneeId) },
+            ) {
+                Text(if (busy) "Saving…" else "Reassign")
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

@@ -825,6 +825,16 @@ class ApiClient(
             HouseholdRequest.serializer(),
         )
 
+    /**
+     * The head gives a maintenance request to someone else (anyone but the
+     * requester); it goes back to waiting for them to accept.
+     */
+    suspend fun reassignRequest(id: String, assigneeId: String): HouseholdRequest =
+        call(
+            post("/api/requests/reassign", buildJsonObject { put("id", id); put("assigneeId", assigneeId) }),
+            HouseholdRequest.serializer(),
+        )
+
     /** Id + name of everyone in the household; readable by any member. */
     suspend fun householdMembers(): List<Member> =
         call(get("/api/household/members"), ListSerializer(Member.serializer()))
