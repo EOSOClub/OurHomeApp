@@ -179,7 +179,7 @@ fun BillsScreen(
         onRefresh = { vm.refresh() },
         modifier = modifier.fillMaxSize(),
     ) {
-        if (LoadState(state.loading, state.error, state.bills.isEmpty(), "No bills yet.", vm::refresh)) {
+        if (loadState(state.loading, state.error, state.bills.isEmpty(), "No bills yet.", vm::refresh)) {
             return@PullToRefreshBox
         }
         LazyColumn(

@@ -241,7 +241,7 @@ fun InventoryScreen(
         onRefresh = { vm.refresh() },
         modifier = modifier.fillMaxSize(),
     ) {
-        if (LoadState(state.loading, state.error, state.items.isEmpty(), "No inventory items yet.", vm::refresh)) {
+        if (loadState(state.loading, state.error, state.items.isEmpty(), "No inventory items yet.", vm::refresh)) {
             return@PullToRefreshBox
         }
         val row: @Composable (InventoryItem) -> Unit = { item ->

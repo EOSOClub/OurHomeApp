@@ -99,7 +99,7 @@ fun NotificationsScreen(
         modifier = modifier.fillMaxSize(),
     ) {
         val unread = state.items.filter { !it.read }
-        if (LoadState(state.loading, state.error, unread.isEmpty(), "You're all caught up.", vm::refresh)) {
+        if (loadState(state.loading, state.error, unread.isEmpty(), "You're all caught up.", vm::refresh)) {
             return@PullToRefreshBox
         }
         LazyColumn(Modifier.fillMaxSize()) {

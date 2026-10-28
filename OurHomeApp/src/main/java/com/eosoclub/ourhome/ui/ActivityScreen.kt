@@ -157,7 +157,7 @@ internal fun ActivityScreen(api: ApiClient, userId: String, modifier: Modifier =
             modifier = Modifier.fillMaxSize(),
         ) {
             val empty = if (state.area != null || state.userId != null) "Nothing here - try another filter." else "No activity yet."
-            if (LoadState(state.loading, state.error, state.items.isEmpty(), empty, vm::refresh)) return@PullToRefreshBox
+            if (loadState(state.loading, state.error, state.items.isEmpty(), empty, vm::refresh)) return@PullToRefreshBox
             val groups = state.items.groupBy { localDate(it.createdAt) }
             LazyColumn(contentPadding = PaddingValues(16.dp), modifier = Modifier.fillMaxSize()) {
                 groups.forEach { (day, entries) ->

@@ -459,7 +459,7 @@ internal fun LookAfterScreen(
     }
 
     Box(modifier.fillMaxSize()) {
-        if (LoadState(state.loading, state.error, !state.loaded, "", { vm.load() })) return@Box
+        if (loadState(state.loading, state.error, !state.loaded, "", { vm.load() })) return@Box
         val lookAfter = state.lookAfter
         // Someone no longer looked after: back to the cards.
         val selected = lookAfter?.people?.firstOrNull { it.id == selectedId }

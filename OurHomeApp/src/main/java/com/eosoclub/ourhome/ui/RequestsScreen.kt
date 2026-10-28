@@ -455,7 +455,7 @@ fun RequestsScreen(
             } else {
                 "No requests yet."
             }
-            if (LoadState(state.loading, state.error, state.requests.isEmpty(), empty, vm::refresh)) {
+            if (loadState(state.loading, state.error, state.requests.isEmpty(), empty, vm::refresh)) {
                 return@PullToRefreshBox
             }
             // The server only sends requests of kinds that are on.

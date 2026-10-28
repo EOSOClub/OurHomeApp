@@ -257,7 +257,7 @@ fun MembersScreen(
         onRefresh = { vm.refresh() },
         modifier = modifier.fillMaxSize(),
     ) {
-        if (LoadState(state.loading, state.error, state.members == null, "", { vm.refresh() })) {
+        if (loadState(state.loading, state.error, state.members == null, "", { vm.refresh() })) {
             return@PullToRefreshBox
         }
         val members = state.members.orEmpty()

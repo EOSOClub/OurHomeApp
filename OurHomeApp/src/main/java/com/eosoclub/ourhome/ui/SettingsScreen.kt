@@ -331,7 +331,7 @@ fun SettingsScreen(
         onRefresh = { vm.refresh(features) },
         modifier = modifier.fillMaxSize(),
     ) {
-        if (LoadState(state.loading, state.error, state.categories == null, "", { vm.refresh(features) })) {
+        if (loadState(state.loading, state.error, state.categories == null, "", { vm.refresh(features) })) {
             return@PullToRefreshBox
         }
         Column(

@@ -291,7 +291,7 @@ internal fun AddChildScreen(
     }
 
     Box(modifier.fillMaxSize()) {
-        if (LoadState(state.loading, state.error, state.supervision == null, "", { vm.load() })) return@Box
+        if (loadState(state.loading, state.error, state.supervision == null, "", { vm.load() })) return@Box
         val supervision = state.supervision ?: return@Box
         Column(
             Modifier

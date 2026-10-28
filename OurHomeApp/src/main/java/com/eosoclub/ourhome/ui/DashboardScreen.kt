@@ -113,7 +113,7 @@ internal fun DashboardScreen(
         onRefresh = { vm.refresh(features.location) },
         modifier = modifier.fillMaxSize(),
     ) {
-        if (LoadState(state.loading, state.error, data == null, "", { vm.refresh(features.location) }) || data == null) {
+        if (loadState(state.loading, state.error, data == null, "", { vm.refresh(features.location) }) || data == null) {
             return@PullToRefreshBox
         }
         // A server from before the redesign has no "me": show its household lists instead.

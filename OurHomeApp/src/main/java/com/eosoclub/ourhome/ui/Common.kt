@@ -31,7 +31,7 @@ internal fun Centered(content: @Composable () -> Unit) {
 
 /** Standard first-load / failed-load / empty states; returns true if one was shown. */
 @Composable
-internal fun LoadState(
+internal fun loadState(
     loading: Boolean,
     error: String?,
     isEmpty: Boolean,

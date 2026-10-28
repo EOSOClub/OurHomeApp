@@ -186,7 +186,7 @@ internal fun MapScreen(api: ApiClient, showMessage: (String) -> Unit, modifier: 
     }
 
     Box(modifier.fillMaxSize()) {
-        if (LoadState(state.loading, state.error, !state.loaded, "", { vm.load() })) return@Box
+        if (loadState(state.loading, state.error, !state.loaded, "", { vm.load() })) return@Box
         var focus by remember { mutableStateOf<Focus?>(null) }
         val focusOn = { target: MapTarget -> focus = Focus(target, (focus?.seq ?: 0) + 1) }
         var starting by remember { mutableStateOf<CheckableMember?>(null) }

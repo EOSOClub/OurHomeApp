@@ -50,7 +50,7 @@ fun ScanHistoryScreen(api: ApiClient, modifier: Modifier = Modifier) {
         onRefresh = { vm.refresh() },
         modifier = modifier.fillMaxSize(),
     ) {
-        if (LoadState(state.loading, state.error, state.scans.isEmpty(), "No tags scanned yet.", vm::refresh)) {
+        if (loadState(state.loading, state.error, state.scans.isEmpty(), "No tags scanned yet.", vm::refresh)) {
             return@PullToRefreshBox
         }
         LazyColumn(Modifier.fillMaxSize()) {
