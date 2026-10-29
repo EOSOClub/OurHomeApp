@@ -50,7 +50,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Profile → Location (web: LocationCard), plus this phone's permissions. */
-class LocationViewModel(private val session: SessionManager) : ViewModel() {
+class LocationViewModel(session: SessionManager) : ViewModel() {
     data class UiState(
         val consent: LocationConsent? = null,
         /** How many map places the household has (null = not loaded). */

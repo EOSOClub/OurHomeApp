@@ -1,7 +1,6 @@
 package com.eosoclub.ourhome.ui
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -36,7 +35,6 @@ import java.time.LocalDate
  * at once, so this phone's limits grow straight away. Nothing shows otherwise.
  * The blocked screen's Get more time opens Profile here.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ExtraTimeCard(session: SessionManager, showMessage: (String) -> Unit) {
     val context = LocalContext.current

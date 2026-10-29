@@ -93,7 +93,7 @@ data class MemberAccount(
     val createdAt: String? = null,
 )
 
-/** POST /api/household/rename's answer. */
+/** POST /api/household/renames answer. */
 @Serializable
 data class HouseholdRef(val id: String, val name: String)
 
@@ -177,7 +177,7 @@ data class RecurrenceInput(
     val interval: Int,
     val byWeekday: List<Int>,
     val byMonthday: List<Int>,
-    val until: java.time.Instant?,
+    val until: Instant?,
     val rollover: Boolean = false,
     val cycleWeekdays: List<Int> = emptyList(),
     val cycleMonthdays: List<Int> = emptyList(),
@@ -189,7 +189,7 @@ data class TaskInput(
     val notes: String?,
     val type: String,
     val priority: String,
-    val dueDate: java.time.Instant?,
+    val dueDate: Instant?,
     /** The task-level (base) TTC and points; points null while they follow time. */
     val estimatedMinutes: Int?,
     val points: Double? = null,

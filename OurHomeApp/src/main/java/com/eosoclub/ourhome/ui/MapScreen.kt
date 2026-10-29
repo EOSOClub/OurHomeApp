@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -186,7 +185,7 @@ internal fun MapScreen(api: ApiClient, showMessage: (String) -> Unit, modifier: 
     }
 
     Box(modifier.fillMaxSize()) {
-        if (loadState(state.loading, state.error, !state.loaded, "", { vm.load() })) return@Box
+        if (loadState(state.loading, state.error, !state.loaded, "") { vm.load() }) return@Box
         var focus by remember { mutableStateOf<Focus?>(null) }
         val focusOn = { target: MapTarget -> focus = Focus(target, (focus?.seq ?: 0) + 1) }
         var starting by remember { mutableStateOf<CheckableMember?>(null) }
@@ -324,7 +323,6 @@ private fun LiveCheckRow(check: LiveCheck, onFocus: (() -> Unit)?, onStop: () ->
 }
 
 /** How long and how often, within the household's limits. */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StartCheckDialog(
     member: CheckableMember,
@@ -701,7 +699,7 @@ private fun MapLabels(labels: List<MapLabel>, modifier: Modifier) {
                 var x = if (label.beside) px + gap else px - w / 2
                 var y = if (label.beside) py - h / 2 else py - h - gap
                 // Its point is on screen: keep the whole label on screen too, clear of
-                // earlier labels. A point panned off screen takes its label with it.
+                // earlier labels. A point panned off-screen takes its label with it.
                 val onScreen = label.x in 0f..width.toFloat() && label.y in 0f..height.toFloat()
                 if (onScreen && w <= width && h <= height) {
                     fun fits(cx: Int, cy: Int) = cx >= 0 && cy >= 0 && cx + w <= width && cy + h <= height &&

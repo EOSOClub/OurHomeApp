@@ -65,8 +65,8 @@ fun LoginScreen(
         p.server?.let { server = it; showServer = true }
         if (p.note != null) showServer = true
         error = null
-        setupNote = p.note ?: "Your username is filled in. Sign in with the temporary password from the adult " +
-            "setting up your phone, then choose your own."
+        setupNote = p.note ?: ("Your username is filled in. Sign in with the temporary password from the adult " +
+            "setting up your phone, then choose your own.")
         onPrefillUsed()
     }
 

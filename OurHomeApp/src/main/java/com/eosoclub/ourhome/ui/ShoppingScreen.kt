@@ -47,7 +47,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import com.eosoclub.ourhome.data.PageAccess
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -300,7 +299,6 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
         }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ShoppingScreen(
     api: ApiClient,
@@ -825,7 +823,7 @@ internal fun itemDetails(item: ShoppingItem): String? = listOfNotNull(
 internal fun priceText(price: Double): String = BigDecimal(price.toString()).stripTrailingZeros().toPlainString()
 
 /** The typed price the server takes (0 to 1,000,000), or null for blank or anything else. */
-internal fun priceOrNull(text: String): Double? = text.trim().toDoubleOrNull()?.takeIf { it >= 0 && it <= 1_000_000 }
+internal fun priceOrNull(text: String): Double? = text.trim().toDoubleOrNull()?.takeIf { it in 0.0..1_000_000.0 }
 
 /**
  * The web's LinkField: a product link, and "Fetch details" to read the page's

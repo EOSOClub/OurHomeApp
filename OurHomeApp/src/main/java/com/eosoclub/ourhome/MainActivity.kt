@@ -148,7 +148,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         NfcAdapter.getDefaultAdapter(this)?.disableReaderMode(this)
-        // A write only makes sense while the user is looking at the prompt.
+        // A White only makes sense while the user is looking at the prompt.
         NfcScans.cancelWrite()
     }
 }

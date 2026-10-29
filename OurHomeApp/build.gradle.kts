@@ -16,11 +16,11 @@ plugins {
 }
 
 // Instant alerts (Firebase Cloud Messaging) are optional: the plugin is only
-// applied when this install's google-services.json (gitignored) is present.
+// applied when this installation's google-services.json (gitignored) is present.
 // Without it the app builds and runs normally on its hourly check alone.
 // Setup: docs/push-notifications.md in the web repo.
 if (file("google-services.json").exists()) {
-    apply(plugin = libs.plugins.google.services.get().pluginId)
+    pluginManager.apply(libs.plugins.google.services.get().pluginId)
 }
 
 // Private per-install settings (gitignored). See settings.example.yml.

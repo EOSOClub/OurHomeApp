@@ -56,7 +56,7 @@ import java.util.UUID
  *    - Protecting one: with a parent PIN set, the PIN screen covers it
  *      ([ParentPinActivity]); the right PIN opens it until they leave it or
  *      the screen turns off ([openWithPin]), anything else goes to the home
- *      screen. Without a PIN, and always for the uninstall prompt (Prevent
+ *      screen. Without a PIN, and always for the uninstallation prompt (Prevent
  *      uninstall refuses it anyway), straight to the home screen.
  *    - The adults who look after this member are told when the PIN opens a
  *      screen, unlocks Our Home, or is wrong too often ([PinEvent]).
@@ -99,7 +99,7 @@ object CloseGuard {
     /**
      * The screens the guard protects. [wire]: the server's name for it (web
      * lib/parentPin.ts PIN_SCREENS). [pinOpens]: whether the parent PIN screen
-     * covers it; never the uninstall prompt, which Prevent uninstall refuses
+     * covers it; never the uninstallation prompt, which Prevent uninstall refuses
      * anyway (Unlock Our Home in Profile is the way to uninstall).
      */
     enum class Screen(val wire: String, val pinOpens: Boolean = true) {
@@ -233,9 +233,6 @@ object CloseGuard {
     fun isAdminActive(context: Context): Boolean = runCatching {
         context.getSystemService(DevicePolicyManager::class.java)?.isAdminActive(adminComponent(context)) == true
     }.getOrDefault(false)
-
-    /** Both Accessibility ("Keep Our Home running") and Device admin (uninstall lock) are on. */
-    fun isFullyEnabled(context: Context): Boolean = isEnabled(context) && isAdminActive(context)
 
     fun adminComponent(context: Context): ComponentName =
         ComponentName(context, CloseGuardAdminReceiver::class.java)
@@ -495,7 +492,7 @@ object CloseGuard {
      */
     fun completeEmergencyUnlock(context: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
         val readyAt = emergencyReadyAtMs(context)
-        if (readyAt <= 0L || nowMs < readyAt) return false
+        if (readyAt !in 1L..nowMs) return false
         PhoneCheckIn.notifyEmergencyStageNow(context.applicationContext, "unlocked")
         unlockAndRemoveAdmin(context, nowMs)
         return true
@@ -610,7 +607,7 @@ object CloseGuard {
      * The "Activate device admin app" prompt's words (Settings'
      * `add_device_admin` button), its English title, and English. This is the
      * screen the parent needs to turn protection on, so the guard must never
-     * close it even though it shows the admin's [close_guard_admin_name] label.
+     * close it even though it shows the admin's [R.string.close_guard_admin_name] label.
      */
     @SuppressLint("DiscouragedApi")
     internal fun activateAdminLabels(context: Context): Set<String> {
@@ -759,6 +756,8 @@ class CloseGuardAdminReceiver : DeviceAdminReceiver() {
     }
 }
 
+// Play Policy Insights: never on Google Play (see AndroidManifest.xml).
+@SuppressLint("AccessibilityPolicy")
 class CloseGuardService : AccessibilityService() {
     private var connection: StreamConnection? = null
     private var forceStopLabels: Set<String> = emptySet()
@@ -880,7 +879,7 @@ class CloseGuardService : AccessibilityService() {
 
     /**
      * A protected [screen] in [windowPackage]: the parent PIN screen over it
-     * when the PIN can open it ([ParentPinActivity]); otherwise (the uninstall
+     * when the PIN can open it ([ParentPinActivity]); otherwise (the uninstallation
      * prompt, or no parent PIN set) to the home screen, saying [why]. Asked
      * again on every look while it's in front: once the PIN screen is, the
      * app in front is Our Home, so it isn't.

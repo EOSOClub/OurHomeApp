@@ -28,7 +28,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -417,7 +416,6 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         state.update { s -> s.copy(requests = s.requests.map { if (it.id == updated.id) updated else it }) }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RequestsScreen(
     api: ApiClient,
@@ -485,7 +483,7 @@ fun RequestsScreen(
                                 busy = r.id in state.busy,
                                 loadPicture = vm::picture,
                                 onApprove = {
-                                    // A purchase can go on a shopping list: ask which. Otherwise approve at once.
+                                    // A purchase can go on a shopping list: ask which. Otherwise, approve at once.
                                     if (kind == "purchase" && module.shoppingLists.isNotEmpty()) vm.startApprove(r) else vm.complete(r)
                                 },
                                 onDecline = { vm.startDecline(r) },
@@ -1039,7 +1037,6 @@ private fun ApproveDialog(
  * open until it's saved; [error] says why it wasn't (the snackbar is behind).
  * Without [requireDueDate] (the head's choice) "No date" accepts without one.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AcceptDatePicker(
     rescheduling: Boolean,

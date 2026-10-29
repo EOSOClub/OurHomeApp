@@ -1,5 +1,6 @@
 package com.eosoclub.ourhome.ui
 
+import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ContentResolver
@@ -34,7 +35,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,6 +48,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -93,6 +94,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.roundToLong
 
 /**
  * The web's Settings page (head + managers): points rate and calendar (head),
@@ -331,7 +333,7 @@ fun SettingsScreen(
         onRefresh = { vm.refresh(features) },
         modifier = modifier.fillMaxSize(),
     ) {
-        if (loadState(state.loading, state.error, state.categories == null, "", { vm.refresh(features) })) {
+        if (loadState(state.loading, state.error, state.categories == null, "") { vm.refresh(features) }) {
             return@PullToRefreshBox
         }
         Column(
@@ -379,7 +381,7 @@ fun SettingsScreen(
 @Composable
 private fun TimeZoneCard(saved: PointsSettings, busy: Boolean, errors: FormErrors, onSave: (String, Int) -> Unit) {
     var timezone by remember { mutableStateOf(saved.timezone) }
-    var weekStartsOn by remember { mutableStateOf(saved.weekStartsOn) }
+    var weekStartsOn by remember { mutableIntStateOf(saved.weekStartsOn) }
     val phoneZone = ZoneId.systemDefault().id
     val zoneError = errors["timezone"]
 
@@ -431,7 +433,7 @@ private fun PointsCard(saved: PointsSettings, busy: Boolean, errors: FormErrors,
             supportingText = {
                 Text(
                     rateError
-                        ?: ((minutes?.let { "45 min of work = ${formatQuantity(Math.round(45 / it * 100) / 100.0)} pts. " } ?: "") +
+                        ?: ((minutes?.let { "45 min of work = ${formatQuantity((45 / it * 100).roundToLong() / 100.0)} pts. " } ?: "") +
                             "Only new calculations use it; existing tasks keep their points."),
                 )
             },
@@ -624,7 +626,6 @@ private fun CategoriesCard(categories: List<CategoryAdmin>, busy: Boolean, vm: S
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun CategoryEditor(category: CategoryAdmin, busy: Boolean, vm: SettingsViewModel, onClose: () -> Unit) {
     val isNew = category.id.isEmpty()
@@ -984,7 +985,11 @@ private fun HomeAssistantCard(
  * Copies [text]. A [sensitive] clip (a token, a password) is hidden from
  * Android's clipboard preview, so it isn't shown on screen or to keyboard
  * suggestions.
+ *
+ * EXTRA_IS_SENSITIVE is new in Android 13 but compiles to a plain string, which
+ * is Android's own advice for older phones; Android 12 just ignores it.
  */
+@SuppressLint("InlinedApi")
 @Composable
 internal fun CopyButton(
     text: String,

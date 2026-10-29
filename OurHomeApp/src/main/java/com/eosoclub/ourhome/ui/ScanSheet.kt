@@ -87,7 +87,7 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
         val format: TagFormat = TagFormat.OurHome,
         val busy: Boolean = false,
         val error: String? = null,
-        /** The fields the server named in the last failure (a new item's are all under "newItem", saying which). */
+        /** The fields the server named in the last failure (a new items are all under "newItem", saying which). */
         val fieldErrors: Map<String, String> = emptyMap(),
         /** Showing the setup form (new tag, or "Change item"). */
         val settingUp: Boolean = false,
@@ -486,7 +486,7 @@ private fun ScanActionChooser(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    if (action == NOTIFY && lists != null && lists.isNotEmpty()) {
+    if (action == NOTIFY && !lists.isNullOrEmpty()) {
         DropdownField(
             "“Add to list” uses",
             listOf("" to "First grocery list") + lists.map { it.id to it.name },

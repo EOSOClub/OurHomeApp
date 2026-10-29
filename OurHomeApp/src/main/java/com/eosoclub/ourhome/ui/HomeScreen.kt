@@ -551,7 +551,7 @@ fun HomeScreen(
         }
     }
 
-    // Refresh stock afterwards so the Inventory tab shows the new numbers.
+    // Refresh stock afterward so the Inventory tab shows the new numbers.
     // ± stock and binding a tag need any Inventory access (as on the server).
     ScanSheet(scan, canWrite = access.inventory.any, onFinished = { inventory.refresh() })
 

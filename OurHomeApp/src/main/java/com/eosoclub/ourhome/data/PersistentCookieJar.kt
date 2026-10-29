@@ -11,7 +11,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  * Keeps Better Auth's session cookies across app restarts.
  *
  * Cookies are stored in their Set-Cookie form, keyed by name/domain/path, and
- * re-parsed against the origin they came from. Storage is app-private
+ * reparsed against the origin they came from. Storage is app-private
  * SharedPreferences; good enough for an experiment, not hardened storage.
  */
 class PersistentCookieJar(private val prefs: SharedPreferences) : CookieJar {

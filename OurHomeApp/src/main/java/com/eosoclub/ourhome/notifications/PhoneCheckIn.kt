@@ -38,7 +38,7 @@ import java.util.UUID
  * which way, battery Unrestricted, Android's standby bucket, Stay connected,
  * and whether "Keep Our Home running" is on in Accessibility).
  *
- * While an adult looks after this member, also its [status] (battery, network
+ * While an adult looks after this member, also its `status` (battery, network
  * and mobile signal), so they're told when the battery runs low, and a phone
  * that goes quiet can be told apart: flat, out of signal, or switched off
  * ([sendBeforeShutdown]). The server also keeps the Map's battery fresh from
@@ -53,7 +53,7 @@ import java.util.UUID
  * sends what Private DNS is set to); a change to any of them wakes the phone
  * to check in at once.
  *
- * Also what the parent PIN did here since a check-in last got through
+ * Also, what the parent PIN did here since a check-in last got through
  * ([CloseGuard.pendingPinEvents]), which checks in at once, so the adults who
  * look after this member are told.
  */
@@ -103,8 +103,8 @@ object PhoneCheckIn {
             batteryUnrestricted = BatteryAccess.isUnrestricted(context),
             standbyBucket = BatteryAccess.standbyBucket(context),
             stayConnected = StayConnected.isOn(context),
-            closeGuard = if (emergencyActive) false else CloseGuard.isEnabled(context),
-            uninstallGuard = if (emergencyActive) false else CloseGuard.isAdminActive(context),
+            closeGuard = !emergencyActive && CloseGuard.isEnabled(context),
+            uninstallGuard = !emergencyActive && CloseGuard.isAdminActive(context),
             emergencyUnlockStage = dueStage,
             emergencyUnlockReadyAtMs = readyAt,
             status = if (lookedAfter) readStatus(context) else null,
@@ -212,7 +212,7 @@ object PhoneCheckIn {
         return DeviceStatus(battery?.pct, battery?.charging, network, signal)
     }
 
-    /** Made once per install; a reinstall gets a new one. Also names this phone's Stay connected stream. */
+    /** Made once per install; a reinstallation gets a new one. Also names this phone's Stay connected stream. */
     fun installId(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.getString(KEY_INSTALL_ID, null)?.let { return it }

@@ -2,7 +2,11 @@
 build/
 /app/build/
 local.properties
-.idea/
+# Android Studio settings stay local, except the shared inspection profile and
+# project dictionary (which warnings are ignored, and why).
+.idea/*
+!.idea/inspectionProfiles/
+!.idea/dictionaries/
 *.iml
 .kotlin/
 captures/

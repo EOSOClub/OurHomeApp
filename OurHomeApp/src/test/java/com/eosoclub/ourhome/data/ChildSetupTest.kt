@@ -99,7 +99,7 @@ class ChildSetupTest {
 
     @Test
     fun `a setup link fills in the username, and the server only when the app has none`() {
-        // A fresh install with no server built in: the link's server is used.
+        // A fresh installation with no server built in: the link's server is used.
         assertEquals(
             SetupPrefill("noah", "https://home.example.com", null),
             setupPrefill(" noah ", "https://home.example.com/", ""),

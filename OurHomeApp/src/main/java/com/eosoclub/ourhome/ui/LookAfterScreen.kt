@@ -459,7 +459,7 @@ internal fun LookAfterScreen(
     }
 
     Box(modifier.fillMaxSize()) {
-        if (loadState(state.loading, state.error, !state.loaded, "", { vm.load() })) return@Box
+        if (loadState(state.loading, state.error, !state.loaded, "") { vm.load() }) return@Box
         val lookAfter = state.lookAfter
         // Someone no longer looked after: back to the cards.
         val selected = lookAfter?.people?.firstOrNull { it.id == selectedId }
@@ -521,42 +521,41 @@ internal fun LookAfterScreen(
             )
             // Keyed, so opening someone else's page starts with their cards folded.
             key(selected.id) {
-                val person = selected
-                val saving = state.savingRequired?.takeIf { it.first == person.id }
-                val savingUsage = state.savingUsage?.takeIf { it.first == person.id }
+                val saving = state.savingRequired?.takeIf { it.first == selected.id }
+                val savingUsage = state.savingUsage?.takeIf { it.first == selected.id }
                 LookedAfterRow(
-                    person,
+                    selected,
                     canRing = lookAfter.canRing,
-                    required = saving?.second ?: person.required,
+                    required = saving?.second ?: selected.required,
                     saving = saving != null,
-                    sharesUsage = savingUsage?.second ?: person.appUsage.shared,
+                    sharesUsage = savingUsage?.second ?: selected.appUsage.shared,
                     savingUsage = savingUsage != null,
-                    onRing = { vm.ring(person, showMessage) },
-                    onRequired = { vm.setRequired(person, it, showMessage) },
-                    onUsage = { vm.setUsage(person, it, showMessage) },
-                    savingRule = state.savingRule?.takeIf { it.first == person.id }?.let { it.second to it.third },
-                    onRule = { rule, required -> vm.setRule(person, rule, required, showMessage) },
-                    savingWebFilter = state.savingWebFilter?.takeIf { it.first == person.id }?.let { it.second },
-                    webFilterSaving = state.savingWebFilter?.first == person.id,
-                    onWebFilter = { vm.setWebFilter(person, it, showMessage) },
+                    onRing = { vm.ring(selected, showMessage) },
+                    onRequired = { vm.setRequired(selected, it, showMessage) },
+                    onUsage = { vm.setUsage(selected, it, showMessage) },
+                    savingRule = state.savingRule?.takeIf { it.first == selected.id }?.let { it.second to it.third },
+                    onRule = { rule, required -> vm.setRule(selected, rule, required, showMessage) },
+                    savingWebFilter = state.savingWebFilter?.takeIf { it.first == selected.id }?.second,
+                    webFilterSaving = state.savingWebFilter?.first == selected.id,
+                    onWebFilter = { vm.setWebFilter(selected, it, showMessage) },
                     icons = icons,
                     loadIcon = vm::loadIcon,
-                    usageOpen = person.id in state.usageOpen,
-                    usageHistory = state.usageHistory[person.id],
-                    usageHistoryFailed = person.id in state.usageHistoryFailed,
-                    onToggleUsage = { vm.toggleUsageHistory(person.id) },
-                    savingBlock = state.savingBlock?.takeIf { it.first == person.id }?.let { it.second to it.third },
-                    onBlock = { app, label, blocked -> vm.setBlocked(person, app, label, blocked, showMessage) },
-                    savingLimit = state.savingLimit?.takeIf { it.first == person.id }?.let { it.second to it.third },
-                    onLimit = { app, label, minutes -> vm.setLimit(person, app, label, minutes, showMessage) },
-                    savingSchedule = state.savingSchedule == person.id,
+                    usageOpen = selected.id in state.usageOpen,
+                    usageHistory = state.usageHistory[selected.id],
+                    usageHistoryFailed = selected.id in state.usageHistoryFailed,
+                    onToggleUsage = { vm.toggleUsageHistory(selected.id) },
+                    savingBlock = state.savingBlock?.takeIf { it.first == selected.id }?.let { it.second to it.third },
+                    onBlock = { app, label, blocked -> vm.setBlocked(selected, app, label, blocked, showMessage) },
+                    savingLimit = state.savingLimit?.takeIf { it.first == selected.id }?.let { it.second to it.third },
+                    onLimit = { app, label, minutes -> vm.setLimit(selected, app, label, minutes, showMessage) },
+                    savingSchedule = state.savingSchedule == selected.id,
                     onSaveSchedule = { id, preset, allowed, onSaved ->
-                        vm.saveSchedule(person, id, preset, allowed, showMessage, onSaved)
+                        vm.saveSchedule(selected, id, preset, allowed, showMessage, onSaved)
                     },
-                    onRemoveSchedule = { vm.removeSchedule(person, it, showMessage) },
-                    savingPoints = state.savingPoints == person.id,
-                    onPointsRule = { rate, cap -> vm.setPointsForTime(person, rate, cap, showMessage) },
-                    onGive = { vm.giveExtraTime(person, it, showMessage) },
+                    onRemoveSchedule = { vm.removeSchedule(selected, it, showMessage) },
+                    savingPoints = state.savingPoints == selected.id,
+                    onPointsRule = { rate, cap -> vm.setPointsForTime(selected, rate, cap, showMessage) },
+                    onGive = { vm.giveExtraTime(selected, it, showMessage) },
                 )
             }
         }
@@ -1066,7 +1065,7 @@ private fun DailyLimits(
     saving: Pair<String, Int?>?,
     onLimit: (app: String, label: String, minutes: Int?) -> Unit,
 ) {
-    val minutesOf = { app: String, stored: Int? -> saving?.takeIf { it.first == app }?.let { it.second } ?: stored }
+    val minutesOf = { app: String, stored: Int? -> saving?.takeIf { it.first == app }?.second ?: stored }
     // Opens by itself while something stops their limits working.
     val warn = !limits.isEmpty && (limits.counts == false || blocksWork == false)
     CollapsibleCard("Daily limits", limitsSummary(limits) ?: "No limits yet", startOpen = warn, openWhen = warn) {

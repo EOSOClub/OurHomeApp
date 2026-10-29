@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- Timber's own lint check, which arrives with MapLibre (it uses Timber).
+         Our Home logs with android.util.Log and doesn't use Timber. -->
+    <issue id="LogNotTimber" severity="ignore" />
+</lint>

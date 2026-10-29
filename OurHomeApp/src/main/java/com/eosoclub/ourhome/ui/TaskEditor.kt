@@ -30,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -162,7 +163,7 @@ internal fun TaskEditor(
     var rollover by remember { mutableStateOf(rule?.rollover ?: false) }
     var cycleWeekdays by remember { mutableStateOf(parseIntList(rule?.cycleWeekdays).toSet()) }
     var cycleMonthdays by remember { mutableStateOf(parseIntList(rule?.cycleMonthdays).toSet()) }
-    var nextKey by remember { mutableStateOf(task?.subtasks?.size ?: 0) }
+    var nextKey by remember { mutableIntStateOf(task?.subtasks?.size ?: 0) }
     // Titles/reset days per step, and their time/points at the same index.
     val steps = remember {
         mutableStateListOf<StepEdit>().apply {

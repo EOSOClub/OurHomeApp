@@ -1,0 +1,21 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <!-- Grammar and style opinions on comments and docs: the project writes
+         British spelling and uses "install" as a noun on purpose. -->
+    <inspection_tool class="GrazieInspection" enabled="false" level="GRAMMAR_ERROR" enabled_by_default="false" />
+    <inspection_tool class="GrazieStyle" enabled="false" level="STYLE_SUGGESTION" enabled_by_default="false" />
+    <!-- Kotlin style preferences, not problems. -->
+    <inspection_tool class="BooleanLiteralArgument" enabled="false" level="INFORMATION" enabled_by_default="false" />
+    <inspection_tool class="ConvertLongToDuration" enabled="false" level="WEAK WARNING" enabled_by_default="false" />
+    <inspection_tool class="SameParameterValue" enabled="false" level="WARNING" enabled_by_default="false" />
+    <inspection_tool class="SameReturnValue" enabled="false" level="WARNING" enabled_by_default="false" />
+    <!-- Positional destructuring breaks silently if a class's fields are
+         reordered (e.g. TaskPlace's room and floor are the same type). -->
+    <inspection_tool class="DestructuringDeclaration" enabled="false" level="INFORMATION" enabled_by_default="false" />
+    <!-- README: GitHub only honours align="center", and table source alignment
+         doesn't change how it renders. -->
+    <inspection_tool class="HtmlDeprecatedAttribute" enabled="false" level="WARNING" enabled_by_default="false" />
+    <inspection_tool class="MarkdownIncorrectTableFormatting" enabled="false" level="WEAK WARNING" enabled_by_default="false" />
+  </profile>
+</component>

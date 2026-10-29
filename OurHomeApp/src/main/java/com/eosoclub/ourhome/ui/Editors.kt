@@ -160,7 +160,6 @@ internal fun EditorDialog(
  * A read-only field that opens a date picker; the trailing button clears it.
  * [error]: what's wrong with it (red, said under it).
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun DateField(label: String, date: LocalDate?, error: String? = null, onChange: (LocalDate?) -> Unit) {
     var picking by remember { mutableStateOf(false) }
@@ -178,7 +177,7 @@ internal fun DateField(label: String, date: LocalDate?, error: String? = null, o
         // The text field swallows taps, so an overlay opens the picker.
         Box(Modifier.matchParentSize().padding(end = 48.dp).clickable { picking = true })
         if (date != null) {
-            IconButton(onClick = { onChange(null) }, modifier = Modifier.align(androidx.compose.ui.Alignment.CenterEnd)) {
+            IconButton(onClick = { onChange(null) }, modifier = Modifier.align(Alignment.CenterEnd)) {
                 Icon(Icons.Filled.Clear, contentDescription = "Clear $label")
             }
         }
@@ -285,7 +284,6 @@ internal fun DayToggleRow(
  * Equal-width segments rather than chips in a FlowRow: on narrow phones the FlowRow squeezed the
  * last chip into the leftover space and its label wrapped one letter per line.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ChoiceChips(options: List<String>, selected: String, onSelect: (String) -> Unit) {
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {

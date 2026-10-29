@@ -25,11 +25,12 @@ import java.io.File
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
-/** [status]: the HTTP status when the server answered with an error, for callers that tell them apart. */
 /**
  * A refused request. [message] says why in plain words; [fieldErrors]: the
  * first problem for each form field the server named (a 422, or a 409 like a
  * username already taken), so a form can mark those fields.
+ *
+ * [status]: the HTTP status when the server answered with an error, for callers that tell them apart.
  */
 class ApiException(
     message: String,
@@ -350,48 +351,6 @@ class ApiClient(
     suspend fun deleteTask(taskId: String) =
         callUnit(post("/api/tasks/delete", buildJsonObject { put("taskId", taskId) }))
 
-    /** Appends a checklist item; returns the whole updated task. */
-    suspend fun addSubtask(taskId: String, title: String, resetIntervalDays: Int?): Task =
-        call(
-            post(
-                "/api/subtasks",
-                buildJsonObject {
-                    put("taskId", taskId)
-                    put("title", title)
-                    put("resetIntervalDays", resetIntervalDays)
-                },
-            ),
-            Task.serializer(),
-        )
-
-    /** Saves a checklist item's title and auto-uncheck cadence (null clears it). */
-    suspend fun updateSubtask(subtaskId: String, title: String, resetIntervalDays: Int?) =
-        callUnit(
-            post(
-                "/api/subtasks/update",
-                buildJsonObject {
-                    put("subtaskId", subtaskId)
-                    put("title", title)
-                    put("resetIntervalDays", resetIntervalDays)
-                },
-            ),
-        )
-
-    suspend fun deleteSubtask(subtaskId: String) =
-        callUnit(post("/api/subtasks/delete", buildJsonObject { put("subtaskId", subtaskId) }))
-
-    /** Sets the checklist order to [subtaskIds] (every item of the task). */
-    suspend fun reorderSubtasks(taskId: String, subtaskIds: List<String>) =
-        callUnit(
-            post(
-                "/api/subtasks/reorder",
-                buildJsonObject {
-                    put("taskId", taskId)
-                    putJsonArray("subtaskIds") { subtaskIds.forEach { add(it) } }
-                },
-            ),
-        )
-
     /** Floors and rooms in the household's order; readable by any member. */
     suspend fun places(): Places = call(get("/api/places"), Places.serializer())
 
@@ -574,6 +533,8 @@ class ApiClient(
 
     // --- NFC tags ------------------------------------------------------------
 
+    // URLEncoder.encode only declares an IOException; it never blocks.
+    @Suppress("BlockingMethodInNonBlockingContext")
     suspend fun nfcLookup(tagId: String): NfcLookup =
         call(get("/api/nfc/lookup?tagId=${java.net.URLEncoder.encode(tagId, "UTF-8")}"), NfcLookup.serializer())
 
@@ -847,9 +808,11 @@ class ApiClient(
     suspend fun memberAccounts(): List<MemberAccount> =
         call(get("/api/members"), ListSerializer(MemberAccount.serializer()))
 
-    /** Adds someone with a temporary password they must change; a blank [email] gets a placeholder. */
-    /** [supervisorIds]: who supervises a new child or teen (Head of House only; empty sends none). */
-    /** [setup]: their phone's choices (Set up a child; only from one of their supervisors). */
+    /**
+     * Adds someone with a temporary password they must change; a blank [email] gets a placeholder.
+     * [supervisorIds]: who supervises a new child or teen (Head of House only; empty sends none).
+     * [setup]: their phone's choices (Set up a child; only from one of their supervisors).
+     */
     suspend fun createMember(
         name: String,
         username: String,
@@ -949,7 +912,7 @@ class ApiClient(
     // --- Instant alerts (FCM) ------------------------------------------------
 
     /**
-     * Tells the server this install's FCM token belongs to the signed-in user.
+     * Tells the server this installation's FCM token belongs to the signed-in user.
      * [installId]: the check-in's, so a token Firebase later calls dead tells
      * the server which phone lost OurHome.
      */
@@ -1342,6 +1305,7 @@ class ApiClient(
         ).asked
 
     /** Every stored day of a supervised child's app usage, with all its apps (409 while it isn't shared). */
+    @Suppress("BlockingMethodInNonBlockingContext") // URLEncoder.encode never blocks.
     suspend fun usageHistory(supervisedId: String): UsageHistory =
         call(
             get("/api/supervision/usage/history?supervisedId=" + java.net.URLEncoder.encode(supervisedId, "UTF-8")),
@@ -1747,7 +1711,7 @@ class ApiClient(
                     // until it's back on, so sign out and say why.
                     val code = (envelope.error?.details as? JsonObject)?.get("code")?.jsonPrimitive?.contentOrNull
                     if (res.code == 403 && code == "household_disabled") {
-                        onUnauthorized(envelope.error?.message)
+                        onUnauthorized(envelope.error.message)
                         throw UnauthorizedException()
                     }
                     throw ApiException(

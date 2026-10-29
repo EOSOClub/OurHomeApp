@@ -52,7 +52,7 @@ fun setupSteps(required: PhoneSetupRequired, checks: PhoneSetupChecks): List<Set
 /**
  * Whether Android may refuse [step] as a restricted setting, so its card says
  * how to allow it (App info, ⋮, Allow restricted settings; the menu item only
- * appears after Android has refused once). Only for an install Android
+ * appears after Android has refused once). Only for an installation Android
  * restricts ([restrictedInstall]: from a file, Android 13 or later):
  * Accessibility from Android 13, Usage access and Device admin from 15.
  */

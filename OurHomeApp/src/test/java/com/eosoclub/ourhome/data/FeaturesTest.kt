@@ -12,6 +12,7 @@ class FeaturesTest {
     private val json = Json { ignoreUnknownKeys = true }
 
     @Test
+    @Suppress("KotlinMisorderedAssertEqualsArguments") // Already expected, actual.
     fun olderServerMeansEverythingOn() {
         assertEquals(Features.ALL, Features.from(null))
     }

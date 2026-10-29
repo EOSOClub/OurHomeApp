@@ -27,7 +27,7 @@ import com.eosoclub.ourhome.data.reminderLine
  * something new appears ([planReminderAlert]); otherwise it is refreshed
  * silently while showing, and removed once nothing is unread for this user
  * (handled, or marked read by them on any of their devices; read state is
- * per person, so someone else reading it changes nothing here).
+ * per person, so someone else reads it changes nothing here).
  */
 object HouseholdReminderAlerts {
     private const val CHANNEL_ID = "household_reminders"

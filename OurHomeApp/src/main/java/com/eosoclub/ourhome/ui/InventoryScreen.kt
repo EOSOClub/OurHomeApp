@@ -27,7 +27,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -179,7 +178,6 @@ class InventoryViewModel(private val api: ApiClient) : ViewModel() {
         state.update { s -> s.copy(items = s.items.map { if (it.id == id) transform(it) else it }) }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InventoryScreen(
     api: ApiClient,
@@ -414,7 +412,7 @@ private fun InventoryItemEditor(
     /** False when the user may only delete this item, not change it. */
     canSave: Boolean,
     onDismiss: () -> Unit,
-    /** [place] is null when there was no picker (the item's place is left alone). */
+    /** `place` is null when there was no picker (the item's place is left alone). */
     onSave: (name: String, unit: String?, quantity: Double, lowThreshold: Double, reorderDays: Int?, place: String?) -> Unit,
     onDelete: (() -> Unit)?,
 ) {

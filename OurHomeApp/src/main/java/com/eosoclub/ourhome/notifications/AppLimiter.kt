@@ -270,7 +270,7 @@ object AppLimiter {
         }
     }
 
-    /** Today's warned or reached entries; another day's are forgotten. */
+    /** Today's warned or reached entries; another days are forgotten. */
     private fun todaySet(context: Context, today: String, key: String): Set<String> {
         val prefs = prefs(context)
         if (prefs.getString(KEY_DAY, null) != today) return emptySet()

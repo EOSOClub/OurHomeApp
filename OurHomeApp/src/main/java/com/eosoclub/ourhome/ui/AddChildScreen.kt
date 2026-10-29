@@ -95,7 +95,7 @@ class AddChildViewModel(private val api: ApiClient, private val actorId: String)
         val choices: ChildSetupChoices = ChildSetupChoices(),
     )
 
-    /** The member just added. [password]: the temporary one, kept to show on Install. */
+    /** The member just added. [password]: the temporary one, kept to show on Installation. */
     data class Made(val id: String, val name: String, val username: String, val password: String, val supervisorIds: List<String>)
 
     data class UiState(
@@ -291,7 +291,7 @@ internal fun AddChildScreen(
     }
 
     Box(modifier.fillMaxSize()) {
-        if (loadState(state.loading, state.error, state.supervision == null, "", { vm.load() })) return@Box
+        if (loadState(state.loading, state.error, state.supervision == null, "") { vm.load() }) return@Box
         val supervision = state.supervision ?: return@Box
         Column(
             Modifier

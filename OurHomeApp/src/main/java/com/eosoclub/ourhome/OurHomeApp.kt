@@ -1,7 +1,6 @@
 package com.eosoclub.ourhome
 
 import android.app.Application
-import android.content.Context
 import com.eosoclub.ourhome.data.AppSettings
 import com.eosoclub.ourhome.data.SessionManager
 
@@ -13,10 +12,10 @@ class OurHomeApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        val prefs = getSharedPreferences("settings", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
         session = SessionManager(
             prefs = prefs,
-            cookiePrefs = getSharedPreferences("cookies", Context.MODE_PRIVATE),
+            cookiePrefs = getSharedPreferences("cookies", MODE_PRIVATE),
         )
         settings = AppSettings(prefs)
     }

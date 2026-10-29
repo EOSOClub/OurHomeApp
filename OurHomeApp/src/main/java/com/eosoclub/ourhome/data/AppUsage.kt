@@ -1,5 +1,6 @@
 package com.eosoclub.ourhome.data
 
+import kotlin.math.roundToInt
 import kotlinx.serialization.Serializable
 
 // App usage (parental controls; web lib/appUsage.ts, appUsageService). While
@@ -34,7 +35,7 @@ const val NEW_APPS_PER_REPORT = 50
  * The apps in [current] (package name to the name it shows) that weren't in
  * [known], the apps seen last time. Nothing when there was no last time: the
  * first look only remembers what's there, so turning sharing on (or a fresh
- * install of OurHome) doesn't report every app as new.
+ * installation of OurHome) doesn't report every app as new.
  */
 fun newApps(known: Set<String>?, current: Map<String, String>): Map<String, String> =
     if (known == null) emptyMap() else current.filterKeys { it !in known }
@@ -171,7 +172,7 @@ fun chartDays(days: List<UsageHistoryDay>, today: String): List<ChartDay> {
 fun averageMinutes(chart: List<ChartDay>): Int? {
     val reported = chart.mapNotNull { it.minutes }
     if (reported.isEmpty()) return null
-    return Math.round(reported.sum().toDouble() / reported.size).toInt()
+    return (reported.sum().toDouble() / reported.size).roundToInt()
 }
 
 /** A chart bar's short day name: "Mon" (web: weekdayLabel). */

@@ -141,7 +141,7 @@ class QuickScanReceiver : BroadcastReceiver() {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 when (intent.action) {
-                    QuickScanNotifier.ACTION_USE_ONE -> applyAmount(context, api, tagId, itemName, -1.0)
+                    QuickScanNotifier.ACTION_USE_ONE -> applyAmount(context, api, tagId, -1.0)
                     QuickScanNotifier.ACTION_AMOUNT -> {
                         val typed = RemoteInput.getResultsFromIntent(intent)
                             ?.getCharSequence(QuickScanNotifier.KEY_AMOUNT)?.toString()
@@ -153,7 +153,7 @@ class QuickScanReceiver : BroadcastReceiver() {
                                 offerAmount = true,
                             )
                         } else {
-                            applyAmount(context, api, tagId, itemName, amount)
+                            applyAmount(context, api, tagId, amount)
                         }
                     }
                     QuickScanNotifier.ACTION_ADD_TO_LIST -> {
@@ -177,7 +177,6 @@ class QuickScanReceiver : BroadcastReceiver() {
         context: Context,
         api: com.eosoclub.ourhome.data.ApiClient,
         tagId: String,
-        itemName: String,
         amount: Double,
     ) {
         val item = api.nfcScan(tagId, amount)

@@ -26,7 +26,7 @@ class InstantAlertsTest {
             """data: {"type":"ring","ringerId":"alex","id":"a1"}""",
             "",
         )
-        assertEquals(listOf<Pair<String?, String>>("hello" to "{}", null to """{"type":"ring","ringerId":"alex","id":"a1"}"""), events)
+        assertEquals(listOf("hello" to "{}", null to """{"type":"ring","ringerId":"alex","id":"a1"}"""), events)
     }
 
     @Test

@@ -18,6 +18,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -516,8 +517,8 @@ internal fun UnlockOurHomeDialog(
     val duration = remember { CloseGuard.emergencyDuration(appContext) }
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
-    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
-    var emergencyReadyAt by remember { mutableStateOf(CloseGuard.emergencyReadyAtMs(appContext)) }
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var emergencyReadyAt by remember { mutableLongStateOf(CloseGuard.emergencyReadyAtMs(appContext)) }
     var showEmergency by remember { mutableStateOf(!hasPin || emergencyReadyAt > 0L) }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -531,7 +532,7 @@ internal fun UnlockOurHomeDialog(
 
     val lockoutSec = CloseGuard.pinLockoutRemainingSec(appContext, nowMs)
     val emergencyRemainingSec = if (emergencyReadyAt > nowMs) (((emergencyReadyAt - nowMs) + 999L) / 1000L).toInt() else 0
-    val emergencyReady = emergencyReadyAt > 0L && nowMs >= emergencyReadyAt
+    val emergencyReady = emergencyReadyAt in 1L..nowMs
 
     fun tryPinUnlock(uninstall: Boolean) {
         val wait = CloseGuard.pinLockoutRemainingSec(appContext)

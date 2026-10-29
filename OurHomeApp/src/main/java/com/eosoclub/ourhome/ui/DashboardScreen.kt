@@ -19,7 +19,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -89,7 +88,6 @@ internal data class WaitingRequest(val request: HouseholdRequest, val action: St
  * their points, then a short household glance and what's coming up. The
  * activity log is its own page now (⋮ → Activity, or the link at the bottom).
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun DashboardScreen(
     api: ApiClient,
@@ -113,7 +111,7 @@ internal fun DashboardScreen(
         onRefresh = { vm.refresh(features.location) },
         modifier = modifier.fillMaxSize(),
     ) {
-        if (loadState(state.loading, state.error, data == null, "", { vm.refresh(features.location) }) || data == null) {
+        if (loadState(state.loading, state.error, data == null, "") { vm.refresh(features.location) } || data == null) {
             return@PullToRefreshBox
         }
         // A server from before the redesign has no "me": show its household lists instead.
@@ -182,9 +180,9 @@ private fun Greeting(userName: String?, done: DoneToday?) {
 private fun doneTodayText(done: DoneToday): String {
     if (done.total == 0) return "Nothing ticked off yet today."
     val tasks = if (done.total == 1) "1 task" else "${done.total} tasks"
-    val mine = when {
-        done.mine == 0 -> ""
-        done.mine == done.total -> " - all by you"
+    val mine = when (done.mine) {
+        0 -> ""
+        done.total -> " - all by you"
         else -> " - ${done.mine} by you"
     }
     return "🎉 $tasks done today$mine."

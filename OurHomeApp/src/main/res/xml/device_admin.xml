@@ -2,6 +2,6 @@
 <!-- "Keep Our Home on this phone" (notifications/CloseGuard): a Device
      admin with no policies of its own. Android won't uninstall an active
      Device admin until it's turned off with the parent PIN in Our Home. -->
-<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+<device-admin>
     <uses-policies />
 </device-admin>

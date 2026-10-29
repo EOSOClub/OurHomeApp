@@ -73,7 +73,7 @@ object Push {
 
     fun isAvailable(context: Context): Boolean = FirebaseApp.getApps(context).isNotEmpty()
 
-    /** Registers this install's token with the server (sign-in, launch, token rotation). */
+    /** Registers this installation's token with the server (sign-in, launch, token rotation). */
     fun register(context: Context) {
         if (!isAvailable(context)) return
         val request = OneTimeWorkRequestBuilder<RegisterWorker>()

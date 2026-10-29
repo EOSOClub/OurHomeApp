@@ -9,7 +9,7 @@ import kotlinx.serialization.json.put
  * told why it went quiet (flat, out of signal, switched off) rather than just
  * that it did (web lib/phoneHealth.ts). Sent only while an adult looks after
  * this member: with the check-in, and when Stay connected opens its stream.
- * [network]: "wifi" | "cellular" | "other" | "none"; [signal]: mobile signal,
+ * [network]: "Wi-Fi" | "cellular" | "other" | "none"; [signal]: mobile signal,
  * 0 (none) to 4 (great). Null: Android wouldn't say.
  */
 data class DeviceStatus(

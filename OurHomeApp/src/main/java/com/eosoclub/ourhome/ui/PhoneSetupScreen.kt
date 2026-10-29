@@ -95,8 +95,7 @@ internal object PhoneSetupDevice {
      * the hint shows rather than leaving someone stuck.
      */
     fun restrictedInstall(context: Context): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
-        return runCatching {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && runCatching {
             val source = context.packageManager.getInstallSourceInfo(context.packageName).packageSource
             source == PackageInstaller.PACKAGE_SOURCE_LOCAL_FILE || source == PackageInstaller.PACKAGE_SOURCE_DOWNLOADED_FILE
         }.getOrDefault(true)

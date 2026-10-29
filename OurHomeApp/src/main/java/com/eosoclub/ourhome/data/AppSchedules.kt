@@ -130,8 +130,7 @@ fun formatClock(minutes: Int, is24: Boolean = false): String {
 
 /** "Every day", "Weekdays", "Weekends", or "Mon, Wed, Fri" (web daysLabel). */
 fun daysLabel(days: List<Int>): String {
-    val set = days.toSortedSet()
-    return when (set) {
+    return when (val set = days.toSortedSet()) {
         EVERY_DAY.toSet() -> "Every day"
         WEEKDAYS.toSet() -> "Weekdays"
         setOf(0, 6) -> "Weekends"

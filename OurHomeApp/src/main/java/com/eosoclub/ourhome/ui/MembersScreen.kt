@@ -257,7 +257,7 @@ fun MembersScreen(
         onRefresh = { vm.refresh() },
         modifier = modifier.fillMaxSize(),
     ) {
-        if (loadState(state.loading, state.error, state.members == null, "", { vm.refresh() })) {
+        if (loadState(state.loading, state.error, state.members == null, "") { vm.refresh() }) {
             return@PullToRefreshBox
         }
         val members = state.members.orEmpty()
@@ -711,7 +711,7 @@ private fun MemberEditor(member: MemberAccount, user: SessionUser, state: Member
             val checked = saving?.second ?: kid.supervisorIds
             FieldLabel("Who supervises them")
             SupervisorChecks(
-                state.supervision?.supervisors.orEmpty(),
+                state.supervision.supervisors,
                 checked = checked,
                 enabled = saving == null,
                 onToggle = { id -> vm.setSupervisors(member, if (id in checked) checked - id else checked + id) },

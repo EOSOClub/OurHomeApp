@@ -10,7 +10,7 @@ with NFC tags and phone notifications.
 [![Android](https://img.shields.io/badge/Android-12%2B%20(API%2031)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#-requirements)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)](https://developer.android.com/compose)
-[![Version](https://img.shields.io/badge/version-0.1.0-orange?style=for-the-badge)](#)
+![Version](https://img.shields.io/badge/version-0.1.0-orange?style=for-the-badge)
 
 [Features](#-features) · [Requirements](#-requirements) · [Setup](#-setup) · [Development](#development) · [🌐 Web server](https://github.com/EOSOClub/OurHome)
 

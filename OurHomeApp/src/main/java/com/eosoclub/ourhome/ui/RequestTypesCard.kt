@@ -3,7 +3,6 @@ package com.eosoclub.ourhome.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -67,7 +66,6 @@ internal fun RequestTypesCard(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RequestTypesForm(
     saved: RequestModuleSettings,
@@ -290,7 +288,6 @@ private fun DecisionSection(
 }
 
 /** Name, note on the form and who may ask: what every request type has. */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CommonFields(
     defaultLabel: String,
@@ -348,7 +345,6 @@ private fun StateBadge(enabled: Boolean, problem: Boolean) {
 }
 
 /** People to tick, for "Only the people I pick". */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PeoplePicker(members: List<Member>, selected: List<String>, onChange: (List<String>) -> Unit) {
     FlowRow {

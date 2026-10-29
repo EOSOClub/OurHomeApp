@@ -150,8 +150,8 @@ private fun redistribute(
                 s.copy(
                     minutes = minutes[i],
                     pointsCenti = points[i],
-                    minutesCustom = if (minutesDim) false else s.minutesCustom,
-                    pointsFollowTime = if (pointsDim) true else s.pointsFollowTime,
+                    minutesCustom = !minutesDim && s.minutesCustom,
+                    pointsFollowTime = pointsDim || s.pointsFollowTime,
                 )
             },
         ),

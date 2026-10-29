@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
  * A supervising adult ringing this phone (web supervisionService.ringPhone).
  * The server's high-priority push starts [RingService], which plays the alarm
  * sound on the alarm stream at full volume, so it rings even on silent, and
- * vibrates, for [RING_MS] or until Stop. The volume goes back afterwards.
+ * vibrates, for [RING_MS] or until Stop. The volume goes back afterward.
  *
  * Stop works from the lock screen: it only quiets the phone (and says so to
  * the adult who rang); it changes no household data. Who is ringing shows once
@@ -75,7 +75,7 @@ object Ring {
 
     /**
      * Tells the server what this phone did with ring [ringId]: "ringing", then
-     * "stopped" (Stop tapped) or "rang_out". Once, best effort: the adult who
+     * "stopped" (Stop tapped) or "rang_out". Once, the best effort: the adult who
      * rang sees "it rang on their phone" if the ending never arrives.
      */
     internal fun report(context: Context, ringId: String?, state: String) {

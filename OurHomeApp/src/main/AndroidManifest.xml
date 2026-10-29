@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- The *Policy ignores below silence Android Studio's Play Policy
+         Insights. Our Home is never published on Google Play (each household's
+         server builds its own copy), so Play's review rules don't apply. -->
+
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 13+: asked at runtime on first sign-in (request reminders). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -10,20 +14,26 @@
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <!-- Install the server's app updates (Profile → Android app). Android still
          asks the user once ("Install unknown apps") and confirms each install. -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:ignore="RequestInstallPackagesPolicy" />
     <!-- Presence and store reminders (location/Geofences): asked from Profile →
          Location only after the member turns sharing on. Geofences need precise
          location "all the time"; nothing is tracked in between, Android only
          reports arriving at and leaving the household's map places. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission
+        android:name="android.permission.ACCESS_BACKGROUND_LOCATION"
+        tools:ignore="BackgroundLocationPolicy" />
     <!-- Android drops geofences on reboot; this registers them again. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Live location checks (location/LiveChecks): a short location foreground
          service, with its notification showing the whole time. Only for members
          who allowed live checks on their Profile. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE"
+        tools:ignore="ForegroundServicesPolicy" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <!-- Ringing this phone (notifications/Ring): a supervising adult's ring plays
          the alarm sound for half a minute in a short media foreground service,
@@ -42,7 +52,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Stay connected (notifications/StayConnected): a foreground service that
          keeps one connection to the household's server, only while the member
-         turned it on on Profile. -->
+         turned it on in Profile. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Whether the phone is on Wi-Fi, mobile data or nothing (notifications/
          PhoneCheckIn), sent only while an adult looks after its member, so a
@@ -66,9 +76,13 @@
         <package android:name="com.android.settings" />
     </queries>
 
+    <!-- network_security_config is generated into build/ (build.gradle.kts),
+         which Android Studio's manifest check can't see. -->
+    <!--suppress AndroidDomInspection -->
     <application
         android:name=".OurHomeApp"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -206,7 +220,8 @@
             android:name=".notifications.CloseGuardService"
             android:exported="false"
             android:label="@string/close_guard_name"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            tools:ignore="AccessibilityPolicy">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>

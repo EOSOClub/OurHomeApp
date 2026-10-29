@@ -82,7 +82,7 @@ fun awaitingAcceptanceBy(
 enum class DeadlineState { DueTomorrow, DueToday, Overdue }
 
 /**
- * A maintenance deadline worth telling [userId] about. The assignee hears about
+ * A maintenance deadline worth telling `userId` about. The assignee hears about
  * due tomorrow / due today / overdue; the requester only when it's overdue
  * ([forRequester]).
  */

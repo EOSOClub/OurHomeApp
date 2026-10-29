@@ -108,7 +108,7 @@ fun Placed.placeLabel(): String? = label(room, floor)
 
 /**
  * Every place as one label. One place reads as [placeLabel]; several share
- * their floor: "Ground floor · Kitchen, Laundry; Upstairs".
+ * their floor: "First floor · Kitchen, Laundry; Upstairs".
  */
 fun Placed.placesLabel(): String? {
     val list = placeList()
