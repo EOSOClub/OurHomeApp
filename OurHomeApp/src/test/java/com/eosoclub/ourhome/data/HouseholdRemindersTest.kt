@@ -50,6 +50,8 @@ class HouseholdRemindersTest {
         assertEquals("Bill: T1", n("1", "bill_due").reminderLine())
         assertEquals("Low: T2", n("2", "low_inventory").reminderLine())
         assertEquals("Your turn: T3", n("3", "task_ready").reminderLine())
+        assertEquals("Coming up: T4", n("4", "event_reminder").reminderLine())
+        assertEquals("Trial ending: T5", n("5", "subscription_trial").reminderLine())
     }
 
     @Test
