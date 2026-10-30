@@ -21,6 +21,11 @@ package com.eosoclub.ourhome.data
 // time picked for it (web buildEventReminders); one per date, gone once it's over.
 // "subscription_trial": a subscription's free trial ends within 3 days, so there's time
 // to cancel it (web buildTrialReminders); gone once that day is over.
+// "task_review": a child this adult looks after sent a task for a check, or their step points
+// wait for one ("Riley sent “Dishes” for a check", "Riley’s steps on “Dishes” need a check");
+// gone once it's decided or taken back (web taskReviewService).
+// "task_reviewed": the answer to this child's check, outcome first ("Approved: Dishes (+5 pts)",
+// "Sent back: Dishes"); replaced by each newer answer. No photo and no buttons in either.
 val HOUSEHOLD_REMINDER_TYPES =
     setOf(
         "overdue",
@@ -36,6 +41,8 @@ val HOUSEHOLD_REMINDER_TYPES =
         "request_update",
         "event_reminder",
         "subscription_trial",
+        "task_review",
+        "task_reviewed",
     )
 
 /**
@@ -82,6 +89,7 @@ fun Notification.reminderLine(): String {
         "task_ready" -> "Your turn"
         "event_reminder" -> "Coming up"
         "subscription_trial" -> "Trial ending"
+        // "task_review" / "task_reviewed" titles already say what happened, like "request_update".
         else -> null
     }
     return if (label == null) title else "$label: $title"

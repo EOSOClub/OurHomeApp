@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.nfc.NfcAdapter
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -25,11 +26,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import com.eosoclub.ourhome.data.AppSettings
 import com.eosoclub.ourhome.data.AuthState
 import com.eosoclub.ourhome.data.SessionManager
 import com.eosoclub.ourhome.data.SetupPrefill
 import com.eosoclub.ourhome.data.ThemeMode
+import com.eosoclub.ourhome.data.launchTab
 import com.eosoclub.ourhome.data.setupPrefill
 import com.eosoclub.ourhome.nfc.NfcScans
 import com.eosoclub.ourhome.nfc.ScanHandoff
@@ -47,7 +50,11 @@ import com.eosoclub.ourhome.ui.LoginScreen
 import com.eosoclub.ourhome.ui.theme.OurHomeTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+
+/** Saved-state key: the tap id of the launch intent's tab, already handled (see launchTab). */
+private const val KEY_HANDLED_TAP_ID = "handled_tap_id"
 
 class MainActivity : ComponentActivity() {
     // A tab a notification asked to open ("requests"); consumed by HomeScreen.
@@ -56,14 +63,35 @@ class MainActivity : ComponentActivity() {
     // What a setup link's Open Our Home button filled in; consumed by LoginScreen.
     private val prefill = MutableStateFlow<SetupPrefill?>(null)
 
+    // The tap id of the launch intent's tab once handled (or skipped): kept in
+    // the saved state, so a restore or Recents never replays that tap.
+    private var handledTapId: Long? = null
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        handledTapId?.let { outState.putLong(KEY_HANDLED_TAP_ID, it) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val app = application as OurHomeApp
+        // The screen a tapped notification asks for. Read even when the activity
+        // comes back from saved state, so a saved screen (say Profile) never hides
+        // a new tap that relaunched the app; never for Recents or a replay of a
+        // tap already handled (its tap id is in the saved state). launchTab decides.
+        val decision = launchTab(
+            tab = intent.getStringExtra(RequestReminders.EXTRA_OPEN_TAB),
+            tapId = if (intent.hasExtra(RequestReminders.EXTRA_TAP_ID)) intent.getLongExtra(RequestReminders.EXTRA_TAP_ID, 0) else null,
+            launchedFromHistory = (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0,
+            lastHandledTapId = savedInstanceState?.takeIf { it.containsKey(KEY_HANDLED_TAP_ID) }?.getLong(KEY_HANDLED_TAP_ID),
+        )
+        decision.open?.let { openTab.value = it }
+        handledTapId = decision.handledTapId
         if (savedInstanceState == null) {
-            openTab.value = intent.getStringExtra(RequestReminders.EXTRA_OPEN_TAB)
             emitScanFrom(intent)
             prefillFrom(intent, app.session)
+            markReadFrom(intent, app.session)
         }
         setContent {
             val mode by app.settings.themeMode.collectAsStateWithLifecycle()
@@ -101,6 +129,23 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra(RequestReminders.EXTRA_OPEN_TAB)?.let { openTab.value = it }
         emitScanFrom(intent)
         prefillFrom(intent, (application as OurHomeApp).session)
+        markReadFrom(intent, (application as OurHomeApp).session)
+    }
+
+    /**
+     * A tapped reminder or bug report notification: what it listed is read
+     * now, on the website and the member's other phones too. Waits out the
+     * saved sign-in check on a cold start; signed out, nothing is sent.
+     */
+    private fun markReadFrom(intent: Intent, session: SessionManager) {
+        val ids = intent.getStringArrayExtra(RequestReminders.EXTRA_MARK_READ)?.toList().orEmpty()
+        // Only from our own notifications (see ScanHandoff); other apps can start us too.
+        if (ids.isEmpty() || !ScanHandoff.isOurs(this, intent)) return
+        lifecycleScope.launch {
+            if (session.state.first { it != AuthState.Checking } !is AuthState.SignedIn) return@launch
+            runCatching { session.api.markNotificationsRead(ids) }
+                .onFailure { Log.w("MainActivity", "couldn't mark ${ids.size} notification(s) read", it) }
+        }
     }
 
     /**

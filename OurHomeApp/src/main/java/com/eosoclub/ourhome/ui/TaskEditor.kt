@@ -45,6 +45,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.eosoclub.ourhome.data.CategoryRef
+import com.eosoclub.ourhome.data.CheckText
 import com.eosoclub.ourhome.data.Places
 import com.eosoclub.ourhome.data.placeChoices
 import com.eosoclub.ourhome.data.DEFAULT_MINUTES_PER_POINT
@@ -138,8 +139,17 @@ internal fun TaskEditor(
     onDismiss: () -> Unit,
     onSave: (TaskEdit) -> Unit,
     onDelete: (() -> Unit)?,
+    /** "Ask for a photo" shows; false for a teen or child someone looks after (the server refuses their change). */
+    canSetPhotoProof: Boolean = true,
+    /** The task waits for an OK on my own check: I can change nothing until I take it back. */
+    sentByMe: Boolean = false,
 ) {
     val zone = ZoneId.systemDefault()
+    // While it waits for an OK only the name, notes, places and step names may
+    // change (the server compares every value, so the full form is still sent).
+    val locked = task?.waitingForOk == true
+    val allLocked = locked && sentByMe
+    val open = !locked
     val originalDue = task?.dueDate?.let { Instant.parse(it).atZone(zone) }
     val rule = task?.recurrence
 
@@ -163,6 +173,7 @@ internal fun TaskEditor(
     var rollover by remember { mutableStateOf(rule?.rollover ?: false) }
     var cycleWeekdays by remember { mutableStateOf(parseIntList(rule?.cycleWeekdays).toSet()) }
     var cycleMonthdays by remember { mutableStateOf(parseIntList(rule?.cycleMonthdays).toSet()) }
+    var photoProof by remember { mutableStateOf(task?.photoProof ?: false) }
     var nextKey by remember { mutableIntStateOf(task?.subtasks?.size ?: 0) }
     // Titles/reset days per step, and their time/points at the same index.
     val steps = remember {
@@ -226,6 +237,8 @@ internal fun TaskEditor(
                     } else {
                         null
                     },
+                    // Not sent while the switch is hidden, so it stays as it is.
+                    photoProof = photoProof.takeIf { canSetPhotoProof },
                 ),
                 steps = steps.mapIndexedNotNull { i, s ->
                     s.title.trim().takeIf { it.isNotEmpty() }?.let {
@@ -252,12 +265,20 @@ internal fun TaskEditor(
         onDelete = onDelete,
         error = errors.message,
     ) {
+        if (locked) {
+            Text(
+                if (allLocked) CheckText.EDIT_WHILE_MINE_WAITS else CheckText.EDIT_WHILE_WAITING,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         OutlinedTextField(
             value = title,
             onValueChange = { title = it; errors.clear("title") },
             label = { Text("Title") },
             placeholder = { Text("e.g. Take the trash out") },
             singleLine = true,
+            enabled = !allLocked,
             isError = errors["title"] != null,
             supportingText = errors["title"]?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
@@ -269,22 +290,23 @@ internal fun TaskEditor(
             label = { Text("Notes") },
             placeholder = { Text("Optional details…") },
             minLines = 2,
+            enabled = !allLocked,
             isError = errors["notes"] != null,
             supportingText = errors["notes"]?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             modifier = Modifier.fillMaxWidth(),
         )
-        DropdownField("Type", TASK_TYPES, type, onSelect = { type = it; errors.clear("type") }, error = errors["type"])
+        DropdownField("Type", TASK_TYPES, type, onSelect = { type = it; errors.clear("type") }, error = errors["type"], enabled = open)
         FieldLabel("Priority")
-        ChoiceChips(TASK_PRIORITIES, priority) { priority = it; errors.clear("priority") }
+        ChoiceChips(TASK_PRIORITIES, priority, enabled = open) { priority = it; errors.clear("priority") }
         FieldError(errors["priority"])
-        DateField("Due date", dueDate, errors["dueDate"]) {
+        DateField("Due date", dueDate, errors["dueDate"], enabled = open) {
             dueDate = it
             if (it == null) dueTime = null
             errors.clear("dueDate")
         }
         // The web disables the time until a date is picked; here it's hidden.
-        if (dueDate != null) TimeField("Due time", dueTime) { dueTime = it; errors.clear("dueDate") }
+        if (dueDate != null) TimeField("Due time", dueTime, enabled = open) { dueTime = it; errors.clear("dueDate") }
         // Until the lists load, offer the task's current value so it still shows.
         if (rotating) {
             DropdownField(
@@ -293,6 +315,7 @@ internal fun TaskEditor(
                 currentTurn,
                 onSelect = { assigneeId = it; errors.clear("assigneeId") },
                 error = errors["assigneeId"],
+                enabled = open,
             )
         } else {
             DropdownField(
@@ -302,6 +325,7 @@ internal fun TaskEditor(
                 assigneeId,
                 onSelect = { assigneeId = it; errors.clear("assigneeId") },
                 error = errors["assigneeId"],
+                enabled = open,
             )
         }
         DropdownField(
@@ -311,10 +335,25 @@ internal fun TaskEditor(
             categoryId,
             onSelect = { categoryId = it; errors.clear("categoryId") },
             error = errors["categoryId"],
+            enabled = open,
         )
+        if (canSetPhotoProof) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(CheckText.PHOTO_PROOF, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        CheckText.PHOTO_PROOF_HELP,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = photoProof, onCheckedChange = { photoProof = it; errors.clear("photoProof") }, enabled = open)
+            }
+            FieldError(errors["photoProof"])
+        }
         // Rooms are set up in Settings → Rooms & floors (here or on the website).
         if (places?.isEmpty == false) {
-            LocationChips(places, placeValues) { value ->
+            LocationChips(places, placeValues, enabled = !allLocked) { value ->
                 placeValues = if (value in placeValues) placeValues - value else placeValues + value
                 PLACE_KEYS.forEach(errors::clear)
             }
@@ -329,10 +368,11 @@ internal fun TaskEditor(
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     // The server reports anything in the repeat rule under "recurrence".
                     FieldError(errors["recurrence"])
-                    DropdownField("Repeats", REPEAT_KINDS, repeatKind, onSelect = { repeatKind = it; errors.clear("recurrence") })
+                    DropdownField("Repeats", REPEAT_KINDS, repeatKind, onSelect = { repeatKind = it; errors.clear("recurrence") }, enabled = open)
                     OutlinedTextField(
                         value = interval,
                         onValueChange = { v -> interval = v.filter(Char::isDigit); errors.clear("recurrence") },
+                        enabled = open,
                         label = {
                             Text(
                                 when (repeatKind) {
@@ -349,29 +389,30 @@ internal fun TaskEditor(
                     )
                     if (repeatKind == "weekly") {
                         FieldLabel("On days (optional)")
-                        DayToggleRow(WEEKDAY_LABELS.indices.toList(), weekdays, { WEEKDAY_LABELS[it] }) { day ->
+                        DayToggleRow(WEEKDAY_LABELS.indices.toList(), weekdays, { WEEKDAY_LABELS[it] }, enabled = open) { day ->
                             weekdays = if (day in weekdays) weekdays - day else weekdays + day
                             errors.clear("recurrence")
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { weekdays = setOf(1, 2, 3, 4, 5); errors.clear("recurrence") }) { Text("Weekdays") }
-                            OutlinedButton(onClick = { weekdays = setOf(0, 6); errors.clear("recurrence") }) { Text("Weekend") }
+                            OutlinedButton(onClick = { weekdays = setOf(1, 2, 3, 4, 5); errors.clear("recurrence") }, enabled = open) { Text("Weekdays") }
+                            OutlinedButton(onClick = { weekdays = setOf(0, 6); errors.clear("recurrence") }, enabled = open) { Text("Weekend") }
                         }
                     }
                     if (repeatKind == "monthly") {
                         FieldLabel("On days of month (optional)")
                         (1..31).chunked(7).forEach { week ->
-                            DayToggleRow(week, monthdays, { it.toString() }, columns = 7) { day ->
+                            DayToggleRow(week, monthdays, { it.toString() }, columns = 7, enabled = open) { day ->
                                 monthdays = if (day in monthdays) monthdays - day else monthdays + day
                                 errors.clear("recurrence")
                             }
                         }
                     }
-                    DateField("Ends on (optional)", until) { until = it; errors.clear("recurrence") }
+                    DateField("Ends on (optional)", until, enabled = open) { until = it; errors.clear("recurrence") }
                     RotationSection(
                         members = members ?: task?.rotation?.map { Member(it.id, it.name ?: "Member") }.orEmpty(),
                         rotation = rotation,
                         rollover = rollover,
+                        enabled = open,
                         onToggle = { id ->
                             rotation = if (id in rotation) rotation - id else rotation + id
                             errors.clear("rotationUserIds")
@@ -395,6 +436,7 @@ internal fun TaskEditor(
                             errors.clear("recurrence")
                         },
                         valid = cycleValid,
+                        enabled = open,
                     )
                 }
             }
@@ -404,6 +446,7 @@ internal fun TaskEditor(
             points = points,
             minutesPerPoint = minutesPerPoint,
             showPoints = showPoints,
+            enabled = open,
             onChange = { points = it; POINTS_KEYS.forEach(errors::clear) },
             onTotalEdit = { what, run ->
                 val r = run(false)
@@ -426,6 +469,9 @@ internal fun TaskEditor(
                     isFirst = index == 0,
                     isLast = index == steps.lastIndex,
                     showPoints = showPoints,
+                    // While it waits, a step keeps its place and values; only its name may change.
+                    locked = locked,
+                    titleLocked = allLocked,
                     onChange = { steps[index] = it; errors.clear("subtasks") },
                     onMinutes = { m -> points = setStepMinutes(points, index, m, minutesPerPoint) },
                     onPoints = { c -> points = setStepPoints(points, index, c) },
@@ -444,11 +490,14 @@ internal fun TaskEditor(
                 )
             }
         }
-        TextButton(onClick = {
-            steps.add(StepEdit(nextKey, null, ""))
-            points = addStep(points)
-            nextKey++
-        }) {
+        TextButton(
+            onClick = {
+                steps.add(StepEdit(nextKey, null, ""))
+                points = addStep(points)
+                nextKey++
+            },
+            enabled = open,
+        ) {
             Icon(Icons.Filled.Add, contentDescription = null)
             Text("Add step")
         }
@@ -502,6 +551,7 @@ private fun PointsSection(
     points: PointsState,
     minutesPerPoint: Double,
     showPoints: Boolean,
+    enabled: Boolean,
     onChange: (PointsState) -> Unit,
     onTotalEdit: (String, (Boolean) -> EditResult) -> Unit,
 ) {
@@ -522,6 +572,7 @@ private fun PointsSection(
                     value = if (hasMinutes) live.minutes.toDouble() else null,
                     decimals = false,
                     marked = custom > 0,
+                    enabled = enabled,
                     modifier = Modifier.weight(1f),
                     onFocus = { snapshot = points },
                     onValue = { v ->
@@ -541,6 +592,7 @@ private fun PointsSection(
                     value = if (hasPoints) live.pointsCenti / 100.0 else null,
                     decimals = true,
                     marked = custom > 0,
+                    enabled = enabled,
                     modifier = Modifier.weight(1f),
                     onFocus = { snapshot = points },
                     onValue = { v ->
@@ -568,6 +620,7 @@ private fun PointsSection(
                 Switch(
                     checked = points.task.pointsFollowTime,
                     onCheckedChange = { on -> onTotalEdit("points") { c -> setTaskFollow(points, on, minutesPerPoint, c) } },
+                    enabled = enabled,
                 )
             }
             if (custom > 0) {
@@ -592,6 +645,7 @@ private fun NumberBox(
     decimals: Boolean,
     marked: Boolean,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     onFocus: () -> Unit = {},
     onValue: (Double?) -> Unit,
     onCommit: (Double?) -> Unit = {},
@@ -618,6 +672,7 @@ private fun NumberBox(
         },
         label = { Text(label) },
         singleLine = true,
+        enabled = enabled,
         keyboardOptions = KeyboardOptions(
             keyboardType = if (decimals) KeyboardType.Decimal else KeyboardType.Number,
             imeAction = ImeAction.Done,
@@ -645,6 +700,7 @@ private fun RotationSection(
     members: List<Member>,
     rotation: List<String>,
     rollover: Boolean,
+    enabled: Boolean,
     onToggle: (String) -> Unit,
     onClear: () -> Unit,
 ) {
@@ -663,6 +719,7 @@ private fun RotationSection(
                 selected = turn >= 0,
                 onClick = { onToggle(m.id) },
                 label = { Text(if (turn >= 0) "${turn + 1}. ${m.name}" else m.name) },
+                enabled = enabled,
             )
         }
     }
@@ -673,7 +730,7 @@ private fun RotationSection(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    if (rotation.isNotEmpty()) TextButton(onClick = onClear) { Text("Clear turns") }
+    if (rotation.isNotEmpty()) TextButton(onClick = onClear, enabled = enabled) { Text("Clear turns") }
 }
 
 /**
@@ -682,7 +739,7 @@ private fun RotationSection(
  * picked; none = the whole house. [onToggle] gets the tapped value.
  */
 @Composable
-private fun LocationChips(places: Places, picked: List<String>, onToggle: (String) -> Unit) {
+private fun LocationChips(places: Places, picked: List<String>, enabled: Boolean = true, onToggle: (String) -> Unit) {
     FieldLabel("Location")
     Text(
         if (picked.isEmpty()) "Whole house. Pick one or more places to narrow it down."
@@ -694,7 +751,7 @@ private fun LocationChips(places: Places, picked: List<String>, onToggle: (Strin
         Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             options.forEach { (value, label) ->
-                FilterChip(selected = value in picked, onClick = { onToggle(value) }, label = { Text(label) })
+                FilterChip(selected = value in picked, onClick = { onToggle(value) }, label = { Text(label) }, enabled = enabled)
             }
         }
     }
@@ -711,6 +768,7 @@ private fun CycleSection(
     monthdays: Set<Int>,
     onMonthday: (Int) -> Unit,
     valid: Boolean,
+    enabled: Boolean,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -721,18 +779,18 @@ private fun CycleSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Switch(checked = rollover, onCheckedChange = onRollover)
+        Switch(checked = rollover, onCheckedChange = onRollover, enabled = enabled)
     }
     if (!rollover) return
     when (repeatKind) {
         "weekly" -> {
             FieldLabel("A new cycle starts on")
-            DayToggleRow(WEEKDAY_LABELS.indices.toList(), weekdays, { WEEKDAY_LABELS[it] }, onToggle = onWeekday)
+            DayToggleRow(WEEKDAY_LABELS.indices.toList(), weekdays, { WEEKDAY_LABELS[it] }, enabled = enabled, onToggle = onWeekday)
         }
         "monthly" -> {
             FieldLabel("A new cycle starts on day")
             (1..31).chunked(7).forEach { week ->
-                DayToggleRow(week, monthdays, { it.toString() }, columns = 7, onToggle = onMonthday)
+                DayToggleRow(week, monthdays, { it.toString() }, columns = 7, enabled = enabled, onToggle = onMonthday)
             }
             if (monthdays.any { it > 28 }) {
                 Text(
@@ -760,6 +818,10 @@ private fun ChecklistStepRow(
     isFirst: Boolean,
     isLast: Boolean,
     showPoints: Boolean,
+    /** Waiting for an OK: everything but the name is fixed. */
+    locked: Boolean,
+    /** My own check waits: the name too. */
+    titleLocked: Boolean,
     onChange: (StepEdit) -> Unit,
     onMinutes: (Int) -> Unit,
     onPoints: (Int) -> Unit,
@@ -778,10 +840,11 @@ private fun ChecklistStepRow(
                     onValueChange = { onChange(step.copy(title = it)) },
                     placeholder = { Text("Step ${index + 1}") },
                     singleLine = true,
+                    enabled = !titleLocked,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove step") }
+                IconButton(onClick = onRemove, enabled = !locked) { Icon(Icons.Filled.Delete, contentDescription = "Remove step") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(end = 8.dp, top = 4.dp)) {
                 NumberBox(
@@ -789,6 +852,7 @@ private fun ChecklistStepRow(
                     value = values.minutes.toDouble(),
                     decimals = false,
                     marked = values.minutesCustom,
+                    enabled = !locked,
                     modifier = Modifier.weight(1f),
                     onValue = { v -> v?.let { onMinutes(it.toInt()) } },
                 )
@@ -797,13 +861,14 @@ private fun ChecklistStepRow(
                     value = values.pointsCenti / 100.0,
                     decimals = true,
                     marked = !values.pointsFollowTime,
+                    enabled = !locked,
                     modifier = Modifier.weight(1f),
                     onValue = { v -> v?.let { onPoints(toCenti(it)) } },
                 )
             }
             if (showPoints) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 4.dp)) {
                 Text("Points follow time", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                Switch(checked = values.pointsFollowTime, onCheckedChange = onFollow)
+                Switch(checked = values.pointsFollowTime, onCheckedChange = onFollow, enabled = !locked)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
@@ -812,14 +877,15 @@ private fun ChecklistStepRow(
                     label = { Text("Unchecks every N days") },
                     placeholder = { Text("Never") },
                     singleLine = true,
+                    enabled = !locked,
                     isError = step.resetIntervalDays() == 0,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = { onMove(-1) }, enabled = !isFirst) {
+                IconButton(onClick = { onMove(-1) }, enabled = !isFirst && !locked) {
                     Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Move step up")
                 }
-                IconButton(onClick = { onMove(1) }, enabled = !isLast) {
+                IconButton(onClick = { onMove(1) }, enabled = !isLast && !locked) {
                     Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Move step down")
                 }
             }

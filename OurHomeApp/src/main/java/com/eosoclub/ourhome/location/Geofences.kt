@@ -195,6 +195,7 @@ object Geofences {
             6,
             Intent(context, MainActivity::class.java)
                 .putExtra(RequestReminders.EXTRA_OPEN_TAB, TAB_SHOPPING)
+                .putExtra(RequestReminders.EXTRA_TAP_ID, RequestReminders.nextTapId())
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -232,6 +233,7 @@ object Geofences {
             9,
             Intent(context, MainActivity::class.java)
                 .putExtra(RequestReminders.EXTRA_OPEN_TAB, HouseholdReminderAlerts.TAB_TASKS)
+                .putExtra(RequestReminders.EXTRA_TAP_ID, RequestReminders.nextTapId())
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )

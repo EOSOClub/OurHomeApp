@@ -41,6 +41,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eosoclub.ourhome.data.AccessMatrix
 import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.ApiClient
+import com.eosoclub.ourhome.data.CheckText
 import com.eosoclub.ourhome.data.Dashboard
 import com.eosoclub.ourhome.data.DashboardPoints
 import com.eosoclub.ourhome.data.DashboardTask
@@ -135,6 +136,7 @@ internal fun DashboardScreen(
                         requests = waitingRequests,
                         openToAnyone = openToAnyone,
                         later = later,
+                        toCheck = me?.tasksToCheck?.takeIf { features.tasks } ?: 0,
                         onOpenTab = onOpenTab,
                     )
                 }
@@ -211,10 +213,12 @@ private fun NeedsYouCard(
     requests: List<WaitingRequest>,
     openToAnyone: List<DashboardTask>,
     later: List<DashboardTask>,
+    /** Checks waiting in this adult's To check (Tasks tab). */
+    toCheck: Int,
     onOpenTab: (Tab) -> Unit,
 ) {
     DashCard("Needs you") {
-        if (today.isEmpty() && requests.isEmpty() && openToAnyone.isEmpty()) {
+        if (today.isEmpty() && requests.isEmpty() && openToAnyone.isEmpty() && toCheck == 0) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
                 Icon(
                     Icons.Filled.CheckCircle,
@@ -234,6 +238,15 @@ private fun NeedsYouCard(
             }
         }
         TaskRows(today, onOpenTab)
+        if (toCheck > 0) {
+            SubHeading(CheckText.TO_CHECK)
+            Row2(
+                title = if (toCheck == 1) "1 task waiting for your OK" else "$toCheck tasks waiting for your OK",
+                trailing = "Check",
+                trailingColor = MaterialTheme.colorScheme.primary,
+                onClick = { onOpenTab(Tab.Tasks) },
+            )
+        }
         if (requests.isNotEmpty()) {
             SubHeading("Requests")
             requests.forEach { w ->

@@ -13,12 +13,14 @@ import com.eosoclub.ourhome.MainActivity
 import com.eosoclub.ourhome.R
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.Notification
+import com.eosoclub.ourhome.nfc.ScanHandoff
 
 /**
  * Phone alerts for new bug reports, for whoever receives them (bugs:manage -
  * the head). Runs inside the request-reminder poll, so it shares its hourly
  * cadence. The server addresses each report's bell notification to the head;
- * this alerts once per report (ids are remembered), not on every poll.
+ * this alerts once per report (ids are remembered), not on every poll, and
+ * goes once every report is read.
  */
 object BugReportAlerts {
     private const val CHANNEL_ID = "bug_reports"
@@ -29,11 +31,15 @@ object BugReportAlerts {
     private const val TAG = "BugReportAlerts"
 
     suspend fun check(context: Context, api: ApiClient) {
-        val unread = api.notifications(unreadOnly = true).items.filter { it.type == "bug_report" }
+        val list = api.notifications(unreadOnly = true)
+        val unread = list.items.filter { it.type == "bug_report" }
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val alerted = prefs.getStringSet(KEY_ALERTED, emptySet())!!
         val fresh = unread.filter { it.id !in alerted }
         Log.i(TAG, "${unread.size} unread bug report(s), ${fresh.size} new")
+        // All read, here or on another device (the server pushes when they
+        // are). A cut-off page may just not have reached them.
+        if (unread.isEmpty() && !list.hasMore) NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
         if (fresh.isEmpty()) return
         show(context, fresh)
         // Remember what we alerted about so the next poll stays quiet. Only
@@ -58,10 +64,14 @@ object BugReportAlerts {
         )
         val title = if (reports.size == 1) reports.first().title else "${reports.size} new bug reports"
         val text = if (reports.size == 1) reports.first().body.orEmpty() else reports.joinToString(" · ") { it.title }
+        // Tapping it counts as reading them, on every device.
+        val intent = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(RequestReminders.EXTRA_MARK_READ, reports.map { it.id }.toTypedArray())
         val open = PendingIntent.getActivity(
             context,
             1,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            ScanHandoff.stamp(context, intent),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)

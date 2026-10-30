@@ -40,6 +40,7 @@ import com.eosoclub.ourhome.data.summary
 import com.eosoclub.ourhome.location.Geofences
 import com.eosoclub.ourhome.location.LiveChecks
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * "Requests are waiting for you" reminders, plus the shared check that also
@@ -65,6 +66,9 @@ object RequestReminders {
     private const val KEY_FROM_PUSH = "from_push"
     private const val CHANNEL_ID = "requests"
     private const val NOTIFICATION_ID = 1001
+    /** MainActivity PendingIntent codes: 0 Stay connected / push test, 1 bugs, 2 deadlines,
+     *  3 app update, 5 household reminders, 6 store, 7 live check, 9 home chores, 2000+ quick scans. */
+    private const val PENDING_CODE = 8
     private const val PREFS = "request_reminders"
     private const val KEY_SHOWN = "shown_ids"
     private const val TAG = "RequestReminders"
@@ -72,6 +76,26 @@ object RequestReminders {
     /** Intent extra asking MainActivity to open the Requests tab. */
     const val EXTRA_OPEN_TAB = "open_tab"
     const val TAB_REQUESTS = "requests"
+
+    /**
+     * Intent extra next to [EXTRA_OPEN_TAB]: an id new for every notification
+     * built ([nextTapId]), so MainActivity can tell a new tap from Android
+     * handing back the intent of one it already followed (data/LaunchTab.kt).
+     * Every PendingIntent carrying a tab uses FLAG_UPDATE_CURRENT, so a
+     * rebuilt notification always carries its new id.
+     */
+    const val EXTRA_TAP_ID = "tap_id"
+    private val lastTapId = AtomicLong(0)
+
+    /** The build time in ms, made unique within this process (never repeats, never goes back). */
+    fun nextTapId(): Long = lastTapId.updateAndGet { maxOf(it + 1, System.currentTimeMillis()) }
+
+    /**
+     * Intent extra: the bell notifications a tapped phone notification listed,
+     * which MainActivity marks read (on every device, like opening them from
+     * the bell). Only honoured with ScanHandoff's stamp.
+     */
+    const val EXTRA_MARK_READ = "mark_read"
 
     fun schedule(context: Context) {
         val request = PeriodicWorkRequestBuilder<Worker>(INTERVAL_HOURS, TimeUnit.HOURS)
@@ -147,9 +171,13 @@ object RequestReminders {
         val lines = waiting.map { it.summary() }
         val open = Intent(context, MainActivity::class.java)
             .putExtra(EXTRA_OPEN_TAB, TAB_REQUESTS)
+            .putExtra(EXTRA_TAP_ID, nextTapId())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        // Its own request code: 0 is shared by Stay connected and the push test,
+        // whose tab-less intents would otherwise replace this one's extras
+        // (FLAG_UPDATE_CURRENT updates every PendingIntent with the same code).
         val pending = PendingIntent.getActivity(
-            context, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            context, PENDING_CODE, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val style = NotificationCompat.InboxStyle().also { s -> lines.take(5).forEach(s::addLine) }
         if (lines.size > 5) style.setSummaryText("+${lines.size - 5} more")

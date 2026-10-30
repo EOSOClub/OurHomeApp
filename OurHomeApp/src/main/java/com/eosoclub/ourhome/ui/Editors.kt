@@ -54,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -158,16 +159,24 @@ internal fun EditorDialog(
 
 /**
  * A read-only field that opens a date picker; the trailing button clears it.
- * [error]: what's wrong with it (red, said under it).
+ * [error]: what's wrong with it (red, said under it). [enabled] false: shown
+ * greyed, and neither opens nor clears.
  */
 @Composable
-internal fun DateField(label: String, date: LocalDate?, error: String? = null, onChange: (LocalDate?) -> Unit) {
+internal fun DateField(
+    label: String,
+    date: LocalDate?,
+    error: String? = null,
+    enabled: Boolean = true,
+    onChange: (LocalDate?) -> Unit,
+) {
     var picking by remember { mutableStateOf(false) }
     Box {
         OutlinedTextField(
             value = date?.format(DateTimeFormatter.ofPattern("EEE, MMM d, yyyy")) ?: "",
             onValueChange = {},
             readOnly = true,
+            enabled = enabled,
             label = { Text(label) },
             placeholder = { Text("None") },
             leadingIcon = { Icon(Icons.Filled.DateRange, contentDescription = null) },
@@ -175,9 +184,9 @@ internal fun DateField(label: String, date: LocalDate?, error: String? = null, o
             modifier = Modifier.fillMaxWidth(),
         )
         // The text field swallows taps, so an overlay opens the picker.
-        Box(Modifier.matchParentSize().padding(end = 48.dp).clickable { picking = true })
+        if (enabled) Box(Modifier.matchParentSize().padding(end = 48.dp).clickable { picking = true })
         if (date != null) {
-            IconButton(onClick = { onChange(null) }, modifier = Modifier.align(Alignment.CenterEnd)) {
+            IconButton(onClick = { onChange(null) }, enabled = enabled, modifier = Modifier.align(Alignment.CenterEnd)) {
                 Icon(Icons.Filled.Clear, contentDescription = "Clear $label")
             }
         }
@@ -207,7 +216,13 @@ internal fun DateField(label: String, date: LocalDate?, error: String? = null, o
 /** Like [DateField], for a time of day; the clear button empties it. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun TimeField(label: String, time: LocalTime?, error: String? = null, onChange: (LocalTime?) -> Unit) {
+internal fun TimeField(
+    label: String,
+    time: LocalTime?,
+    error: String? = null,
+    enabled: Boolean = true,
+    onChange: (LocalTime?) -> Unit,
+) {
     var picking by remember { mutableStateOf(false) }
     val context = LocalContext.current
     Box {
@@ -215,14 +230,15 @@ internal fun TimeField(label: String, time: LocalTime?, error: String? = null, o
             value = time?.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)) ?: "",
             onValueChange = {},
             readOnly = true,
+            enabled = enabled,
             label = { Text(label) },
             placeholder = { Text("Noon") },
             isError = error != null,
             modifier = Modifier.fillMaxWidth(),
         )
-        Box(Modifier.matchParentSize().padding(end = 48.dp).clickable { picking = true })
+        if (enabled) Box(Modifier.matchParentSize().padding(end = 48.dp).clickable { picking = true })
         if (time != null) {
-            IconButton(onClick = { onChange(null) }, modifier = Modifier.align(Alignment.CenterEnd)) {
+            IconButton(onClick = { onChange(null) }, enabled = enabled, modifier = Modifier.align(Alignment.CenterEnd)) {
                 Icon(Icons.Filled.Clear, contentDescription = "Clear $label")
             }
         }
@@ -252,9 +268,14 @@ internal fun DayToggleRow(
     selected: Set<Int>,
     label: (Int) -> String,
     columns: Int = days.size,
+    /** False: greyed, and taps do nothing. */
+    enabled: Boolean = true,
     onToggle: (Int) -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(
+        Modifier.fillMaxWidth().then(if (enabled) Modifier else Modifier.alpha(0.38f)),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
         days.forEach { day ->
             val on = day in selected
             val colors = MaterialTheme.colorScheme
@@ -265,7 +286,7 @@ internal fun DayToggleRow(
                     .clip(MaterialTheme.shapes.small)
                     .background(if (on) colors.primary else Color.Transparent)
                     .border(1.dp, if (on) colors.primary else colors.outline, MaterialTheme.shapes.small)
-                    .clickable { onToggle(day) },
+                    .then(if (enabled) Modifier.clickable { onToggle(day) } else Modifier),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -285,12 +306,13 @@ internal fun DayToggleRow(
  * last chip into the leftover space and its label wrapped one letter per line.
  */
 @Composable
-internal fun ChoiceChips(options: List<String>, selected: String, onSelect: (String) -> Unit) {
+internal fun ChoiceChips(options: List<String>, selected: String, enabled: Boolean = true, onSelect: (String) -> Unit) {
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
         options.forEachIndexed { index, option ->
             SegmentedButton(
                 selected = selected == option,
                 onClick = { onSelect(option) },
+                enabled = enabled,
                 shape = SegmentedButtonDefaults.itemShape(index, options.size),
                 // No check icon: it eats width the label needs.
                 icon = {},
@@ -320,21 +342,24 @@ internal fun DropdownField(
     onSelect: (String) -> Unit,
     placeholder: String = "Choose…",
     error: String? = null,
+    /** False: greyed, and it doesn't open. */
+    enabled: Boolean = true,
 ) {
     var open by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
+    ExposedDropdownMenuBox(expanded = open && enabled, onExpandedChange = { if (enabled) open = it }) {
         OutlinedTextField(
             value = options.firstOrNull { it.first == value }?.second ?: "",
             onValueChange = {},
             readOnly = true,
+            enabled = enabled,
             label = { Text(label) },
             placeholder = { Text(placeholder) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(open) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(open && enabled) },
             isError = error != null,
             supportingText = error?.let { { Text(it) } },
-            modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+            modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled),
         )
-        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        ExposedDropdownMenu(expanded = open && enabled, onDismissRequest = { open = false }) {
             options.forEach { (optionValue, optionLabel) ->
                 DropdownMenuItem(text = { Text(optionLabel) }, onClick = { onSelect(optionValue); open = false })
             }

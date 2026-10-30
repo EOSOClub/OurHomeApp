@@ -169,6 +169,8 @@ data class Subtask(
     val points: Double = 0.0,
     val minutesCustom: Boolean = false,
     val pointsFollowTime: Boolean = true,
+    /** Ticked again by a child someone looks after: its points wait for an adult's OK. */
+    val waitingForOk: Boolean = false,
 )
 
 /** Recurrence as the web's task form sends it (timezone fixed to UTC, like the web). */
@@ -205,6 +207,11 @@ data class TaskInput(
     val rotationUserIds: List<String> = emptyList(),
     /** Null = not recurring (clears the rule on edit). */
     val recurrence: RecurrenceInput?,
+    /**
+     * "Ask for a photo": children someone looks after send it for a check with
+     * a photo. Null = don't send (the editor hid the switch, so it stays as it is).
+     */
+    val photoProof: Boolean? = null,
 )
 
 /** One checklist step as the editor saves it (the whole list replaces the checklist). */
@@ -228,6 +235,84 @@ data class TaskCompletion(
     val points: Double = 0.0,
     val canUndo: Boolean = false,
 )
+
+/**
+ * Whether a task waits for an adult's OK (TaskDTO `review`, web taskService):
+ * who sent it and when. [decideBy]: when its cycle ends and it counts as done;
+ * null = it waits with no limit. All empty while nothing waits, and from a
+ * server without checks.
+ */
+@Serializable
+data class TaskReview(
+    val waiting: Boolean = false,
+    val submittedBy: UserRef? = null,
+    val submittedAt: String? = null,
+    val decideBy: String? = null,
+    /**
+     * For me (the reader): Complete on this task goes through a check, so the
+     * send dialog opens at once. False from a server before it was added.
+     */
+    val checkForMe: Boolean = false,
+    /** The waiting check's id, for its sender (Take back) and the adults who look after them; else null. */
+    val submissionId: String? = null,
+)
+
+/** A check's task, as the To check list names it. */
+@Serializable
+data class CheckTask(val id: String, val title: String)
+
+/** One step of the task, and whether it was ticked when the check was sent. */
+@Serializable
+data class CheckStep(val id: String, val title: String, val ticked: Boolean = false)
+
+/**
+ * Step points waiting for an OK (kind "steps"): one step ticked again, or the
+ * steps someone ticked before another person finished the task ([completedBy]).
+ * [awardKind]: "step" | "step_repeat".
+ */
+@Serializable
+data class CheckEntry(
+    val subtaskId: String,
+    val title: String,
+    val points: Double = 0.0,
+    val checkedAt: String,
+    val awardKind: String = "step",
+    val completionId: String? = null,
+    val completedBy: UserRef? = null,
+)
+
+/**
+ * One item of GET /api/tasks/submissions (TaskSubmissionDTO): a task a child
+ * sent for a check ("task"), or their step points waiting ("steps").
+ * [status]: "waiting" | "auto_approved" (with [autoReason] "cycle_end": it
+ * counted as done when its day ended, and stays here for 3 days). [actions]
+ * for this viewer: "approve" and "send_back" for an adult who looks after the
+ * child now, "withdraw" for the child on their own waiting task check.
+ */
+@Serializable
+data class TaskSubmission(
+    val id: String,
+    val kind: String = "task",
+    val status: String = "waiting",
+    val autoReason: String? = null,
+    val task: CheckTask,
+    val child: UserRef,
+    val submittedAt: String,
+    val note: String? = null,
+    /** Load the photo only when the item is opened. */
+    val hasPhoto: Boolean = false,
+    val points: Double = 0.0,
+    val steps: List<CheckStep> = emptyList(),
+    val stepsTicked: Int = 0,
+    val decideBy: String? = null,
+    val entries: List<CheckEntry> = emptyList(),
+    val actions: List<String> = emptyList(),
+) {
+    val canDecide: Boolean get() = "approve" in actions
+    val canWithdraw: Boolean get() = "withdraw" in actions
+    /** Counted as done when its day ended (an adult may still take the points back). */
+    val countedAtCycleEnd: Boolean get() = status == "auto_approved" && autoReason == "cycle_end"
+}
 
 /** GET /api/points/summary (pointsService.pointsSummary). */
 @Serializable
@@ -315,7 +400,18 @@ data class Task(
     val subtasks: List<Subtask> = emptyList(),
     /** Only on POST /api/tasks/complete: the completion, for Undo. */
     val completionId: String? = null,
+    /** "Ask for a photo" (TaskInput.photoProof); false from a server without checks. */
+    val photoProof: Boolean = false,
+    /** Whether it waits for an adult's OK; status is "awaiting_review" meanwhile. */
+    val review: TaskReview = TaskReview(),
+    /** Only when POST /api/tasks/complete sent it for a check: the check, for Undo (take back). */
+    val submissionId: String? = null,
+    /** Only on POST /api/tasks/completions/undo: "back_to_check" | "undone". */
+    val undo: String? = null,
 ) : Placed {
+    /** Sent for a check and waiting for an adult's OK. */
+    val waitingForOk: Boolean get() = review.waiting || status == "awaiting_review"
+
     /** Completed inside its cycle: waits for the next cycle start. */
     val doneThisCycle: Boolean get() = status == "completed" && cycleEndsAt != null
 
@@ -459,7 +555,30 @@ data class DashboardMe(
     /** Unassigned, overdue or due today. */
     val openToAnyone: List<DashboardTask> = emptyList(),
     val points: DashboardPoints? = null,
+    /** Checks waiting in this adult's To check (children they look after now); 0 from an older server. */
+    val tasksToCheck: Int = 0,
 )
+
+/** The tab counts from `GET /api/badges`. */
+@Serializable
+data class NavBadges(
+    /** Requests someone else made or changed since this member last opened Requests (website or app). */
+    val requestsNew: Int = 0,
+    val tasksToCheck: Int = 0,
+)
+
+/** One release's "What's new" (the server's src/lib/changelog.ts). */
+@Serializable
+data class ChangelogEntry(
+    val id: String,
+    /** YYYY-MM-DD. */
+    val date: String,
+    val title: String,
+    val changes: List<String> = emptyList(),
+)
+
+@Serializable
+data class ChangelogList(val entries: List<ChangelogEntry> = emptyList())
 
 @Serializable
 data class DashboardPoints(

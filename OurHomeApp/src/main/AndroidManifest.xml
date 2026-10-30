@@ -58,6 +58,12 @@
          PhoneCheckIn), sent only while an adult looks after its member, so a
          phone that goes quiet can be told apart from one out of signal. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Task photo proof (ui/TaskCamera): a photo taken inside Our Home when a
+         task is sent for a check, kept in memory only (never the gallery).
+         Asked the first time someone taps Take a photo. Not required, so
+         phones without a camera still install (they send a note instead). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <!-- App usage names apps the way the phone does: Android 11+ only lets an
          app see others it declares, so these are the apps a person can open

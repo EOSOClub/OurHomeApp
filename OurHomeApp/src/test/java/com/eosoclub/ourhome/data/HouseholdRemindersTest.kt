@@ -70,4 +70,30 @@ class HouseholdRemindersTest {
         // The outcome leads the title, so no label goes in front.
         assertEquals("Approved: LEGO set", answer.reminderLine())
     }
+
+    @Test
+    fun taskChecksAlertWithTheirOwnTitles() {
+        val sent = Notification(
+            id = "1", type = "task_review", title = "Riley sent “Dishes” for a check", subjectType = "task",
+            subjectId = "t1", read = false, createdAt = "2026-10-29T12:00:00Z",
+        )
+        val answer = Notification(
+            id = "2", type = "task_reviewed", title = "Approved: Dishes (+5 pts)", subjectType = "task",
+            subjectId = "t1", read = false, createdAt = "2026-10-29T12:05:00Z",
+        )
+        val plan = planReminderAlert(listOf(sent, answer), alerted = emptySet())
+        assertEquals(listOf("1", "2"), plan.alert.map { it.id })
+        // Whatever the server's title says (task or steps, any outcome), it shows as it is.
+        listOf(
+            "Riley sent “Dishes” for a check",
+            "Riley’s steps on “Dishes” need a check",
+        ).forEach { assertEquals(it, sent.copy(title = it).reminderLine()) }
+        listOf(
+            "Approved: Dishes (+5 pts)",
+            "Approved: steps on Dishes (+3 pts)",
+            "Sent back: steps on Dishes",
+            "Counted as done: Dishes",
+            "Points taken back: Dishes",
+        ).forEach { assertEquals(it, answer.copy(title = it).reminderLine()) }
+    }
 }

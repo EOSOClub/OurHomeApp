@@ -10,7 +10,8 @@ import java.util.UUID
  * start it with a "scanned tag" extra and pop the scan sheet on a tag of its
  * choosing. Our own hand-offs (QuickScanActivity, quick-scan notification
  * taps) carry a per-install secret that only this app can read, and
- * MainActivity ignores scan extras without it.
+ * MainActivity ignores scan extras without it. Reminder and bug report
+ * notification taps carry it too, for their "mark these read" extra.
  */
 object ScanHandoff {
     private const val PREFS = "scan_handoff"

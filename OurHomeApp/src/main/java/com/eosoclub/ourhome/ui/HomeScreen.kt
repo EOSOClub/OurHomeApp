@@ -49,6 +49,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -73,6 +74,7 @@ import com.eosoclub.ourhome.data.ThemeMode
 import com.eosoclub.ourhome.data.DeadlineState
 import com.eosoclub.ourhome.data.AccessMatrix
 import com.eosoclub.ourhome.data.ApiClient
+import com.eosoclub.ourhome.data.ChangelogEntry
 import com.eosoclub.ourhome.data.defaultAccess
 import com.eosoclub.ourhome.data.Features
 import com.eosoclub.ourhome.data.Permission
@@ -86,10 +88,10 @@ import com.eosoclub.ourhome.data.awaitingAcceptanceBy
 import com.eosoclub.ourhome.data.canApproveMedia
 import com.eosoclub.ourhome.data.deadlineAlerts
 import com.eosoclub.ourhome.data.defaultRequestModules
-import com.eosoclub.ourhome.data.isOpen
 import com.eosoclub.ourhome.location.Geofences
 import com.eosoclub.ourhome.notifications.AppUpdateAlerts
 import com.eosoclub.ourhome.notifications.HouseholdReminderAlerts
+import com.eosoclub.ourhome.notifications.Push
 import com.eosoclub.ourhome.notifications.RequestReminders
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -223,6 +225,42 @@ fun HomeScreen(
         requests.refresh()
         accessVm.refresh()
     }
+    // A push while open (say, something read on the website): the bell catches up.
+    val pushed by Push.received.collectAsStateWithLifecycle()
+    LaunchedEffect(pushed) {
+        if (pushed > 0) notifications.refresh()
+    }
+
+    // The Requests count: what someone else made or changed since this member
+    // last opened Requests, here or on the website. Opening the tab clears it
+    // everywhere; asked again on each tab change and each push.
+    var requestsNew by remember { mutableIntStateOf(0) }
+    LaunchedEffect(tab, pushed, features.requests) {
+        if (!features.requests) {
+            requestsNew = 0
+            return@LaunchedEffect
+        }
+        if (tab == Tab.Requests) requestsNew = 0
+        runCatching {
+            if (tab == Tab.Requests) {
+                session.api.markRequestsSeen()
+                0
+            } else {
+                session.api.navBadges().requestsNew
+            }
+        }
+            .onSuccess { requestsNew = it }
+            .onFailure { if (it is CancellationException) throw it }
+    }
+
+    // "What's new" after an update, once per person: the server keeps which
+    // entry they closed, so closing it here or on the website is enough.
+    var whatsNew by remember { mutableStateOf<List<ChangelogEntry>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        runCatching { session.api.changelog() }
+            .onSuccess { whatsNew = it }
+            .onFailure { if (it is CancellationException) throw it }
+    }
 
     // Waiting for my acceptance, plus my own maintenance due today or overdue -
     // the tab badge counts them and the dashboard's "Needs you" lists them.
@@ -242,8 +280,6 @@ fun HomeScreen(
         deadlineAlerts(requestsState.requests, user.id)
             .filter { !it.forRequester && it.state != DeadlineState.DueTomorrow }
             .map { WaitingRequest(it.request, if (it.state == DeadlineState.Overdue) "Overdue" else "Due today", urgent = true) }
-    val waitingOnMe = waitingRequests.size
-    val anyOpen = requestsState.requests.any { it.isOpen }
 
     // A tapped notification asks for the Requests tab (reminders), Profile
     // (an app update to install), or a household reminder's tab / the bell.
@@ -462,11 +498,11 @@ fun HomeScreen(
                             selected = tab == t,
                             onClick = { tab = t },
                             icon = {
-                                if (t == Tab.Requests && (waitingOnMe > 0 || anyOpen)) {
-                                    // A number when something waits on you; a dot when
-                                    // requests are open but none need you.
+                                if (t == Tab.Requests && requestsNew > 0 && tab != Tab.Requests) {
+                                    // Only something new since they last looked; what
+                                    // waits on them is on Home's "Needs you".
                                     BadgedBox(badge = {
-                                        if (waitingOnMe > 0) Badge { Text(waitingOnMe.coerceAtMost(99).toString()) } else Badge()
+                                        Badge { Text(requestsNew.coerceAtMost(99).toString()) }
                                     }) { Icon(t.icon(), contentDescription = null) }
                                 } else {
                                     Icon(t.icon(), contentDescription = null)
@@ -519,7 +555,7 @@ fun HomeScreen(
             Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)
             Overlay.Activity -> ActivityScreen(session.api, user.id, modifier)
             Overlay.Map -> MapScreen(session.api, showMessage, modifier)
-            Overlay.LookAfter -> LookAfterScreen(session.api, showMessage, modifier, startPersonId = lookAfterStart)
+            Overlay.LookAfter -> LookAfterScreen(session.api, showMessage, modifier, startPersonId = lookAfterStart, showTasks = features.tasks)
             Overlay.PhoneSetup -> PhoneSetupScreen(session.api, showMessage, onClose = { overlay = null }, modifier)
             Overlay.Settings -> SettingsScreen(session.api, session.baseUrl, isHead = user.role == "head", features, showMessage, modifier)
             Overlay.Members -> MembersScreen(session, user, showMessage, onSetUpChild = { overlay = Overlay.AddChild }, modifier)
@@ -547,6 +583,7 @@ fun HomeScreen(
                 onOpenTab = { tab = it },
                 onOpenScanHistory = { overlay = Overlay.ScanHistory },
                 modifier = modifier,
+                supervised = phoneSetup?.supervised,
             )
         }
     }
@@ -554,6 +591,18 @@ fun HomeScreen(
     // Refresh stock afterward so the Inventory tab shows the new numbers.
     // ± stock and binding a tag need any Inventory access (as on the server).
     ScanSheet(scan, canWrite = access.inventory.any, onFinished = { inventory.refresh() })
+
+    // Not over a full-screen page (say, the phone setup checklist): it waits until that closes.
+    if (whatsNew.isNotEmpty() && overlay == null) {
+        WhatsNewDialog(whatsNew) {
+            val newest = whatsNew.first().id
+            whatsNew = emptyList()
+            scope.launch {
+                // A failed save just shows it again on the next start.
+                runCatching { session.api.markChangelogSeen(newest) }
+            }
+        }
+    }
 
     if (reportingBug) {
         BugReportDialog(
@@ -603,6 +652,8 @@ private fun TabContent(
     onOpenTab: (Tab) -> Unit,
     onOpenScanHistory: () -> Unit,
     modifier: Modifier,
+    /** An adult looks after this member (Set up this phone); null until known. */
+    supervised: Boolean?,
 ) {
     // Points links go nowhere when the server admin turned Points off.
     val openPoints = onOpenPoints.takeIf { features.points }
@@ -618,7 +669,11 @@ private fun TabContent(
             onOpenMap = onOpenMap,
             modifier = modifier,
         )
-        Tab.Tasks -> TasksScreen(session.api, access.tasks, user.id, features, showMessage, showAction, openPoints, modifier)
+        Tab.Tasks -> TasksScreen(
+            session.api, access.tasks, user.id, features, showMessage, showAction, openPoints, modifier,
+            role = user.role,
+            supervised = supervised,
+        )
         Tab.Shopping -> ShoppingScreen(session.api, access.shopping, access.lists, user.id, showMessage, modifier)
         Tab.Inventory -> InventoryScreen(session.api, access.inventory, user.id, showMessage, onOpenScanHistory, modifier)
         Tab.Bills -> BillsScreen(session.api, access.bills, user.id, showMessage, modifier)

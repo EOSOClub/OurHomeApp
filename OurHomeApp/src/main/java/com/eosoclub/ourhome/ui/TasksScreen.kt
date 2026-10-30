@@ -67,6 +67,21 @@ import com.eosoclub.ourhome.data.Task
 import com.eosoclub.ourhome.data.TaskCompletion
 import com.eosoclub.ourhome.data.centi
 import com.eosoclub.ourhome.data.formatPoints
+import androidx.compose.ui.graphics.ImageBitmap
+import com.eosoclub.ourhome.data.ApiException
+import com.eosoclub.ourhome.data.CheckText
+import com.eosoclub.ourhome.data.CheckCode
+import com.eosoclub.ourhome.data.checkCode
+import com.eosoclub.ourhome.data.takeBackId
+import com.eosoclub.ourhome.data.headHint
+import androidx.compose.foundation.layout.FlowRow
+import com.eosoclub.ourhome.data.TaskSubmission
+import com.eosoclub.ourhome.data.canSetPhotoProof
+import com.eosoclub.ourhome.data.sendFailure
+import com.eosoclub.ourhome.data.undoOutcome
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,6 +109,19 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
         val history: Map<String, List<TaskCompletion>> = emptyMap(),
         /** Floors and rooms; null until loaded (or from an older server). */
         val places: Places? = null,
+        /** To check (children I look after now) and my own checks; empty from a server without checks. */
+        val checks: List<TaskSubmission> = emptyList(),
+        /** The task the "Send for a check" dialog is open for. */
+        val sending: Task? = null,
+        val sendBusy: Boolean = false,
+        /** Why the last send failed (said in the dialog). */
+        val sendError: String? = null,
+        /** Checks being approved, sent back or taken back (ids). */
+        val deciding: Set<String> = emptySet(),
+        /** The To check item the Send back dialog is open for. */
+        val sendingBack: TaskSubmission? = null,
+        /** Opened To check items (ids). */
+        val openChecks: Set<String> = emptySet(),
     )
 
     /** A snackbar message, optionally with one action (e.g. Undo). */
@@ -110,6 +138,7 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
+        launch { loadChecks() }
         // Rooms change rarely; a failure (older server) keeps the last.
         launch { runCatching { api.places() }.onSuccess { p -> state.update { it.copy(places = p) } } }
         // Every member may read the rate; a failure keeps the one the tasks carry.
@@ -156,15 +185,29 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
-    /** Completes the task (paying its points) and offers Undo for the 10-minute window. */
-    fun complete(task: Task) = viewModelScope.launch {
+    /**
+     * Completes the task (paying its points) and offers Undo for the 10-minute
+     * window. When the server says this task goes through a check for me
+     * (`review.checkForMe`), the send dialog opens instead. If that changed
+     * since the list loaded, the server refuses with "check_needed" and the
+     * dialog opens then.
+     */
+    fun complete(task: Task) {
+        if (task.review.checkForMe) {
+            openSend(task)
+            return
+        }
+        completeNow(task)
+    }
+
+    private fun completeNow(task: Task) = viewModelScope.launch {
         state.update { it.copy(busy = it.busy + task.id) }
         try {
             val updated = api.completeTask(task.id)
             // Recurring tasks come back pending with the next due date (or done
             // for this cycle); one-time tasks come back completed.
             replaceTask(updated)
-            val pts = if (showPoints && task.points > 0) " ·${formatPoints(task.points.centi())} pts" else ""
+            val pts = completedPointsSuffix(task.points, showPoints)
             val text = when {
                 updated.doneThisCycle -> "Done for this cycle$pts"
                 task.recurrence != null && updated.status != "completed" ->
@@ -174,20 +217,238 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
             val completionId = updated.completionId
             _messages.send(Message(text, if (completionId != null) "Undo" else null, completionId?.let { id -> { undo(id) } }))
         } catch (e: Exception) {
-            say(e.message ?: "Couldn't complete task")
+            val code = e.checkCode
+            if (code == CheckCode.NEEDED) {
+                // Checks were turned on for this child: fetch the task as it is now, then send it.
+                reloadAndSend(task.id)
+            } else if (code in CheckCode.TASK_CHANGED) {
+                // It waits for an OK now (another send won, or it was already waiting): show it as it is.
+                say(e.message ?: "Couldn't complete task")
+                refresh()
+            } else {
+                say(e.message ?: "Couldn't complete task")
+            }
         } finally {
             state.update { it.copy(busy = it.busy - task.id) }
         }
     }
 
-    /** Undo a completion: the task is restored and its points voided. */
-    fun undo(completionId: String) = viewModelScope.launch {
+    /**
+     * Undo a completion: the task is restored and its points voided. One paid
+     * by an approved check goes back to To check while the child still needs
+     * one ([fromCheck]: the Undo after Approve, which says so in its words).
+     */
+    fun undo(completionId: String, fromCheck: Boolean = false) = viewModelScope.launch {
         try {
-            replaceTask(api.undoCompletion(completionId))
+            val updated = api.undoCompletion(completionId)
+            replaceTask(updated)
             state.update { it.copy(history = emptyMap()) }
-            say(if (showPoints) "Undone; the points were taken back" else "Completion undone")
+            say(
+                when {
+                    updated.undo == "back_to_check" -> undoOutcome(updated.undo)
+                    !showPoints -> "Completion undone"
+                    fromCheck -> undoOutcome(updated.undo)
+                    else -> "Undone; the points were taken back"
+                },
+            )
+            if (fromCheck || updated.undo == "back_to_check") loadChecks()
         } catch (e: Exception) {
             say(e.message ?: "Couldn't undo")
+        }
+    }
+
+    // --- Checks (Task photo proof) --------------------------------------------
+
+    /** The photo for the open send dialog: in memory only, kept when a send fails. */
+    val checkPhoto = MutableStateFlow<ByteArray?>(null)
+
+    /** To check and my own checks; a failure (an older server) keeps the last list. */
+    private suspend fun loadChecks() {
+        try {
+            val list = api.taskSubmissions()
+            state.update { it.copy(checks = list) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
+
+    /** "This task now needs a check.": the task as it is now, then the send dialog. */
+    private suspend fun reloadAndSend(taskId: String) {
+        try {
+            val tasks = api.tasks()
+            state.update { it.copy(tasks = tasks) }
+            tasks.firstOrNull { it.id == taskId }?.takeUnless { it.waitingForOk }?.let(::openSend)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            say(e.message ?: "Couldn't load tasks")
+        }
+    }
+
+    fun openSend(task: Task) {
+        checkPhoto.value = null
+        state.update { it.copy(sending = task, sendError = null) }
+    }
+
+    fun cancelSend() {
+        checkPhoto.value = null
+        state.update { it.copy(sending = null, sendError = null) }
+    }
+
+    fun setCheckPhoto(bytes: ByteArray?) {
+        checkPhoto.value = bytes
+        state.update { it.copy(sendError = null) }
+    }
+
+    /** Sends the open dialog's task for a check; Undo takes it back. */
+    fun sendForCheck(note: String) {
+        val task = state.value.sending ?: return
+        if (state.value.sendBusy) return
+        val photo = checkPhoto.value
+        state.update { it.copy(sendBusy = true, sendError = null) }
+        viewModelScope.launch {
+            try {
+                val updated = api.completeTask(task.id, forCheck = true, note = note, photo = photo)
+                replaceTask(updated)
+                checkPhoto.value = null
+                state.update { it.copy(sending = null, sendBusy = false) }
+                loadChecks()
+                val id = updated.submissionId
+                _messages.send(Message(CheckText.SENT, if (id != null) "Undo" else null, id?.let { s -> { takeBack(s) } }))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val failure = sendFailure(e, photo != null)
+                if (failure.dropPhoto) checkPhoto.value = null
+                if (failure.close) {
+                    state.update { it.copy(sending = null, sendBusy = false) }
+                    say(failure.message)
+                    refresh()
+                } else {
+                    state.update { it.copy(sendBusy = false, sendError = failure.message) }
+                }
+            }
+        }
+    }
+
+    /** Takes back my own waiting check: the task goes back to how it was. */
+    fun takeBack(submissionId: String) {
+        if (submissionId in state.value.deciding) return
+        state.update { it.copy(deciding = it.deciding + submissionId) }
+        viewModelScope.launch {
+            try {
+                replaceTask(api.withdrawSubmission(submissionId))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                say(e.message ?: "Couldn't take it back")
+            } finally {
+                state.update { it.copy(deciding = it.deciding - submissionId) }
+                loadChecks()
+            }
+        }
+    }
+
+    fun toggleCheck(id: String) {
+        val opening = id !in state.value.openChecks
+        state.update { it.copy(openChecks = if (opening) it.openChecks + id else it.openChecks - id) }
+        if (opening) state.value.checks.firstOrNull { it.id == id }?.takeIf { it.hasPhoto }?.let { loadPhoto(it.id) }
+    }
+
+    /**
+     * Check photos, loaded only when their item is opened and kept in memory
+     * only (never on disk), a few at a time. A failure is kept as one, so the
+     * item says so instead of spinning.
+     */
+    val photos = MutableStateFlow<Map<String, Result<ImageBitmap?>>>(emptyMap())
+
+    private fun loadPhoto(id: String) {
+        if (photos.value[id]?.isSuccess == true) return
+        photos.update { it - id }
+        viewModelScope.launch {
+            val result = try {
+                Result.success(api.submissionPhoto(id)?.let { bytes -> withContext(Dispatchers.Default) { decodePhoto(bytes, 1600) } })
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+            photos.update { (it - id + (id to result)).entries.toList().takeLast(PHOTO_CACHE_SIZE).associate { e -> e.key to e.value } }
+        }
+    }
+
+    /** Approves a check: points paid (Undo for the adult who approved it, 10 minutes). */
+    fun approve(item: TaskSubmission) {
+        if (item.id in state.value.deciding) return
+        state.update { it.copy(deciding = it.deciding + item.id) }
+        viewModelScope.launch {
+            try {
+                val updated = api.decideSubmission(item.id, approve = true)
+                replaceTask(updated)
+                state.update { it.copy(history = emptyMap(), openChecks = it.openChecks - item.id) }
+                val completionId = updated.completionId
+                _messages.send(
+                    Message(
+                        CheckText.approved(item.task.title, item.child.name),
+                        if (completionId != null) "Undo" else null,
+                        completionId?.let { id -> { undo(id, fromCheck = true) } },
+                    ),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                say(e.message ?: "Couldn't approve it")
+            } finally {
+                state.update { it.copy(deciding = it.deciding - item.id) }
+                photos.update { it - item.id }
+                loadChecks()
+            }
+        }
+    }
+
+    /** Why the open Send back dialog's last try failed. */
+    val sendBackForm = FormErrors()
+
+    fun startSendBack(item: TaskSubmission) {
+        sendBackForm.clear()
+        state.update { it.copy(sendingBack = item) }
+    }
+
+    fun cancelSendBack() {
+        sendBackForm.clear()
+        state.update { it.copy(sendingBack = null) }
+    }
+
+    /** Sends a check back (or, counted as done at its day's end, takes the points back). */
+    fun sendBack(item: TaskSubmission, note: String, redoStepIds: List<String>) {
+        if (item.id in state.value.deciding) return
+        sendBackForm.clear()
+        state.update { it.copy(deciding = it.deciding + item.id) }
+        viewModelScope.launch {
+            try {
+                replaceTask(api.decideSubmission(item.id, approve = false, reviewNote = note, redoStepIds = redoStepIds))
+                state.update { it.copy(sendingBack = null, history = emptyMap(), openChecks = it.openChecks - item.id) }
+                photos.update { it - item.id }
+                say(
+                    if (item.countedAtCycleEnd) CheckText.tookBack(item.task.title, item.child.name)
+                    else CheckText.sentBack(item.task.title, item.child.name),
+                )
+                loadChecks()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (e is ApiException && e.status == 422) {
+                    // A note or step the server named: fix it in the dialog.
+                    sendBackForm.fail(e, "Couldn't send it back")
+                } else {
+                    state.update { it.copy(sendingBack = null) }
+                    say(e.message ?: "Couldn't send it back")
+                    loadChecks()
+                }
+            } finally {
+                state.update { it.copy(deciding = it.deciding - item.id) }
+            }
         }
     }
 
@@ -295,8 +556,7 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
                 val updated = api.setSubtaskDone(step.id, target)
                 if ((pendingSteps[task.id] ?: 1) <= 1) {
                     state.update { s -> s.copy(tasks = s.tasks.map { if (it.id == updated.id) updated else it }) }
-                }
-            } catch (e: Exception) {
+                }            } catch (e: Exception) {
                 // Undo this tap only if nothing tapped the step again since.
                 val now = state.value.tasks.firstOrNull { it.id == task.id }?.subtasks?.firstOrNull { it.id == step.id }
                 if (now?.done == target) replaceStep(task.id, step.id, !target)
@@ -315,7 +575,11 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
     }
 }
 
-private val OPEN_STATUSES = setOf("pending", "in_progress")
+/** Open tasks; one waiting for an adult's OK is still open (with its waiting state). */
+private val OPEN_STATUSES = setOf("pending", "in_progress", "awaiting_review")
+
+/** How many check photos stay in memory at once. */
+private const val PHOTO_CACHE_SIZE = 4
 
 @Composable
 fun TasksScreen(
@@ -330,9 +594,17 @@ fun TasksScreen(
     /** null when the server admin turned Points off. */
     onOpenPoints: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    /** The signed-in member's role, and whether an adult looks after them (null: not known yet). */
+    role: String? = null,
+    supervised: Boolean? = null,
 ) {
     val vm = viewModel { TasksViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val checkPhoto by vm.checkPhoto.collectAsStateWithLifecycle()
+    val photos by vm.photos.collectAsStateWithLifecycle()
+    var enlarged by remember { mutableStateOf<ImageBitmap?>(null) }
+    // To check: what this adult may decide (the list also holds the viewer's own checks).
+    val toCheck = state.checks.filter { it.canDecide }
     val expandedIds by vm.expanded.collectAsStateWithLifecycle()
     val byRoomChosen by vm.byRoom.collectAsStateWithLifecycle()
     val collapsed by vm.collapsed.collectAsStateWithLifecycle()
@@ -364,8 +636,10 @@ fun TasksScreen(
         val floorId = places.rooms.firstOrNull { it.id == roomId }?.floorId?.takeIf { f -> places.floors.any { it.id == f } }
         val unfolded = collapsed - "room:$roomId" - "floor:${floorId ?: "none"}"
         vm.collapsed.value = unfolded
-        // Rows above the groups: the Points / sort row (always there with rooms).
-        val index = roomRowIndex(groupByPlace(open, places), unfolded, roomId, leading = 1)
+        // Rows above the groups: the Points / sort row (always there with rooms),
+        // then To check (its heading and one row per item) when there is any.
+        val toCheckRows = if (toCheck.isEmpty()) 0 else toCheck.size + 1
+        val index = roomRowIndex(groupByPlace(open, places), unfolded, roomId, leading = 1 + toCheckRows)
         val name = places.roomLabel(roomId) ?: "that room"
         if (index != null) listState.animateScrollToItem(index) else showMessage("Nothing to do in $name right now.")
         vm.focusRoom.value = null
@@ -396,6 +670,12 @@ fun TasksScreen(
             onComplete = { vm.complete(task) },
             onToggleStep = { step -> vm.toggleStep(task, step) },
             onUndo = { id -> vm.undo(id) },
+            userId = userId,
+            // My own waiting check: Take back, by the id the task carries.
+            onTakeBack = takeBackId(task, userId)?.let { id -> { vm.takeBack(id) } },
+            takingBack = takeBackId(task, userId) in state.deciding,
+            // The head decides only for children they look after: say how to.
+            headHint = headHint(task, role, userId),
             // The editor also holds Delete, so either opens it.
             onEdit = if (access.canEdit(task.createdById, userId) || access.canDelete(task.createdById, userId)) {
                 { vm.startEdit(task) }
@@ -436,6 +716,23 @@ fun TasksScreen(
                                     FilterChip(selected = byRoom, onClick = { vm.byRoom.value = true }, label = { Text("By room") })
                                 }
                             }
+                        }
+                    }
+                    // To check, for the adults who look after the children who sent them.
+                    if (toCheck.isNotEmpty()) {
+                        item(key = "to-check") { ToCheckHeading() }
+                        items(toCheck, key = { "check/${it.id}" }) { item ->
+                            CheckCard(
+                                item = item,
+                                showPoints = showPoints,
+                                expanded = item.id in state.openChecks,
+                                photo = photos[item.id],
+                                busy = item.id in state.deciding,
+                                onToggle = { vm.toggleCheck(item.id) },
+                                onApprove = { vm.approve(item) },
+                                onSendBack = { vm.startSendBack(item) },
+                                onEnlarge = { enlarged = it },
+                            )
                         }
                     }
                     if (open.isEmpty()) {
@@ -512,6 +809,8 @@ fun TasksScreen(
             showPoints = showPoints,
             onSave = { edit -> vm.save(task, edit) },
             onDelete = if (access.canDelete(task.createdById, userId)) ({ vm.delete(task) }) else null,
+            canSetPhotoProof = canSetPhotoProof(role, supervised),
+            sentByMe = task.review.submittedBy?.id == userId,
         )
     }
 
@@ -531,9 +830,42 @@ fun TasksScreen(
             minutesPerPoint = state.minutesPerPoint ?: state.tasks.firstOrNull()?.minutesPerPoint ?: DEFAULT_MINUTES_PER_POINT,
             onSave = vm::create,
             onDelete = null,
+            canSetPhotoProof = canSetPhotoProof(role, supervised),
         )
     }
+
+    state.sending?.let { task ->
+        SendCheckDialog(
+            task = task,
+            photo = checkPhoto,
+            busy = state.sendBusy,
+            error = state.sendError,
+            onPhoto = vm::setCheckPhoto,
+            onSend = vm::sendForCheck,
+            onDismiss = vm::cancelSend,
+        )
+    }
+
+    state.sendingBack?.let { item ->
+        SendBackDialog(
+            item = item,
+            showPoints = showPoints,
+            busy = item.id in state.deciding,
+            errors = vm.sendBackForm,
+            onSend = { note, redo -> vm.sendBack(item, note, redo) },
+            onDismiss = vm::cancelSendBack,
+        )
+    }
+
+    enlarged?.let { PhotoViewer(it) { enlarged = null } }
 }
+
+/**
+ * The points at the end of the "Completed" toast: " · 5 pts" (nothing at 0 or
+ * with Points off). "pts" even for 1, like the task card, step rows and history.
+ */
+internal fun completedPointsSuffix(points: Double, showPoints: Boolean): String =
+    if (showPoints && points > 0) " · ${formatPoints(points.centi())} pts" else ""
 
 /**
  * The LazyColumn index of [roomId]'s heading in the "By room" list, or null
@@ -603,8 +935,16 @@ private fun TaskCard(
     onToggleStep: (Subtask) -> Unit,
     onUndo: (String) -> Unit,
     onEdit: (() -> Unit)?,
+    userId: String,
+    /** Takes back my own waiting check; null when it isn't mine (or not known). */
+    onTakeBack: (() -> Unit)?,
+    takingBack: Boolean,
+    /** For the head on a check they can't decide: how to become able to. */
+    headHint: String?,
 ) {
     val notes = task.notes?.takeIf { it.isNotBlank() }
+    // Sent for a check: open, but nothing changes until an adult decides (or it's taken back).
+    val waiting = task.waitingForOk
     // Done for this occurrence: the next one can't be completed before it
     // opens. The clock moves on then, so the button comes back without a refresh.
     var now by remember { mutableStateOf(Instant.now()) }
@@ -627,7 +967,9 @@ private fun TaskCard(
                 val meta = listOfNotNull(
                     waitsUntil?.let { "Done · next opens ${shortDate(it.toString())}" },
                     if (task.doneThisCycle) "Reopens ${task.cycleEndsAt?.let { shortDate(it) }}" else due?.first,
-                    task.points.takeIf { showPoints && it > 0 }?.let { "${formatPoints(it.centi())} pts" },
+                    task.points.takeIf { showPoints && it > 0 }?.let {
+                        if (waiting) CheckText.waitingPoints(it) else "${formatPoints(it.centi())} pts"
+                    },
                     task.priority.takeIf { it == "high" || it == "urgent" }?.replaceFirstChar(Char::uppercase),
                     task.recurrence?.let { if (it.rollover) "Cycles ${it.kind}" else "Repeats ${it.kind}" },
                     task.assignee?.name?.let { if (task.rotation.isNotEmpty()) "$it's turn" else it },
@@ -644,6 +986,33 @@ private fun TaskCard(
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                if (waiting) {
+                    // Wraps: on a narrow card "Riley sent this for a check" goes under the chip
+                    // instead of being squeezed beside it.
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        StatusChip(CheckText.WAITING)
+                        val sender = task.review.submittedBy
+                        if (sender != null && sender.id != userId) {
+                            Text(
+                                CheckText.sentBy(sender.name),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    if (headHint != null) {
+                        Text(headHint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (onTakeBack != null) {
+                        TextButton(onClick = onTakeBack, enabled = !takingBack, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                            Text(CheckText.TAKE_BACK)
+                        }
+                    }
+                }
             }
             Icon(
                 Icons.Filled.KeyboardArrowDown,
@@ -651,7 +1020,7 @@ private fun TaskCard(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.rotate(if (expanded) 180f else 0f).padding(horizontal = 4.dp),
             )
-            FilledTonalIconButton(onClick = onComplete, enabled = !busy && !task.doneThisCycle && waitsUntil == null) {
+            FilledTonalIconButton(onClick = onComplete, enabled = !busy && !task.doneThisCycle && waitsUntil == null && !waiting) {
                 if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 else Icon(Icons.Filled.Check, contentDescription = if (waitsUntil != null) "Done for now" else "Complete")
             }
@@ -670,10 +1039,11 @@ private fun TaskCard(
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .clickable { onToggleStep(step) },
+                            // While the task waits for an OK its steps are locked (the server refuses a tick).
+                            .then(if (waiting) Modifier else Modifier.clickable { onToggleStep(step) }),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Checkbox(checked = step.done, onCheckedChange = { onToggleStep(step) })
+                        Checkbox(checked = step.done, onCheckedChange = { onToggleStep(step) }, enabled = !waiting)
                         Column(Modifier.weight(1f)) {
                             Text(
                                 step.title,
@@ -689,13 +1059,21 @@ private fun TaskCard(
                             if (who != null) {
                                 Text(who, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                            // Ticked again by a child someone looks after: its points wait for an OK.
+                            if (step.done && step.waitingForOk) {
+                                StatusChip(CheckText.WAITING, Modifier.padding(top = 2.dp))
+                            }
                         }
                         if (showPoints && step.points > 0) {
+                            // A gap from the title at any width (a long title wraps in its own
+                            // column instead of running into the points), and the points on one line.
                             Text(
                                 "${formatPoints(step.points.centi())} pts",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(end = 4.dp),
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.padding(start = 12.dp, end = 4.dp),
                             )
                         }
                     }

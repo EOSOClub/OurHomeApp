@@ -71,6 +71,7 @@ import com.eosoclub.ourhome.data.ALL_APPS_LABEL
 import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.AppLimitEntry
 import com.eosoclub.ourhome.data.CAP_CHOICES
+import com.eosoclub.ourhome.data.CheckText
 import com.eosoclub.ourhome.data.EVERY_DAY
 import com.eosoclub.ourhome.data.GIVE_STEPS
 import com.eosoclub.ourhome.data.LookedAfterPointsTime
@@ -193,6 +194,8 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
         val savingSchedule: String? = null,
         /** Whose points for screen time, or extra time, is being saved (person id). */
         val savingPoints: String? = null,
+        /** Whose "Check their tasks before points" is being saved, and to what. */
+        val savingReview: Pair<String, Boolean>? = null,
         /** Whose week of app usage is open, their loaded history, and whose failed to load. */
         val usageOpen: Set<String> = emptySet(),
         val usageHistory: Map<String, UsageHistory> = emptyMap(),
@@ -276,6 +279,21 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
             onDone(if (share) "${person.name}'s app usage will be shared" else "${person.name}'s app usage is no longer shared")
         } catch (e: Exception) {
             state.update { it.copy(savingUsage = null) }
+            onDone(e.message ?: "Couldn't change it")
+        }
+    }
+
+    /** "Check their tasks before points" for [person]: their tasks wait for an OK before points are paid. */
+    fun setReviewTasks(person: LookedAfter, on: Boolean, onDone: (String) -> Unit) = viewModelScope.launch {
+        edits++
+        state.update { it.copy(savingReview = person.id to on) }
+        try {
+            val next = api.setReviewTasks(person.id, on)
+            // Set before the saving state ends, so the switch never flicks back.
+            state.update { it.copy(lookAfter = next, savingReview = null) }
+            onDone(if (on) "${person.name}'s tasks now wait for an OK" else "${person.name}'s tasks no longer wait for an OK")
+        } catch (e: Exception) {
+            state.update { it.copy(savingReview = null) }
             onDone(e.message ?: "Couldn't change it")
         }
     }
@@ -441,6 +459,8 @@ internal fun LookAfterScreen(
     showMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
     startPersonId: String? = null,
+    /** False when the server admin turned Tasks off: no "Check their tasks before points". */
+    showTasks: Boolean = true,
 ) {
     val vm = viewModel { LookAfterViewModel(api) }
     var selectedId by rememberSaveable(startPersonId) { mutableStateOf(startPersonId) }
@@ -556,6 +576,9 @@ internal fun LookAfterScreen(
                     savingPoints = state.savingPoints == selected.id,
                     onPointsRule = { rate, cap -> vm.setPointsForTime(selected, rate, cap, showMessage) },
                     onGive = { vm.giveExtraTime(selected, it, showMessage) },
+                    reviewTasks = state.savingReview?.takeIf { it.first == selected.id }?.second ?: selected.reviewTasks,
+                    savingReview = state.savingReview?.first == selected.id,
+                    onReviewTasks = if (showTasks) ({ on -> vm.setReviewTasks(selected, on, showMessage) }) else null,
                 )
             }
         }
@@ -719,6 +742,11 @@ private fun LookedAfterRow(
     savingPoints: Boolean,
     onPointsRule: (minutesPerPoint: Int?, dailyCap: Int) -> Unit,
     onGive: (minutes: Int) -> Unit,
+    /** "Check their tasks before points" (or what it's being saved to); null from an older server. */
+    reviewTasks: Boolean?,
+    savingReview: Boolean,
+    /** Null hides the card (Tasks turned off). */
+    onReviewTasks: ((Boolean) -> Unit)?,
 ) {
     val blocking = person.blocking
     val blockAction: AppRowAction = { app ->
@@ -796,6 +824,15 @@ private fun LookedAfterRow(
                 }
             },
             second = {
+                if (reviewTasks != null && onReviewTasks != null) {
+                    // The web's names (look-after-view.tsx): "Task checks", folded to "On" / "Off".
+                    CollapsibleCard(CheckText.TASK_CHECKS_CARD, CheckText.taskChecksSummary(reviewTasks)) {
+                        Column {
+                            SwitchRow(CheckText.REVIEW_TASKS, reviewTasks, enabled = !savingReview, onChange = onReviewTasks)
+                            Help(CheckText.REVIEW_TASKS_HELP)
+                        }
+                    }
+                }
                 // While their usage is shared, or while a limit is left from before.
                 if (person.appUsage.shared || !person.limits.isEmpty) {
                     // Any app from their usage without a limit of its own yet.

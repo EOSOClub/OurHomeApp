@@ -151,6 +151,10 @@ dependencies {
     implementation(libs.firebase.messaging)
     implementation(libs.play.services.location)
     implementation(libs.maplibre.android)
+    implementation(libs.camera.core)
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.compose)
 
     testImplementation(libs.junit)
 }

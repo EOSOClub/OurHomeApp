@@ -253,6 +253,7 @@ class LiveCheckService : Service() {
             7,
             Intent(this, MainActivity::class.java)
                 .putExtra(RequestReminders.EXTRA_OPEN_TAB, AppUpdateAlerts.TAB_PROFILE)
+                .putExtra(RequestReminders.EXTRA_TAP_ID, RequestReminders.nextTapId())
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )

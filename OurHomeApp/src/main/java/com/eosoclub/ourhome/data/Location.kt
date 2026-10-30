@@ -231,6 +231,8 @@ data class LookedAfter(
     val setup: LookedAfterSetup? = null,
     /** My last ring of their phone and what it said back; null when I haven't rung it lately. */
     val ring: LookedAfterRing? = null,
+    /** "Check their tasks before points": their tasks wait for an adult's OK; null from older servers (no switch then). */
+    val reviewTasks: Boolean? = null,
 ) {
     val required: Boolean get() = sharing == "required"
 

@@ -15,6 +15,7 @@ googleServices = "4.5.0"
 snakeyaml = "2.7"
 playServicesLocation = "21.4.0"
 maplibre = "13.7.1"
+camerax = "1.6.2"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -38,6 +39,12 @@ play-services-location = { module = "com.google.android.gms:play-services-locati
 # The Map page (ui/MapScreen.kt): OpenStreetMap tiles, no API key. The OpenGL
 # build, not the default Vulkan one, so it draws on every phone and emulator.
 maplibre-android = { module = "org.maplibre.gl:android-sdk-opengl", version.ref = "maplibre" }
+# Task photo proof (ui/TaskCamera.kt): in-app capture to memory only, never
+# the gallery or another camera app.
+camera-core = { module = "androidx.camera:camera-core", version.ref = "camerax" }
+camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
+camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
+camera-compose = { module = "androidx.camera:camera-compose", version.ref = "camerax" }
 # Build-time only: reads settings.yml in OurHomeApp/build.gradle.kts.
 snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 

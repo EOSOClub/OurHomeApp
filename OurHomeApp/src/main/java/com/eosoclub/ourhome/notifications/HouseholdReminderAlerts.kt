@@ -15,6 +15,7 @@ import com.eosoclub.ourhome.data.ApiClient
 import com.eosoclub.ourhome.data.Notification
 import com.eosoclub.ourhome.data.planReminderAlert
 import com.eosoclub.ourhome.data.reminderLine
+import com.eosoclub.ourhome.nfc.ScanHandoff
 
 /**
  * Phone alerts for the reminders the web's 15-minute sweep generates: overdue
@@ -27,7 +28,9 @@ import com.eosoclub.ourhome.data.reminderLine
  * something new appears ([planReminderAlert]); otherwise it is refreshed
  * silently while showing, and removed once nothing is unread for this user
  * (handled, or marked read by them on any of their devices; read state is
- * per person, so someone else reads it changes nothing here).
+ * per person, so someone else reads it changes nothing here). The server
+ * pushes when they read something, so that removal is prompt. Tapping it
+ * marks what it lists read, unless it opens the bell.
  */
 object HouseholdReminderAlerts {
     private const val CHANNEL_ID = "household_reminders"
@@ -108,12 +111,20 @@ object HouseholdReminderAlerts {
             TAB_BILLS -> R.drawable.ic_receipt
             else -> R.drawable.ic_request
         }
+        val intent = Intent(context, MainActivity::class.java)
+            .putExtra(RequestReminders.EXTRA_OPEN_TAB, tab)
+            .putExtra(RequestReminders.EXTRA_TAP_ID, RequestReminders.nextTapId())
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        // Tapping opens what they're about, so they count as read everywhere,
+        // as when opened from the bell. A mix opens the bell itself, where
+        // each is read as it's opened; marking them here would empty it.
+        if (tab != TAB_NOTIFICATIONS) {
+            ScanHandoff.stamp(context, intent.putExtra(RequestReminders.EXTRA_MARK_READ, showing.map { it.id }.toTypedArray()))
+        }
         val open = PendingIntent.getActivity(
             context,
             5,
-            Intent(context, MainActivity::class.java)
-                .putExtra(RequestReminders.EXTRA_OPEN_TAB, tab)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)

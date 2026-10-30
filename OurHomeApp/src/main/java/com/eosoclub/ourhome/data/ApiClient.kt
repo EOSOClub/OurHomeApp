@@ -31,12 +31,18 @@ import java.util.concurrent.TimeUnit
  * username already taken), so a form can mark those fields.
  *
  * [status]: the HTTP status when the server answered with an error, for callers that tell them apart.
+ * [code]: the server's machine code for the refusal (`details.code`, e.g. "check_needed"); null when it sent none.
  */
 class ApiException(
     message: String,
     val status: Int? = null,
     val fieldErrors: Map<String, String> = emptyMap(),
+    val code: String? = null,
 ) : Exception(message)
+
+/** The server's machine code for a refusal (web server/api/http.ts: details.code), or null. */
+internal fun codeOf(details: JsonElement?): String? =
+    ((details as? JsonObject)?.get("code") as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
 
 /** The server's per-field errors (web server/api/http.ts: details.fieldErrors), first one each. */
 internal fun fieldErrorsOf(details: JsonElement?): Map<String, String> {
@@ -75,6 +81,11 @@ class ApiClient(
             chain.proceed(chain.request().newBuilder().header("Origin", baseUrl()).build())
         }
         .build()
+
+    /** The same client with more time to send a task's photo (up to ~2 MB) on a slow connection. */
+    private val uploads by lazy {
+        http.newBuilder().writeTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
+    }
 
     // --- Auth (Better Auth: bare JSON, not the app envelope) -----------------
 
@@ -270,6 +281,8 @@ class ApiClient(
             putPlace(values.firstOrNull().orEmpty())
         }
         put("assigneeId", input.assigneeId)
+        // Only when the editor showed the switch (an older server ignores the key).
+        input.photoProof?.let { put("photoProof", it) }
         // Always sent: [] clears a rotation (an older server ignores the key).
         putJsonArray("rotationUserIds") { input.rotationUserIds.forEach { add(it) } }
         val r = input.recurrence
@@ -294,13 +307,78 @@ class ApiClient(
         }
     }
 
-    /** Completes a task and pays its points; the result carries `completionId` for Undo. */
-    suspend fun completeTask(taskId: String): Task =
-        call(post("/api/tasks/complete", buildJsonObject { put("taskId", taskId) }), Task.serializer())
+    /**
+     * Completes a task and pays its points; the result carries `completionId` for Undo.
+     * Every call says this app can send for a check (`checks`), so a child whose
+     * tasks are checked gets "This task now needs a check." instead of "Update
+     * the app". [forCheck]: sends it for a check instead (the send dialog), with
+     * an optional [note] and [photo] (a JPEG with its rotation already in the
+     * pixels); the result then carries `submissionId` for Undo.
+     */
+    suspend fun completeTask(taskId: String, forCheck: Boolean = false, note: String? = null, photo: ByteArray? = null): Task {
+        val body = buildJsonObject {
+            put("taskId", taskId)
+            put("checks", 1)
+            if (forCheck) {
+                put("forCheck", true)
+                note?.trim()?.takeIf { it.isNotEmpty() }?.let { put("note", it) }
+                photo?.let { put("photo", java.util.Base64.getEncoder().encodeToString(it)) }
+            }
+        }
+        // A photo can take a while on a slow connection.
+        return call(post("/api/tasks/complete", body), Task.serializer(), if (photo != null) uploads else http)
+    }
 
-    /** Undo a completion (completer within 10 min, head any time); its points are voided. */
+    /**
+     * Undo a completion (completer within 10 min, head any time; a checked one:
+     * the adult who approved it within 10 min, or the head); its points are
+     * voided. The result's `undo` says whether it went back to To check.
+     */
     suspend fun undoCompletion(completionId: String): Task =
         call(post("/api/tasks/completions/undo", buildJsonObject { put("completionId", completionId) }), Task.serializer())
+
+    /** To check (children I look after now) plus my own checks, oldest first. */
+    suspend fun taskSubmissions(): List<TaskSubmission> =
+        call(get("/api/tasks/submissions"), ListSerializer(TaskSubmission.serializer()))
+
+    /** A check's photo (JPEG), or null when there is none any more. Kept in memory only by the caller. */
+    @Suppress("BlockingMethodInNonBlockingContext") // URLEncoder.encode never blocks.
+    suspend fun submissionPhoto(submissionId: String): ByteArray? = withContext(Dispatchers.IO) {
+        val path = "/api/tasks/submissions/photo?id=" + java.net.URLEncoder.encode(submissionId, "UTF-8")
+        http.newCall(get(path)).execute().use { res ->
+            if (res.code == 401) {
+                onUnauthorized(null)
+                throw UnauthorizedException()
+            }
+            if (res.isSuccessful) res.body.bytes() else null
+        }
+    }
+
+    /**
+     * Approves a check, or sends it back with [reviewNote] (and, for a task,
+     * the [redoStepIds] to do again). On a check counted as done when its day
+     * ended, send back takes the points back. The result carries `completionId`
+     * when an approval paid a waiting task check (for Undo).
+     */
+    suspend fun decideSubmission(submissionId: String, approve: Boolean, reviewNote: String? = null, redoStepIds: List<String> = emptyList()): Task =
+        call(
+            post(
+                "/api/tasks/submissions/decide",
+                buildJsonObject {
+                    put("submissionId", submissionId)
+                    put("decision", if (approve) "approve" else "send_back")
+                    if (!approve) {
+                        put("reviewNote", reviewNote?.trim().orEmpty())
+                        if (redoStepIds.isNotEmpty()) putJsonArray("redoStepIds") { redoStepIds.forEach { add(it) } }
+                    }
+                },
+            ),
+            Task.serializer(),
+        )
+
+    /** Takes back my own waiting check: the task goes back to how it was and the photo is deleted. */
+    suspend fun withdrawSubmission(submissionId: String): Task =
+        call(post("/api/tasks/submissions/withdraw", buildJsonObject { put("submissionId", submissionId) }), Task.serializer())
 
     /** A task's history, newest first, incl. missed cycles and whether the caller may undo. */
     suspend fun taskCompletions(taskId: String): List<TaskCompletion> =
@@ -656,6 +734,12 @@ class ApiClient(
     suspend fun requests(): List<HouseholdRequest> =
         call(get("/api/requests"), ListSerializer(HouseholdRequest.serializer()))
 
+    /** The tab counts: requests someone else made or changed since this member last opened Requests. */
+    suspend fun navBadges(): NavBadges = call(get("/api/badges"), NavBadges.serializer())
+
+    /** They opened Requests: its badge clears here, on the website and on their other phones. */
+    suspend fun markRequestsSeen() = callUnit(post("/api/requests/seen", buildJsonObject { }))
+
     /**
      * The kinds of request that are on, as this member sees them. A server from
      * before request types refuses it: callers fall back to [defaultRequestModules].
@@ -951,8 +1035,21 @@ class ApiClient(
     suspend fun markNotificationRead(id: String) =
         callUnit(post("/api/notifications/read", buildJsonObject { put("id", id) }))
 
+    /** The ones a tapped phone notification listed; any already read are skipped. */
+    suspend fun markNotificationsRead(ids: List<String>) =
+        callUnit(post("/api/notifications/read", buildJsonObject { putJsonArray("ids") { ids.forEach { add(it) } } }))
+
     suspend fun markAllNotificationsRead() =
         callUnit(post("/api/notifications/read", buildJsonObject { put("all", true) }))
+
+    // --- What's new ----------------------------------------------------------
+
+    /** "What's new" entries this member hasn't closed on any device, newest first. */
+    suspend fun changelog(): List<ChangelogEntry> = call(get("/api/changelog"), ChangelogList.serializer()).entries
+
+    /** They closed "What's new"; [id] is the newest entry it showed. */
+    suspend fun markChangelogSeen(id: String) =
+        callUnit(post("/api/changelog/seen", buildJsonObject { put("id", id) }))
 
     // --- App updates ---------------------------------------------------------
 
@@ -1343,6 +1440,19 @@ class ApiClient(
     /** The children and teens I supervise: I may ring them and require their location sharing. */
     suspend fun lookAfter(): LookAfter = call(get("/api/supervision/mine"), LookAfter.serializer())
 
+    /** "Check their tasks before points" for a supervised child; off settles their waiting checks. */
+    suspend fun setReviewTasks(supervisedId: String, on: Boolean): LookAfter =
+        call(
+            post(
+                "/api/supervision/review-tasks",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    put("on", on)
+                },
+            ),
+            LookAfter.serializer(),
+        )
+
     /** Makes a supervised child's location sharing required, or stops requiring it. */
     suspend fun setRequiredSharing(supervisedId: String, required: Boolean): LookAfter =
         call(
@@ -1687,17 +1797,17 @@ class ApiClient(
         Request.Builder().url(baseUrl() + path).put(body.toString().toRequestBody(jsonType)).build()
 
     /** Executes an app-API call and returns the envelope's `data`. */
-    private suspend fun <T> call(request: Request, serializer: KSerializer<T>): T =
-        execute(request, serializer).data ?: throw ApiException("Empty response from server")
+    private suspend fun <T> call(request: Request, serializer: KSerializer<T>, client: OkHttpClient = http): T =
+        execute(request, serializer, client).data ?: throw ApiException("Empty response from server")
 
     /** Executes an app-API call where only success matters, not the payload. */
     private suspend fun callUnit(request: Request) {
         execute(request, JsonElement.serializer())
     }
 
-    private suspend fun <T> execute(request: Request, serializer: KSerializer<T>): Envelope<T> =
+    private suspend fun <T> execute(request: Request, serializer: KSerializer<T>, client: OkHttpClient = http): Envelope<T> =
         withContext(Dispatchers.IO) {
-            http.newCall(request).execute().use { res ->
+            client.newCall(request).execute().use { res ->
                 if (res.code == 401) {
                     onUnauthorized(null)
                     throw UnauthorizedException()
@@ -1709,15 +1819,16 @@ class ApiClient(
                 if (!envelope.ok) {
                     // The server admin turned this household off: nothing works
                     // until it's back on, so sign out and say why.
-                    val code = (envelope.error?.details as? JsonObject)?.get("code")?.jsonPrimitive?.contentOrNull
+                    val code = codeOf(envelope.error?.details)
                     if (res.code == 403 && code == "household_disabled") {
-                        onUnauthorized(envelope.error.message)
+                        onUnauthorized(envelope.error?.message)
                         throw UnauthorizedException()
                     }
                     throw ApiException(
                         envelope.error?.message ?: "Request failed (${res.code})",
                         res.code,
                         fieldErrorsOf(envelope.error?.details),
+                        code,
                     )
                 }
                 envelope
