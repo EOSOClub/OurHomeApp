@@ -61,11 +61,13 @@ import com.eosoclub.ourhome.data.addStep
 import com.eosoclub.ourhome.data.asPoints
 import com.eosoclub.ourhome.data.customisedCount
 import com.eosoclub.ourhome.data.formatPoints
+import com.eosoclub.ourhome.data.holdsTime
 import com.eosoclub.ourhome.data.liveTotals
 import com.eosoclub.ourhome.data.removeStep
 import com.eosoclub.ourhome.data.setStepFollow
 import com.eosoclub.ourhome.data.setStepMinutes
 import com.eosoclub.ourhome.data.setStepPoints
+import com.eosoclub.ourhome.data.setStepsShareTime
 import com.eosoclub.ourhome.data.setTaskFollow
 import com.eosoclub.ourhome.data.setTaskMinutes
 import com.eosoclub.ourhome.data.setTaskPoints
@@ -183,7 +185,12 @@ internal fun TaskEditor(
             }
         }
     }
-    var points by remember { mutableStateOf(task?.pointsState() ?: PointsState(TaskBase(null, null, true), emptyList())) }
+    var points by remember {
+        mutableStateOf(task?.pointsState() ?: PointsState(TaskBase(null, null, pointsFollowTime = true, stepsShareTime = true), emptyList()))
+    }
+    // A step's minutes are typed against the checklist from when the field was
+    // focused, so "1" on the way to "15" doesn't reshape the other steps.
+    var stepSnapshot by remember { mutableStateOf<PointsState?>(null) }
     // A total edit that would overwrite customised steps, waiting for "Rescale".
     var pendingTotal by remember { mutableStateOf<Pair<String, (Boolean) -> EditResult>?>(null) }
 
@@ -218,6 +225,7 @@ internal fun TaskEditor(
                     estimatedMinutes = base.baseMinutes?.takeIf { it > 0 },
                     points = if (base.pointsFollowTime) null else base.basePointsCenti?.asPoints(),
                     pointsFollowTime = base.pointsFollowTime,
+                    stepsShareTime = base.stepsShareTime,
                     categoryId = categoryId.ifEmpty { null },
                     // Without the rooms loaded the picker wasn't shown: keep the places.
                     places = placeValues.takeIf { places?.isEmpty == false },
@@ -459,6 +467,39 @@ internal fun TaskEditor(
         FieldLabel(if (task == null) "Checklist (optional)" else "Checklist")
         // The server reports anything in the steps under "subtasks", saying which step.
         FieldError(errors["subtasks"])
+        if (steps.isNotEmpty()) {
+            val held = holdsTime(points.task)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Steps share the task's time", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        when {
+                            !points.task.stepsShareTime -> "Each step's time adds to the task's time."
+                            held -> "Changing a step's time takes it from the other steps or gives it back, " +
+                                "so the task's time stays the same."
+                            else -> "Set the task's time above to share it out between the steps."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = points.task.stepsShareTime,
+                    onCheckedChange = { on -> points = setStepsShareTime(points, on, minutesPerPoint) },
+                    enabled = open,
+                )
+            }
+            val onSteps = liveTotals(points).minutes
+            val taskMinutes = points.task.baseMinutes ?: 0
+            if (held && onSteps != taskMinutes) {
+                Text(
+                    "The steps add up to $onSteps min of the task's $taskMinutes min. Add a step to give it " +
+                        "the rest, or change the task's time.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         steps.forEachIndexed { index, step ->
             // Keyed by the step, so a row's typed text and focus move with it.
             key(step.key) {
@@ -473,7 +514,9 @@ internal fun TaskEditor(
                     locked = locked,
                     titleLocked = allLocked,
                     onChange = { steps[index] = it; errors.clear("subtasks") },
-                    onMinutes = { m -> points = setStepMinutes(points, index, m, minutesPerPoint) },
+                    onMinutesFocus = { stepSnapshot = points },
+                    onMinutes = { m -> points = setStepMinutes(stepSnapshot ?: points, index, m, minutesPerPoint) },
+                    onMinutesCommit = { stepSnapshot = null },
                     onPoints = { c -> points = setStepPoints(points, index, c) },
                     onFollow = { on -> points = setStepFollow(points, index, on, minutesPerPoint) },
                     onMove = { delta ->
@@ -493,7 +536,7 @@ internal fun TaskEditor(
         TextButton(
             onClick = {
                 steps.add(StepEdit(nextKey, null, ""))
-                points = addStep(points)
+                points = addStep(points, minutesPerPoint)
                 nextKey++
             },
             enabled = open,
@@ -560,6 +603,9 @@ private fun PointsSection(
     var snapshot by remember { mutableStateOf<PointsState?>(null) }
     val hasMinutes = points.steps.isNotEmpty() || points.task.baseMinutes != null
     val hasPoints = points.steps.isNotEmpty() || points.task.basePointsCenti != null
+    // Steps sharing a held time: the field shows the held time, not the sum.
+    val held = points.steps.isNotEmpty() && holdsTime(points.task)
+    val shownMinutes = if (held) points.task.baseMinutes ?: 0 else live.minutes
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -569,7 +615,7 @@ private fun PointsSection(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 NumberBox(
                     label = "Time (min)",
-                    value = if (hasMinutes) live.minutes.toDouble() else null,
+                    value = if (hasMinutes) shownMinutes.toDouble() else null,
                     decimals = false,
                     marked = custom > 0,
                     enabled = enabled,
@@ -582,7 +628,7 @@ private fun PointsSection(
                     onCommit = { v ->
                         val base = snapshot ?: points
                         snapshot = null
-                        if (custom > 0 && v?.toInt() != live.minutes) {
+                        if (custom > 0 && v?.toInt() != shownMinutes) {
                             onTotalEdit("time to complete") { c -> setTaskMinutes(base, v?.toInt(), minutesPerPoint, c) }
                         }
                     },
@@ -623,7 +669,13 @@ private fun PointsSection(
                     enabled = enabled,
                 )
             }
-            if (custom > 0) {
+            if (custom > 0 && held) {
+                Text(
+                    "$custom step${if (custom == 1) "" else "s"} set by hand. Changing a total rescales every step.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = CustomColor,
+                )
+            } else if (custom > 0) {
                 Text(
                     "Totals influenced by $custom customised step${if (custom == 1) "" else "s"}" +
                         " (task set to ${points.task.baseMinutes ?: 0} min" +
@@ -823,7 +875,9 @@ private fun ChecklistStepRow(
     /** My own check waits: the name too. */
     titleLocked: Boolean,
     onChange: (StepEdit) -> Unit,
+    onMinutesFocus: () -> Unit,
     onMinutes: (Int) -> Unit,
+    onMinutesCommit: () -> Unit,
     onPoints: (Int) -> Unit,
     onFollow: (Boolean) -> Unit,
     onMove: (Int) -> Unit,
@@ -854,7 +908,9 @@ private fun ChecklistStepRow(
                     marked = values.minutesCustom,
                     enabled = !locked,
                     modifier = Modifier.weight(1f),
+                    onFocus = onMinutesFocus,
                     onValue = { v -> v?.let { onMinutes(it.toInt()) } },
+                    onCommit = { onMinutesCommit() },
                 )
                 if (showPoints) NumberBox(
                     label = if (values.pointsFollowTime) "Pts" else "Pts (set)",

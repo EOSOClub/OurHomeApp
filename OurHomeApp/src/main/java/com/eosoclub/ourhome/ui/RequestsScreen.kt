@@ -99,10 +99,15 @@ import java.time.format.FormatStyle
 // ([RequestModule], set by the head in Settings → Request types).
 private val MEDIA_TYPES = listOf("movie" to "Movie", "tv" to "TV show")
 private val MEDIA_SECTIONS = listOf("movie" to "Movies", "tv" to "TV shows")
-// Media is one step: waiting → added, or declined where the head allows it.
-// ([mediaStatus] folds the older flow's "accepted" into waiting.)
-private val MEDIA_STATUS_ORDER = listOf("pending", "completed", "declined")
-private val MEDIA_STATUS_LABELS = mapOf("pending" to "Waiting", "completed" to "Added", "declined" to "Declined")
+// Media: waiting → accepted → added, or declined (before or after accepting)
+// where the head allows it.
+private val MEDIA_STATUS_ORDER = listOf("pending", "accepted", "completed", "declined")
+private val MEDIA_STATUS_LABELS = mapOf(
+    "pending" to "Waiting",
+    "accepted" to "Accepted",
+    "completed" to "Added",
+    "declined" to "Declined",
+)
 private val MAINTENANCE_SECTIONS = listOf(
     "pending" to "Waiting for acceptance",
     "accepted" to "In progress",
@@ -304,9 +309,15 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         _messages.send(updated.dueAt?.let { "Done by ${formatDate(it)} - got it" } ?: "Accepted “${r.title}”")
     }
 
+    /** Media: a handler takes it on; the requester sees it's accepted, and it's marked added later. */
+    fun acceptMedia(r: HouseholdRequest) = runBusy(r) {
+        replace(api.acceptRequest(r.id))
+        _messages.send("Accepted “${r.title}”")
+    }
+
     /**
-     * Maintenance: the assignee marks it done. Media: an approver marks it
-     * added, or a problem fixed (one step). Purchase and permission: whoever
+     * Maintenance: the assignee marks it done. Media: a handler marks it
+     * added, or a problem fixed, once accepted. Purchase and permission: whoever
      * decides approves it; a purchase may go on shopping list [listId].
      */
     fun complete(r: HouseholdRequest, listId: String? = null) = runBusy(r, inDialog = state.value.approving != null) {
@@ -538,6 +549,7 @@ fun RequestsScreen(
                             canManage = mediaModule.handles,
                             canDecline = mediaModule.handles && mediaModule.allowDecline,
                             busy = r.id in state.busy,
+                            onAccept = { vm.acceptMedia(r) },
                             onMarkAdded = { vm.complete(r) },
                             onDecline = { vm.startDecline(r) },
                             // A declined request can't be edited, only removed.
@@ -553,7 +565,7 @@ fun RequestsScreen(
                         mediaCards(problems)
                     }
                     MEDIA_SECTIONS.forEach { (type, label) ->
-                        // Waiting first, then added, then declined.
+                        // Waiting first, then accepted, added, declined.
                         val items = media.filter { it.mediaType == type && !it.issue }
                             .sortedBy { MEDIA_STATUS_ORDER.indexOf(it.mediaStatus) }
                         // A kind the head stopped offering still shows while it has requests.
@@ -692,11 +704,12 @@ private fun MediaCard(
     r: HouseholdRequest,
     me: String,
     isOwn: Boolean,
-    /** Handles media: marks it added. */
+    /** Handles media: accepts it, then marks it added. */
     canManage: Boolean,
     /** Handles media and the head allows declining. */
     canDecline: Boolean,
     busy: Boolean,
+    onAccept: () -> Unit,
     onMarkAdded: () -> Unit,
     onDecline: () -> Unit,
     onEdit: (() -> Unit)?,
@@ -739,6 +752,15 @@ private fun MediaCard(
                             Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
+                    if (status == "accepted") {
+                        // decidedBy is who accepted it, until it's added or declined.
+                        val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
+                        Text(
+                            "Accepted$by, waiting to be ${if (r.issue) "fixed" else "added"}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (status == "declined") {
                         val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
                         Text(
@@ -760,7 +782,7 @@ private fun MediaCard(
                     IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${r.title}") }
                 }
             }
-            if (canManage && status == "pending") {
+            if (canManage && (status == "pending" || status == "accepted")) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -768,10 +790,12 @@ private fun MediaCard(
                     if (canDecline) {
                         TextButton(onClick = onDecline, enabled = !busy) { Text("Decline") }
                     }
-                    Button(onClick = onMarkAdded, enabled = !busy) {
+                    val accepting = status == "pending"
+                    Button(onClick = if (accepting) onAccept else onMarkAdded, enabled = !busy) {
                         Text(
                             when {
                                 busy -> "Saving…"
+                                accepting -> "Accept"
                                 r.issue -> "Mark fixed"
                                 else -> "Mark as added"
                             },

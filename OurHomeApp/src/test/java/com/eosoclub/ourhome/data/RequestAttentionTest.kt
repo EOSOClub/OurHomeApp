@@ -76,17 +76,18 @@ class RequestAttentionTest {
         createdAt = "2026-10-01T12:00:00Z",
     )
 
-    @Test fun `open media waits on those who handle it only, including old accepted rows`() {
+    @Test fun `media waits on those who handle it only, until they accept it`() {
         val all = listOf(media(null), media("pending"), media("accepted"), media("completed"), media("declined"))
         assertEquals(
-            listOf("m-null", "m-pending", "m-accepted"),
+            listOf("m-null", "m-pending"),
             awaitingAcceptanceBy(all, me, handlesMedia).map { it.id },
         )
         assertTrue(awaitingAcceptanceBy(all, me, handlesNothing).isEmpty())
     }
 
-    @Test fun `media is one step - waiting, added or declined`() {
-        assertEquals("pending", media("accepted").mediaStatus)
+    @Test fun `media is waiting, accepted, added or declined`() {
+        assertEquals("accepted", media("accepted").mediaStatus)
+        assertTrue(media("accepted").isOpen)
         assertEquals("pending", media(null).mediaStatus)
         assertEquals("completed", media("completed").mediaStatus)
         assertEquals("declined", media("declined").mediaStatus)

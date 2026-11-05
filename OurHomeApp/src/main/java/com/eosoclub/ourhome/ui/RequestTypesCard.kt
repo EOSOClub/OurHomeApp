@@ -126,7 +126,7 @@ private fun RequestTypesForm(
             }
             FieldError(if (noMediaKinds) "Pick at least one, or turn Media off." else null)
             DropdownField(
-                "Who marks them added",
+                "Who accepts and adds them",
                 listOf("switch" to "Everyone with Requests “Approve”", "chosen" to "Only the people I pick"),
                 if (mediaChosen) "chosen" else "switch",
                 { mediaChosen = it == "chosen" },

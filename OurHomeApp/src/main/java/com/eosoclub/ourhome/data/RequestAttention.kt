@@ -14,11 +14,10 @@ val HouseholdRequest.effectiveStatus: String get() = status ?: "pending"
 val HouseholdRequest.isOpen: Boolean get() = effectiveStatus != "completed" && effectiveStatus != "declined"
 
 /**
- * A media request's status in the one-step flow: "pending" (waiting to be
- * added), "completed" (added) or "declined". "accepted" from the older
- * accept → available flow still waits.
+ * A media request's status: "pending" (waiting to be accepted), "accepted"
+ * (waiting to be added), "completed" (added) or "declined".
  */
-val HouseholdRequest.mediaStatus: String get() = if (isOpen) "pending" else effectiveStatus
+val HouseholdRequest.mediaStatus: String get() = effectiveStatus
 
 /**
  * Whether the user marks media requests added on a server from before request
@@ -59,9 +58,9 @@ fun RequestModule.decides(requesterId: String): Boolean =
 /**
  * Requests waiting on [userId]: open approve-workflow requests (media,
  * purchase, permission) they decide ([modules], see [decides]), and pending
- * maintenance requests assigned to them. Media is one step (waiting → added);
- * "accepted" media is left over from the older accept → available flow and
- * still waits to be added.
+ * maintenance requests assigned to them. Accepted media waits on nobody, like
+ * accepted maintenance: the handler took it on and marks it added from the
+ * Requests tab. Mirrors attentionReason in the web's src/lib/requestAttention.ts.
  */
 fun awaitingAcceptanceBy(
     requests: List<HouseholdRequest>,
@@ -72,6 +71,7 @@ fun awaitingAcceptanceBy(
     return requests.filter { r ->
         val module = approve[r.category]
         when {
+            r.category == "media" && r.effectiveStatus == "accepted" -> false
             module != null -> r.isOpen && module.decides(r.requester.id)
             r.category == "maintenance" -> r.effectiveStatus == "pending" && r.assignee?.id == userId
             else -> false

@@ -269,12 +269,8 @@ fun HomeScreen(
         ?: defaultRequestModules(access.requests.create, canApproveMedia(access, user.role))
     val waitingRequests = awaitingAcceptanceBy(requestsState.requests, user.id, requestModules)
         .map {
-            val action = when {
-                it.category == "purchase" || it.category == "permission" -> "Decide"
-                it.category != "media" -> "Accept"
-                it.issue -> "Fix it"
-                else -> "Mark added"
-            }
+            // Media only waits on its handlers until they accept it.
+            val action = if (it.category == "purchase" || it.category == "permission") "Decide" else "Accept"
             WaitingRequest(it, action, urgent = false)
         } +
         deadlineAlerts(requestsState.requests, user.id)

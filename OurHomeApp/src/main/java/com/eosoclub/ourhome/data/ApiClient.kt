@@ -272,6 +272,7 @@ class ApiClient(
         put("estimatedMinutes", input.estimatedMinutes)
         put("points", input.points)
         put("pointsFollowTime", input.pointsFollowTime)
+        put("stepsShareTime", input.stepsShareTime)
         put("categoryId", input.categoryId)
         // Only when the editor knew the rooms; absent = the places are unchanged.
         input.places?.let { values ->

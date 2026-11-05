@@ -196,6 +196,8 @@ data class TaskInput(
     val estimatedMinutes: Int?,
     val points: Double? = null,
     val pointsFollowTime: Boolean = true,
+    /** Steps share the task's time instead of adding up (TaskPoints.kt). */
+    val stepsShareTime: Boolean = false,
     val categoryId: String?,
     /**
      * Every place as "room:<id>" / "floor:<id>" ([] = the whole house); null
@@ -374,6 +376,8 @@ data class Task(
     val baseMinutes: Int? = null,
     val basePoints: Double? = null,
     val pointsFollowTime: Boolean = true,
+    /** Steps share the task's time instead of adding up; false from older servers. */
+    val stepsShareTime: Boolean = false,
     /** Household rate, for the editor's live points. */
     val minutesPerPoint: Double = DEFAULT_MINUTES_PER_POINT,
     /** Current cycle window; completed inside it = done for this cycle. */
@@ -424,7 +428,7 @@ data class Task(
 
     /** The editor's starting points state. */
     fun pointsState(): PointsState = PointsState(
-        TaskBase(baseMinutes, basePoints?.centi(), pointsFollowTime),
+        TaskBase(baseMinutes, basePoints?.centi(), pointsFollowTime, stepsShareTime),
         subtasks.sortedBy { it.position }.map {
             StepValues(it.minutes, it.points.centi(), it.minutesCustom, it.pointsFollowTime)
         },
