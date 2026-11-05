@@ -35,9 +35,12 @@ data class AppRelease(
     val firebase: Boolean = false,
 )
 
-/** GET /api/app/info; `release` is null when the server builds no app. */
+/**
+ * GET /api/app/info; `release` is null when the server builds no app.
+ * [building]: a new app is being built right now (false from older servers).
+ */
 @Serializable
-data class AppInfo(val release: AppRelease? = null)
+data class AppInfo(val release: AppRelease? = null, val building: Boolean = false)
 
 /** Better Auth endpoints answer errors as a bare `{ message, code }`. */
 @Serializable
@@ -702,6 +705,17 @@ data class HouseholdRequest(
     /** Approve workflow: what they said (a decline's reason). */
     val reply: String? = null,
     val requester: UserRef,
+    /** Notes anyone in the household added, oldest first. Empty from servers before notes. */
+    val notes: List<RequestNote> = emptyList(),
+    val createdAt: String,
+)
+
+/** A note on a request, for the whole household to read. [author] is null once they've left. */
+@Serializable
+data class RequestNote(
+    val id: String,
+    val body: String,
+    val author: UserRef? = null,
     val createdAt: String,
 )
 

@@ -888,6 +888,20 @@ class ApiClient(
     suspend fun deleteRequest(id: String) =
         callUnit(post("/api/requests/delete", buildJsonObject { put("id", id) }))
 
+    /** Adds a note to request [id] for the whole household; answers with the request and its notes. */
+    suspend fun addRequestNote(id: String, body: String): HouseholdRequest =
+        call(
+            post("/api/requests/notes", buildJsonObject { put("id", id); put("body", body) }),
+            HouseholdRequest.serializer(),
+        )
+
+    /** Removes note [noteId] (its author, or the head); answers with the request without it. */
+    suspend fun deleteRequestNote(noteId: String): HouseholdRequest =
+        call(
+            post("/api/requests/notes/delete", buildJsonObject { put("id", noteId) }),
+            HouseholdRequest.serializer(),
+        )
+
     // --- Members (members:manage; rename and head transfer are head-only) ------
 
     suspend fun memberAccounts(): List<MemberAccount> =
@@ -1055,7 +1069,10 @@ class ApiClient(
     // --- App updates ---------------------------------------------------------
 
     /** The Android app this server offers, or null when it builds none. */
-    suspend fun appRelease(): AppRelease? = call(get("/api/app/info"), AppInfo.serializer()).release
+    suspend fun appRelease(): AppRelease? = appInfo().release
+
+    /** The app on offer, and whether a new one is being built right now. */
+    suspend fun appInfo(): AppInfo = call(get("/api/app/info"), AppInfo.serializer())
 
     /**
      * Downloads the offered APK into [dest] with this session (the download is

@@ -17,6 +17,8 @@ package com.eosoclub.ourhome.data
 // child's phone, or was entered wrong too often there (web reportPinEvents).
 // "request_update": someone answered this user's request (web requestNoticeService); its
 // title leads with the outcome ("Approved: LEGO set").
+// "request_note": someone added a note to a request this user made or handles (web
+// requestNoticeService); "Note: Fix the faucet", the newest note per request.
 // "event_reminder": a calendar event this user is on (or made) comes up at the reminder
 // time picked for it (web buildEventReminders); one per date, gone once it's over.
 // "subscription_trial": a subscription's free trial ends within 3 days, so there's time
@@ -39,6 +41,7 @@ val HOUSEHOLD_REMINDER_TYPES =
         "extra_time",
         "parent_pin",
         "request_update",
+        "request_note",
         "event_reminder",
         "subscription_trial",
         "task_review",
@@ -89,7 +92,8 @@ fun Notification.reminderLine(): String {
         "task_ready" -> "Your turn"
         "event_reminder" -> "Coming up"
         "subscription_trial" -> "Trial ending"
-        // "task_review" / "task_reviewed" titles already say what happened, like "request_update".
+        // "task_review" / "task_reviewed" titles already say what happened, like "request_update"
+        // and "request_note".
         else -> null
     }
     return if (label == null) title else "$label: $title"

@@ -74,6 +74,7 @@ import com.eosoclub.ourhome.data.ThemeMode
 import com.eosoclub.ourhome.data.DeadlineState
 import com.eosoclub.ourhome.data.AccessMatrix
 import com.eosoclub.ourhome.data.ApiClient
+import com.eosoclub.ourhome.data.AppUpdate
 import com.eosoclub.ourhome.data.ChangelogEntry
 import com.eosoclub.ourhome.data.defaultAccess
 import com.eosoclub.ourhome.data.Features
@@ -254,10 +255,24 @@ fun HomeScreen(
     }
 
     // "What's new" after an update, once per person: the server keeps which
-    // entry they closed, so closing it here or on the website is enough.
+    // entry they closed, so closing it here or on the website is enough. Held
+    // while this phone is behind the server's app (AppUpdate.holdsWhatsNew), so
+    // it shows after the update, not while the old app is still running.
     var whatsNew by remember { mutableStateOf<List<ChangelogEntry>>(emptyList()) }
     LaunchedEffect(Unit) {
-        runCatching { session.api.changelog() }
+        runCatching {
+            val entries = session.api.changelog()
+            if (entries.isEmpty()) return@runCatching entries
+            val info = try {
+                session.api.appInfo()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            val behind = AppUpdate.holdsWhatsNew(info, appContext.packageName, AppUpdate.installedVersionCode(appContext))
+            if (behind) emptyList() else entries
+        }
             .onSuccess { whatsNew = it }
             .onFailure { if (it is CancellationException) throw it }
     }

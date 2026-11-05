@@ -72,6 +72,17 @@ class HouseholdRemindersTest {
     }
 
     @Test
+    fun requestNoteAlertsWithItsOwnTitle() {
+        val note = Notification(
+            id = "1", type = "request_note", title = "Note: Fix the faucet", body = "Alex: Try the shutoff valve first",
+            subjectType = "request", subjectId = "r1", read = false, createdAt = "2026-11-05T12:00:00Z",
+        )
+        val plan = planReminderAlert(listOf(note), alerted = emptySet())
+        assertEquals(listOf("1"), plan.alert.map { it.id })
+        assertEquals("Note: Fix the faucet", note.reminderLine())
+    }
+
+    @Test
     fun taskChecksAlertWithTheirOwnTitles() {
         val sent = Notification(
             id = "1", type = "task_review", title = "Riley sent “Dishes” for a check", subjectType = "task",

@@ -3,6 +3,7 @@ package com.eosoclub.ourhome.ui
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -47,10 +50,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -71,6 +77,7 @@ import com.eosoclub.ourhome.data.Member
 import com.eosoclub.ourhome.data.NamedRef
 import com.eosoclub.ourhome.data.Permission
 import com.eosoclub.ourhome.data.RequestModule
+import com.eosoclub.ourhome.data.RequestNote
 import com.eosoclub.ourhome.data.SessionUser
 import com.eosoclub.ourhome.data.UserRef
 import com.eosoclub.ourhome.data.can
@@ -183,6 +190,8 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         val reassigning: HouseholdRequest? = null,
         /** A request removed from its card (own declined, or the head's), waiting for "Remove?" to be confirmed. */
         val removing: HouseholdRequest? = null,
+        /** A note on a request, waiting for "Remove this note?" to be confirmed. */
+        val removingNote: Pair<HouseholdRequest, RequestNote>? = null,
         val saving: Boolean = false,
         val busy: Set<String> = emptySet(),
         // Null until loaded; for "who should do it?".
@@ -409,6 +418,24 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
+    /** Adds a note for the whole household; [onSaved] runs once it's saved (it empties the box). */
+    fun addNote(r: HouseholdRequest, body: String, onSaved: () -> Unit) = runBusy(r) {
+        replace(api.addRequestNote(r.id, body))
+        onSaved()
+    }
+
+    /** Removing a note (its author's, or the head's on anyone's): asks first. */
+    fun askRemoveNote(target: Pair<HouseholdRequest, RequestNote>?) = state.update { it.copy(removingNote = target) }
+
+    fun confirmRemoveNote() {
+        val (r, note) = state.value.removingNote ?: return
+        state.update { it.copy(removingNote = null) }
+        runBusy(r) {
+            replace(api.deleteRequestNote(note.id))
+            _messages.send("Note removed")
+        }
+    }
+
     /** [inDialog]: the failure is shown in the open date picker, which covers the snackbar. */
     private fun runBusy(r: HouseholdRequest, inDialog: Boolean = false, block: suspend () -> Unit) = viewModelScope.launch {
         state.update { it.copy(busy = it.busy + r.id) }
@@ -454,6 +481,19 @@ fun RequestsScreen(
     LaunchedEffect(Unit) { vm.refresh() }
     LaunchedEffect(Unit) { vm.messages.collect(showMessage) }
 
+    // Each open card's notes: anyone may add one; its author or the head removes it.
+    val notesOf: @Composable (HouseholdRequest) -> Unit = { r ->
+        RequestNotes(
+            r = r,
+            me = user.id,
+            isHead = isHead,
+            canWrite = canWrite,
+            busy = r.id in state.busy,
+            onAdd = { text, saved -> vm.addNote(r, text, saved) },
+            onRemove = { note -> vm.askRemoveNote(r to note) },
+        )
+    }
+
     Box(modifier.fillMaxSize()) {
         PullToRefreshBox(
             isRefreshing = state.loading && state.requests.isNotEmpty(),
@@ -487,6 +527,7 @@ fun RequestsScreen(
                         sectionHeader("$kind-$status", label, items.size)
                         items(items, key = { it.id }) { r ->
                             val isOwn = r.requester.id == user.id
+                            var expanded by rememberExpanded(r)
                             DecisionCard(
                                 r = r,
                                 me = user.id,
@@ -501,6 +542,9 @@ fun RequestsScreen(
                                 // Once decided it can't be edited, only removed.
                                 onEdit = if (isOwn && canWrite && r.isOpen) ({ vm.startEdit(r) }) else null,
                                 onRemove = if (isOwn && canWrite && !r.isOpen) ({ vm.askRemove(r) }) else null,
+                                expanded = expanded,
+                                onToggle = { expanded = !expanded },
+                                notes = { notesOf(r) },
                             )
                         }
                     }
@@ -517,6 +561,7 @@ fun RequestsScreen(
                             val declined = r.status == "declined"
                             // On their own request the head has the requester's edit and remove.
                             val headActions = isHead && !isOwn
+                            var expanded by rememberExpanded(r)
                             MaintenanceCard(
                                 r = r,
                                 me = user.id,
@@ -534,6 +579,9 @@ fun RequestsScreen(
                                 // A declined request can't be edited, only removed.
                                 onEdit = if (isOwn && canWrite && !declined) ({ vm.startEdit(r) }) else null,
                                 onRemove = if ((isOwn && canWrite && declined) || headActions) ({ vm.askRemove(r) }) else null,
+                                expanded = expanded,
+                                onToggle = { expanded = !expanded },
+                                notes = { notesOf(r) },
                             )
                         }
                     }
@@ -542,6 +590,7 @@ fun RequestsScreen(
                     fun mediaCards(list: List<HouseholdRequest>) = items(list, key = { it.id }) { r ->
                         val isOwn = r.requester.id == user.id
                         val declined = r.mediaStatus == "declined"
+                        var expanded by rememberExpanded(r)
                         MediaCard(
                             r = r,
                             me = user.id,
@@ -555,6 +604,9 @@ fun RequestsScreen(
                             // A declined request can't be edited, only removed.
                             onEdit = if (isOwn && canWrite && !declined) ({ vm.startEdit(r) }) else null,
                             onRemove = if (isOwn && canWrite && declined) ({ vm.askRemove(r) }) else null,
+                            expanded = expanded,
+                            onToggle = { expanded = !expanded },
+                            notes = { notesOf(r) },
                         )
                     }
                     categoryHeader(mediaModule.label)
@@ -671,6 +723,16 @@ fun RequestsScreen(
             dismissButton = { TextButton(onClick = { vm.askRemove(null) }) { Text("Cancel") } },
         )
     }
+
+    state.removingNote?.let { (_, note) ->
+        AlertDialog(
+            onDismissRequest = { vm.askRemoveNote(null) },
+            title = { Text("Remove this note?") },
+            text = { Text("“${note.body}” will be removed for everyone.") },
+            confirmButton = { TextButton(onClick = vm::confirmRemoveNote) { Text("Remove") } },
+            dismissButton = { TextButton(onClick = { vm.askRemoveNote(null) }) { Text("Cancel") } },
+        )
+    }
 }
 
 private fun LazyListScope.categoryHeader(label: String) {
@@ -699,6 +761,110 @@ private fun who(person: UserRef?, me: String) = when {
     else -> person.name ?: "someone"
 }
 
+/**
+ * Whether a request's card is open: a finished request (done, added, approved
+ * or declined) starts closed, anything still open starts open. Kept while
+ * scrolling and across rotation.
+ */
+@Composable
+private fun rememberExpanded(r: HouseholdRequest) = rememberSaveable(r.id) { mutableStateOf(r.isOpen) }
+
+/** Opens or closes a request's card. */
+@Composable
+private fun ExpandButton(expanded: Boolean, title: String, onToggle: () -> Unit) {
+    IconButton(onClick = onToggle) {
+        Icon(
+            if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+            contentDescription = if (expanded) "Hide details of $title" else "Show details of $title",
+        )
+    }
+}
+
+/** On a closed card: how many notes it has, if any. */
+@Composable
+private fun NoteCount(r: HouseholdRequest) {
+    val n = r.notes.size
+    if (n > 0) {
+        Text(
+            if (n == 1) "1 note" else "$n notes",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * A request's notes, oldest first, and a box to add one. The whole household
+ * reads them and anyone may add one; its author may remove a note, and so may
+ * the head.
+ */
+@Composable
+private fun RequestNotes(
+    r: HouseholdRequest,
+    me: String,
+    isHead: Boolean,
+    canWrite: Boolean,
+    busy: Boolean,
+    /** Saves the text; the callback runs once it's saved. */
+    onAdd: (String, () -> Unit) -> Unit,
+    onRemove: (RequestNote) -> Unit,
+) {
+    var writing by rememberSaveable(r.id) { mutableStateOf(false) }
+    var body by rememberSaveable(r.id) { mutableStateOf("") }
+    val focus = remember { FocusRequester() }
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        r.notes.forEach { n ->
+            val mine = n.author?.id == me
+            val removable = canWrite && (mine || isHead)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(start = 12.dp, top = 6.dp, bottom = 6.dp, end = if (removable) 0.dp else 12.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(n.body, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "${if (mine) "You" else n.author?.name ?: "Someone"} · ${dateTimeLabel(n.createdAt)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (removable) {
+                    IconButton(onClick = { onRemove(n) }, enabled = !busy) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Remove this note")
+                    }
+                }
+            }
+        }
+        if (writing) {
+            // They just asked to write one.
+            LaunchedEffect(Unit) { focus.requestFocus() }
+            OutlinedTextField(
+                value = body,
+                onValueChange = { if (it.length <= 1000) body = it },
+                label = { Text("Note") },
+                placeholder = { Text("Add a note for the household") },
+                supportingText = { Text("Everyone in the household sees it.") },
+                minLines = 2,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = { body = ""; writing = false }, enabled = !busy) { Text("Cancel") }
+                Button(
+                    onClick = { onAdd(body.trim()) { body = ""; writing = false } },
+                    enabled = !busy && body.isNotBlank(),
+                ) { Text(if (busy) "Saving…" else "Add note") }
+            }
+        } else if (canWrite) {
+            TextButton(onClick = { writing = true }) { Text("Add a note") }
+        }
+    }
+}
+
 @Composable
 private fun MediaCard(
     r: HouseholdRequest,
@@ -715,6 +881,10 @@ private fun MediaCard(
     onEdit: (() -> Unit)?,
     /** Own declined request: removing is all that's left. */
     onRemove: (() -> Unit)?,
+    /** Open: everything shows. Closed: the name, its chips and how many notes. */
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    notes: @Composable () -> Unit,
 ) {
     val status = r.mediaStatus
     // Highlight requests waiting on *you* (an approver).
@@ -725,7 +895,7 @@ private fun MediaCard(
     }
     Card(colors = colors, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp, end = 8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable(onClick = onToggle)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     // Problems are listed together, so each says what kind of media it is.
                     val kind = if (r.issue) MEDIA_TYPES.firstOrNull { it.first == r.mediaType }?.second else null
@@ -747,42 +917,46 @@ private fun MediaCard(
                         }
                         place?.let { SuggestionChip(onClick = {}, label = { Text(it) }) }
                     }
-                    if (r.issue) {
-                        r.details?.takeIf { it.isNotBlank() }?.let {
-                            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (!expanded) NoteCount(r)
+                    if (expanded) {
+                        if (r.issue) {
+                            r.details?.takeIf { it.isNotBlank() }?.let {
+                                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
-                    }
-                    if (status == "accepted") {
-                        // decidedBy is who accepted it, until it's added or declined.
-                        val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
+                        if (status == "accepted") {
+                            // decidedBy is who accepted it, until it's added or declined.
+                            val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
+                            Text(
+                                "Accepted$by, waiting to be ${if (r.issue) "fixed" else "added"}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (status == "declined") {
+                            val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
+                            Text(
+                                "Declined$by" + r.reply?.let { ": $it" }.orEmpty(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         Text(
-                            "Accepted$by, waiting to be ${if (r.issue) "fixed" else "added"}",
-                            style = MaterialTheme.typography.bodyMedium,
+                            "${if (r.issue) "Reported" else "Requested"} by ${if (isOwn) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    if (status == "declined") {
-                        val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
-                        Text(
-                            "Declined$by" + r.reply?.let { ": $it" }.orEmpty(),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Text(
-                        "${if (r.issue) "Reported" else "Requested"} by ${if (isOwn) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
-                if (onEdit != null) {
+                if (expanded && onEdit != null) {
                     IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit ${r.title}") }
                 }
-                if (onRemove != null) {
+                if (expanded && onRemove != null) {
                     IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${r.title}") }
                 }
+                ExpandButton(expanded, r.title, onToggle)
             }
-            if (canManage && (status == "pending" || status == "accepted")) {
+            if (expanded && canManage && (status == "pending" || status == "accepted")) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -803,6 +977,7 @@ private fun MediaCard(
                     }
                 }
             }
+            if (expanded) notes()
         }
     }
 }
@@ -824,6 +999,10 @@ private fun MaintenanceCard(
     onEdit: (() -> Unit)?,
     /** Own declined request (removing is all that's left), or the head on someone else's. */
     onRemove: (() -> Unit)?,
+    /** Open: everything shows. Closed: the name, its date and how many notes. */
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    notes: @Composable () -> Unit,
 ) {
     val isAssignee = r.assignee?.id == me
     val done = r.status == "completed"
@@ -837,7 +1016,7 @@ private fun MaintenanceCard(
     }
     Card(colors = colors, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp, end = 8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable(onClick = onToggle)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         r.title,
@@ -858,31 +1037,35 @@ private fun MaintenanceCard(
                             color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                         )
                     }
-                    r.details?.takeIf { it.isNotBlank() }?.let {
-                        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    if (declined) {
-                        val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
+                    if (!expanded) NoteCount(r)
+                    if (expanded) {
+                        r.details?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (declined) {
+                            val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
+                            Text(
+                                "Declined$by" + r.reply?.let { ": $it" }.orEmpty(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         Text(
-                            "Declined$by" + r.reply?.let { ": $it" }.orEmpty(),
-                            style = MaterialTheme.typography.bodyMedium,
+                            "${who(r.requester, me).replaceFirstChar(Char::uppercase)} asked ${who(r.assignee, me)} · ${formatDate(r.createdAt)}",
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Text(
-                        "${who(r.requester, me).replaceFirstChar(Char::uppercase)} asked ${who(r.assignee, me)} · ${formatDate(r.createdAt)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
-                if (onEdit != null) {
+                if (expanded && onEdit != null) {
                     IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit ${r.title}") }
                 }
-                if (onRemove != null) {
+                if (expanded && onRemove != null) {
                     IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${r.title}") }
                 }
+                ExpandButton(expanded, r.title, onToggle)
             }
-            if (assigneeActions || onReassign != null) {
+            if (expanded && (assigneeActions || onReassign != null)) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -906,6 +1089,7 @@ private fun MaintenanceCard(
                     }
                 }
             }
+            if (expanded) notes()
         }
     }
 }
@@ -926,6 +1110,10 @@ private fun DecisionCard(
     onEdit: (() -> Unit)?,
     /** Own decided request: removing is all that's left. */
     onRemove: (() -> Unit)?,
+    /** Open: everything shows. Closed: the name, its chip and price, and how many notes. */
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    notes: @Composable () -> Unit,
 ) {
     val status = if (r.isOpen) "pending" else r.status.orEmpty()
     val open = status == "pending"
@@ -937,9 +1125,9 @@ private fun DecisionCard(
     }
     Card(colors = colors, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp, end = 8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable(onClick = onToggle)) {
                 // The picture "Fetch details" found, as on the web; nothing until it loads.
-                r.imageUrl?.let { url ->
+                r.imageUrl?.takeIf { expanded }?.let { url ->
                     val picture by produceState<ImageBitmap?>(null, url) { value = loadPicture(url) }
                     picture?.let {
                         Image(
@@ -970,39 +1158,43 @@ private fun DecisionCard(
                             )
                         }
                     }
-                    whenLabel(r)?.let {
-                        Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    }
-                    r.url?.takeIf { it.isNotBlank() }?.let { ItemLink(productLink(it)) }
-                    r.details?.takeIf { it.isNotBlank() }?.let {
-                        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    when (status) {
-                        "completed" -> Text(
-                            "Approved by ${who(r.decidedBy, me)}" + r.addedToList?.let { " · added to $it" }.orEmpty(),
-                            style = MaterialTheme.typography.bodyMedium,
+                    if (!expanded) NoteCount(r)
+                    if (expanded) {
+                        whenLabel(r)?.let {
+                            Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        }
+                        r.url?.takeIf { it.isNotBlank() }?.let { ItemLink(productLink(it)) }
+                        r.details?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        when (status) {
+                            "completed" -> Text(
+                                "Approved by ${who(r.decidedBy, me)}" + r.addedToList?.let { " · added to $it" }.orEmpty(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            "declined" -> Text(
+                                "Declined" + r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty() + r.reply?.let { ": $it" }.orEmpty(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            "Asked by ${if (r.requester.id == me) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        "declined" -> Text(
-                            "Declined" + r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty() + r.reply?.let { ": $it" }.orEmpty(),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
-                    Text(
-                        "Asked by ${if (r.requester.id == me) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
-                if (onEdit != null) {
+                if (expanded && onEdit != null) {
                     IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit ${r.title}") }
                 }
-                if (onRemove != null) {
+                if (expanded && onRemove != null) {
                     IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${r.title}") }
                 }
+                ExpandButton(expanded, r.title, onToggle)
             }
-            if (decides && open) {
+            if (expanded && decides && open) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -1011,6 +1203,7 @@ private fun DecisionCard(
                     Button(onClick = onApprove, enabled = !busy) { Text(if (busy) "Saving…" else "Approve") }
                 }
             }
+            if (expanded) notes()
         }
     }
 }

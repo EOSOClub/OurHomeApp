@@ -27,6 +27,16 @@ object AppUpdate {
     fun isNewer(releaseAppId: String, releaseCode: Long, myAppId: String, myCode: Long): Boolean =
         releaseAppId == myAppId && releaseCode > myCode
 
+    /**
+     * Whether "What's new" waits: the server already runs the new release, but
+     * this phone doesn't have its app yet, either because it's still being
+     * built ([AppInfo.building]) or because a newer build is on offer. Shown
+     * once the phone runs it. Null [info] (an older server, or no answer):
+     * nothing to wait for.
+     */
+    fun holdsWhatsNew(info: AppInfo?, myAppId: String, myCode: Long): Boolean =
+        info != null && (info.building || info.release?.let { isNewer(it.appId, it.versionCode, myAppId, myCode) } == true)
+
     fun installedVersionCode(context: Context): Long =
         context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
 
