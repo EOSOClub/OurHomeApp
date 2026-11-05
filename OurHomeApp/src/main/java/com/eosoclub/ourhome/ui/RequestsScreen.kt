@@ -47,11 +47,15 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -494,6 +498,10 @@ fun RequestsScreen(
         )
     }
 
+    // Folded category and section headings, by key; everything starts unfolded.
+    val folded = rememberSaveable(saver = FoldedSaver) { mutableStateListOf<String>() }
+    val fold: (String) -> Unit = { key -> if (!folded.remove(key)) folded.add(key) }
+
     Box(modifier.fillMaxSize()) {
         PullToRefreshBox(
             isRefreshing = state.loading && state.requests.isNotEmpty(),
@@ -519,15 +527,18 @@ fun RequestsScreen(
                     val module = modules.firstOrNull { it.id == kind } ?: return@forEach
                     val list = state.requests.filter { it.category == kind }
                     if (list.isEmpty()) return@forEach
-                    categoryHeader(module.label)
+                    val catKey = "cat-$kind"
+                    categoryHeader(catKey, module.label, list.size, catKey !in folded) { fold(catKey) }
+                    if (catKey in folded) return@forEach
                     DECISION_SECTIONS.forEach { (status, label) ->
                         // Anything still open (no status, or "accepted" from an older app) waits for a decision.
                         val items = list.filter { if (status == "pending") it.isOpen else it.status == status }
                         if (items.isEmpty()) return@forEach
-                        sectionHeader("$kind-$status", label, items.size)
+                        val secKey = "sec-$kind-$status"
+                        sectionHeader(secKey, label, items.size, secKey !in folded) { fold(secKey) }
+                        if (secKey in folded) return@forEach
                         items(items, key = { it.id }) { r ->
                             val isOwn = r.requester.id == user.id
-                            var expanded by rememberExpanded(r)
                             DecisionCard(
                                 r = r,
                                 me = user.id,
@@ -542,26 +553,29 @@ fun RequestsScreen(
                                 // Once decided it can't be edited, only removed.
                                 onEdit = if (isOwn && canWrite && r.isOpen) ({ vm.startEdit(r) }) else null,
                                 onRemove = if (isOwn && canWrite && !r.isOpen) ({ vm.askRemove(r) }) else null,
-                                expanded = expanded,
-                                onToggle = { expanded = !expanded },
                                 notes = { notesOf(r) },
                             )
                         }
                     }
                 }
                 if (maintenanceModule != null && maintenance.isNotEmpty()) {
-                    categoryHeader(maintenanceModule.label)
+                    categoryHeader("cat-maintenance", maintenanceModule.label, maintenance.size, "cat-maintenance" !in folded) {
+                        fold("cat-maintenance")
+                    }
+                }
+                if (maintenanceModule != null && maintenance.isNotEmpty() && "cat-maintenance" !in folded) {
                     MAINTENANCE_SECTIONS.forEach { (status, label) ->
                         val items = maintenance.filter { it.status == status }
                             .let { list -> if (status == "accepted") list.sortedBy { it.dueAt } else list }
                         if (items.isEmpty()) return@forEach
-                        sectionHeader("maint-$status", label, items.size)
+                        val secKey = "sec-maint-$status"
+                        sectionHeader(secKey, label, items.size, secKey !in folded) { fold(secKey) }
+                        if (secKey in folded) return@forEach
                         items(items, key = { it.id }) { r ->
                             val isOwn = r.requester.id == user.id
                             val declined = r.status == "declined"
                             // On their own request the head has the requester's edit and remove.
                             val headActions = isHead && !isOwn
-                            var expanded by rememberExpanded(r)
                             MaintenanceCard(
                                 r = r,
                                 me = user.id,
@@ -579,8 +593,6 @@ fun RequestsScreen(
                                 // A declined request can't be edited, only removed.
                                 onEdit = if (isOwn && canWrite && !declined) ({ vm.startEdit(r) }) else null,
                                 onRemove = if ((isOwn && canWrite && declined) || headActions) ({ vm.askRemove(r) }) else null,
-                                expanded = expanded,
-                                onToggle = { expanded = !expanded },
                                 notes = { notesOf(r) },
                             )
                         }
@@ -590,7 +602,6 @@ fun RequestsScreen(
                     fun mediaCards(list: List<HouseholdRequest>) = items(list, key = { it.id }) { r ->
                         val isOwn = r.requester.id == user.id
                         val declined = r.mediaStatus == "declined"
-                        var expanded by rememberExpanded(r)
                         MediaCard(
                             r = r,
                             me = user.id,
@@ -604,17 +615,18 @@ fun RequestsScreen(
                             // A declined request can't be edited, only removed.
                             onEdit = if (isOwn && canWrite && !declined) ({ vm.startEdit(r) }) else null,
                             onRemove = if (isOwn && canWrite && declined) ({ vm.askRemove(r) }) else null,
-                            expanded = expanded,
-                            onToggle = { expanded = !expanded },
                             notes = { notesOf(r) },
                         )
                     }
-                    categoryHeader(mediaModule.label)
+                    categoryHeader("cat-media", mediaModule.label, media.size, "cat-media" !in folded) { fold("cat-media") }
+                    if ("cat-media" in folded) return@LazyColumn
                     // Problems with what the household already has, above the requests to add.
                     val problems = media.filter { it.issue }.sortedBy { MEDIA_STATUS_ORDER.indexOf(it.mediaStatus) }
                     if (problems.isNotEmpty()) {
-                        sectionHeader("media-problems", "Problems", problems.size)
-                        mediaCards(problems)
+                        sectionHeader("sec-media-problems", "Problems", problems.size, "sec-media-problems" !in folded) {
+                            fold("sec-media-problems")
+                        }
+                        if ("sec-media-problems" !in folded) mediaCards(problems)
                     }
                     MEDIA_SECTIONS.forEach { (type, label) ->
                         // Waiting first, then accepted, added, declined.
@@ -622,7 +634,9 @@ fun RequestsScreen(
                             .sortedBy { MEDIA_STATUS_ORDER.indexOf(it.mediaStatus) }
                         // A kind the head stopped offering still shows while it has requests.
                         if (items.isEmpty() && type !in mediaModule.mediaTypes) return@forEach
-                        sectionHeader("media-$type", label, items.size)
+                        val secKey = "sec-media-$type"
+                        sectionHeader(secKey, label, items.size, secKey !in folded) { fold(secKey) }
+                        if (secKey in folded) return@forEach
                         if (items.isEmpty()) {
                             item(key = "empty-$type") {
                                 Text(
@@ -735,23 +749,64 @@ fun RequestsScreen(
     }
 }
 
-private fun LazyListScope.categoryHeader(label: String) {
-    item(key = "cat-$label") {
+/** Which category and section headings are folded (their keys), kept across rotation. */
+private val FoldedSaver = listSaver<SnapshotStateList<String>, String>(
+    save = { it.toList() },
+    restore = { it.toMutableStateList() },
+)
+
+/**
+ * One kind of request (Maintenance, Media, ...). Tapping it folds the kind away;
+ * folded, it shows how many requests it has.
+ */
+private fun LazyListScope.categoryHeader(key: String, label: String, count: Int, open: Boolean, onToggle: () -> Unit) {
+    item(key = key) {
         Column(Modifier.padding(top = 8.dp)) {
-            Text(label, style = MaterialTheme.typography.titleLarge)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClickLabel = if (open) "Hide $label" else "Show $label", onClick = onToggle),
+            ) {
+                Text(
+                    if (open) label else "$label ($count)",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             HorizontalDivider(Modifier.padding(top = 4.dp))
         }
     }
 }
 
-private fun LazyListScope.sectionHeader(key: String, label: String, count: Int) {
-    item(key = "sec-$key") {
-        Text(
-            "${label.uppercase()} ($count)",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
-        )
+/** A group inside a kind (Waiting, Done, Movies, TV shows, ...). Tapping it folds the group away. */
+private fun LazyListScope.sectionHeader(key: String, label: String, count: Int, open: Boolean, onToggle: () -> Unit) {
+    item(key = key) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .clickable(onClickLabel = if (open) "Hide $label" else "Show $label", onClick = onToggle)
+                .padding(vertical = 6.dp),
+        ) {
+            Text(
+                "${label.uppercase()} ($count)",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -762,41 +817,11 @@ private fun who(person: UserRef?, me: String) = when {
 }
 
 /**
- * Whether a request's card is open: a finished request (done, added, approved
- * or declined) starts closed, anything still open starts open. Kept while
- * scrolling and across rotation.
- */
-@Composable
-private fun rememberExpanded(r: HouseholdRequest) = rememberSaveable(r.id) { mutableStateOf(r.isOpen) }
-
-/** Opens or closes a request's card. */
-@Composable
-private fun ExpandButton(expanded: Boolean, title: String, onToggle: () -> Unit) {
-    IconButton(onClick = onToggle) {
-        Icon(
-            if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-            contentDescription = if (expanded) "Hide details of $title" else "Show details of $title",
-        )
-    }
-}
-
-/** On a closed card: how many notes it has, if any. */
-@Composable
-private fun NoteCount(r: HouseholdRequest) {
-    val n = r.notes.size
-    if (n > 0) {
-        Text(
-            if (n == 1) "1 note" else "$n notes",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-/**
  * A request's notes, oldest first, and a box to add one. The whole household
  * reads them and anyone may add one; its author may remove a note, and so may
- * the head.
+ * the head. The notes fold behind "N notes": a finished request's (done,
+ * added, approved or declined) start folded, an open one's start shown. Kept
+ * while scrolling and across rotation.
  */
 @Composable
 private fun RequestNotes(
@@ -809,11 +834,36 @@ private fun RequestNotes(
     onAdd: (String, () -> Unit) -> Unit,
     onRemove: (RequestNote) -> Unit,
 ) {
+    var shown by rememberSaveable(r.id) { mutableStateOf(r.isOpen) }
     var writing by rememberSaveable(r.id) { mutableStateOf(false) }
     var body by rememberSaveable(r.id) { mutableStateOf("") }
     val focus = remember { FocusRequester() }
+    val count = r.notes.size
+    // With none there's nothing to fold: just Add a note.
+    val open = shown || count == 0
     Column(Modifier.fillMaxWidth().padding(top = 4.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        r.notes.forEach { n ->
+        if (count > 0) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClickLabel = if (shown) "Hide notes" else "Show notes") { shown = !shown }
+                    .padding(vertical = 6.dp, horizontal = 4.dp),
+            ) {
+                Icon(
+                    if (shown) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    if (count == 1) "1 note" else "$count notes",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+        }
+        if (open) r.notes.forEach { n ->
             val mine = n.author?.id == me
             val removable = canWrite && (mine || isHead)
             Row(
@@ -839,7 +889,9 @@ private fun RequestNotes(
                 }
             }
         }
-        if (writing) {
+        if (!open) {
+            // Folded: only the "N notes" line.
+        } else if (writing) {
             // They just asked to write one.
             LaunchedEffect(Unit) { focus.requestFocus() }
             OutlinedTextField(
@@ -881,9 +933,6 @@ private fun MediaCard(
     onEdit: (() -> Unit)?,
     /** Own declined request: removing is all that's left. */
     onRemove: (() -> Unit)?,
-    /** Open: everything shows. Closed: the name, its chips and how many notes. */
-    expanded: Boolean,
-    onToggle: () -> Unit,
     notes: @Composable () -> Unit,
 ) {
     val status = r.mediaStatus
@@ -895,7 +944,7 @@ private fun MediaCard(
     }
     Card(colors = colors, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp, end = 8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable(onClick = onToggle)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     // Problems are listed together, so each says what kind of media it is.
                     val kind = if (r.issue) MEDIA_TYPES.firstOrNull { it.first == r.mediaType }?.second else null
@@ -917,46 +966,42 @@ private fun MediaCard(
                         }
                         place?.let { SuggestionChip(onClick = {}, label = { Text(it) }) }
                     }
-                    if (!expanded) NoteCount(r)
-                    if (expanded) {
-                        if (r.issue) {
-                            r.details?.takeIf { it.isNotBlank() }?.let {
-                                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                    if (r.issue) {
+                        r.details?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        if (status == "accepted") {
-                            // decidedBy is who accepted it, until it's added or declined.
-                            val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
-                            Text(
-                                "Accepted$by, waiting to be ${if (r.issue) "fixed" else "added"}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (status == "declined") {
-                            val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
-                            Text(
-                                "Declined$by" + r.reply?.let { ": $it" }.orEmpty(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                    }
+                    if (status == "accepted") {
+                        // decidedBy is who accepted it, until it's added or declined.
+                        val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
                         Text(
-                            "${if (r.issue) "Reported" else "Requested"} by ${if (isOwn) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
-                            style = MaterialTheme.typography.bodySmall,
+                            "Accepted$by, waiting to be ${if (r.issue) "fixed" else "added"}",
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    if (status == "declined") {
+                        val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
+                        Text(
+                            "Declined$by" + r.reply?.let { ": $it" }.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        "${if (r.issue) "Reported" else "Requested"} by ${if (isOwn) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-                if (expanded && onEdit != null) {
+                if (onEdit != null) {
                     IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit ${r.title}") }
                 }
-                if (expanded && onRemove != null) {
+                if (onRemove != null) {
                     IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${r.title}") }
                 }
-                ExpandButton(expanded, r.title, onToggle)
             }
-            if (expanded && canManage && (status == "pending" || status == "accepted")) {
+            if (canManage && (status == "pending" || status == "accepted")) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -977,7 +1022,7 @@ private fun MediaCard(
                     }
                 }
             }
-            if (expanded) notes()
+            notes()
         }
     }
 }
@@ -999,9 +1044,6 @@ private fun MaintenanceCard(
     onEdit: (() -> Unit)?,
     /** Own declined request (removing is all that's left), or the head on someone else's. */
     onRemove: (() -> Unit)?,
-    /** Open: everything shows. Closed: the name, its date and how many notes. */
-    expanded: Boolean,
-    onToggle: () -> Unit,
     notes: @Composable () -> Unit,
 ) {
     val isAssignee = r.assignee?.id == me
@@ -1016,7 +1058,7 @@ private fun MaintenanceCard(
     }
     Card(colors = colors, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp, end = 8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable(onClick = onToggle)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         r.title,
@@ -1037,35 +1079,31 @@ private fun MaintenanceCard(
                             color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                         )
                     }
-                    if (!expanded) NoteCount(r)
-                    if (expanded) {
-                        r.details?.takeIf { it.isNotBlank() }?.let {
-                            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (declined) {
-                            val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
-                            Text(
-                                "Declined$by" + r.reply?.let { ": $it" }.orEmpty(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                    r.details?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (declined) {
+                        val by = r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty()
                         Text(
-                            "${who(r.requester, me).replaceFirstChar(Char::uppercase)} asked ${who(r.assignee, me)} · ${formatDate(r.createdAt)}",
-                            style = MaterialTheme.typography.bodySmall,
+                            "Declined$by" + r.reply?.let { ": $it" }.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    Text(
+                        "${who(r.requester, me).replaceFirstChar(Char::uppercase)} asked ${who(r.assignee, me)} · ${formatDate(r.createdAt)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-                if (expanded && onEdit != null) {
+                if (onEdit != null) {
                     IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit ${r.title}") }
                 }
-                if (expanded && onRemove != null) {
+                if (onRemove != null) {
                     IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${r.title}") }
                 }
-                ExpandButton(expanded, r.title, onToggle)
             }
-            if (expanded && (assigneeActions || onReassign != null)) {
+            if (assigneeActions || onReassign != null) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -1089,7 +1127,7 @@ private fun MaintenanceCard(
                     }
                 }
             }
-            if (expanded) notes()
+            notes()
         }
     }
 }
@@ -1110,9 +1148,6 @@ private fun DecisionCard(
     onEdit: (() -> Unit)?,
     /** Own decided request: removing is all that's left. */
     onRemove: (() -> Unit)?,
-    /** Open: everything shows. Closed: the name, its chip and price, and how many notes. */
-    expanded: Boolean,
-    onToggle: () -> Unit,
     notes: @Composable () -> Unit,
 ) {
     val status = if (r.isOpen) "pending" else r.status.orEmpty()
@@ -1125,9 +1160,9 @@ private fun DecisionCard(
     }
     Card(colors = colors, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp, end = 8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable(onClick = onToggle)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 // The picture "Fetch details" found, as on the web; nothing until it loads.
-                r.imageUrl?.takeIf { expanded }?.let { url ->
+                r.imageUrl?.let { url ->
                     val picture by produceState<ImageBitmap?>(null, url) { value = loadPicture(url) }
                     picture?.let {
                         Image(
@@ -1158,43 +1193,39 @@ private fun DecisionCard(
                             )
                         }
                     }
-                    if (!expanded) NoteCount(r)
-                    if (expanded) {
-                        whenLabel(r)?.let {
-                            Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        }
-                        r.url?.takeIf { it.isNotBlank() }?.let { ItemLink(productLink(it)) }
-                        r.details?.takeIf { it.isNotBlank() }?.let {
-                            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        when (status) {
-                            "completed" -> Text(
-                                "Approved by ${who(r.decidedBy, me)}" + r.addedToList?.let { " · added to $it" }.orEmpty(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            "declined" -> Text(
-                                "Declined" + r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty() + r.reply?.let { ": $it" }.orEmpty(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Text(
-                            "Asked by ${if (r.requester.id == me) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
-                            style = MaterialTheme.typography.bodySmall,
+                    whenLabel(r)?.let {
+                        Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    }
+                    r.url?.takeIf { it.isNotBlank() }?.let { ItemLink(productLink(it)) }
+                    r.details?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    when (status) {
+                        "completed" -> Text(
+                            "Approved by ${who(r.decidedBy, me)}" + r.addedToList?.let { " · added to $it" }.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        "declined" -> Text(
+                            "Declined" + r.decidedBy?.let { " by ${who(it, me)}" }.orEmpty() + r.reply?.let { ": $it" }.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    Text(
+                        "Asked by ${if (r.requester.id == me) "you" else r.requester.name ?: "someone"} · ${formatDate(r.createdAt)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-                if (expanded && onEdit != null) {
+                if (onEdit != null) {
                     IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit ${r.title}") }
                 }
-                if (expanded && onRemove != null) {
+                if (onRemove != null) {
                     IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${r.title}") }
                 }
-                ExpandButton(expanded, r.title, onToggle)
             }
-            if (expanded && decides && open) {
+            if (decides && open) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -1203,7 +1234,7 @@ private fun DecisionCard(
                     Button(onClick = onApprove, enabled = !busy) { Text(if (busy) "Saving…" else "Approve") }
                 }
             }
-            if (expanded) notes()
+            notes()
         }
     }
 }
