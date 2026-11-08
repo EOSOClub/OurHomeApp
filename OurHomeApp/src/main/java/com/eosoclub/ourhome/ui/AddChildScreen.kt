@@ -329,7 +329,6 @@ internal fun AddChildScreen(
                                 onNewLink = vm::makeSetupLink,
                                 watching = vm.isSupervisor(made),
                                 supervisorNames = supervision.supervisors.filter { it.id in made.supervisorIds }.map { it.name },
-                                locationOn = locationOn,
                                 onNext = { vm.goTo(ChildSetupStep.Progress) },
                                 onDone = { vm.startOver(); onDone() },
                                 onAnother = vm::startOver,
@@ -339,7 +338,6 @@ internal fun AddChildScreen(
                             ProgressStep(
                                 made,
                                 state,
-                                locationOn = locationOn,
                                 onBack = { vm.goTo(ChildSetupStep.Install) },
                                 onOpenLookAfter = onOpenLookAfter,
                                 onAnother = vm::startOver,
@@ -594,7 +592,6 @@ private fun InstallStep(
     /** This adult supervises them, so can watch their phone on the next step. */
     watching: Boolean,
     supervisorNames: List<String>,
-    locationOn: Boolean,
     onNext: () -> Unit,
     onDone: () -> Unit,
     onAnother: () -> Unit,
@@ -664,7 +661,7 @@ private fun InstallStep(
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Text(
                 "You don't supervise ${made.name}, so you won't see their phone here. ${joinNames(supervisorNames, "and")} " +
-                    if (locationOn) "can follow how far it got on People you look after." else "are told if anything is turned off later.",
+                    "can follow how far it got on People you look after.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(12.dp),
@@ -685,7 +682,6 @@ private fun InstallStep(
 private fun ProgressStep(
     made: AddChildViewModel.Made,
     state: AddChildViewModel.UiState,
-    locationOn: Boolean,
     onBack: () -> Unit,
     onOpenLookAfter: () -> Unit,
     onAnother: () -> Unit,
@@ -695,7 +691,7 @@ private fun ProgressStep(
     StepTitle(
         "${made.name}'s phone",
         "This fills in as their phone checks in, a few seconds after each step. You can leave this screen: " +
-            if (locationOn) "it's also under their name on People you look after." else "coming back here shows it again.",
+            "it's also under their name on People you look after.",
     )
     when {
         !state.progressLoaded -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -716,12 +712,10 @@ private fun ProgressStep(
         }
     }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (locationOn) {
-            if (complete) {
-                Button(onClick = onOpenLookAfter) { Text("People you look after") }
-            } else {
-                OutlinedButton(onClick = onOpenLookAfter) { Text("People you look after") }
-            }
+        if (complete) {
+            Button(onClick = onOpenLookAfter) { Text("People you look after") }
+        } else {
+            OutlinedButton(onClick = onOpenLookAfter) { Text("People you look after") }
         }
         TextButton(onClick = onBack) { Text("Install steps") }
         TextButton(onClick = onAnother) { Text("Set up another child") }

@@ -94,7 +94,9 @@ import com.eosoclub.ourhome.data.schedulesSummary
 import com.eosoclub.ourhome.data.LookAfter
 import com.eosoclub.ourhome.data.LookedAfter
 import com.eosoclub.ourhome.data.LookedAfterBlocking
+import com.eosoclub.ourhome.data.LookedAfterDevice
 import com.eosoclub.ourhome.data.LookedAfterLimits
+import com.eosoclub.ourhome.data.phoneProblemText
 import com.eosoclub.ourhome.data.PhoneRule
 import com.eosoclub.ourhome.data.blockedSummary
 import com.eosoclub.ourhome.data.limitLabel
@@ -196,6 +198,8 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
         val savingPoints: String? = null,
         /** Whose "Check their tasks before points" is being saved, and to what. */
         val savingReview: Pair<String, Boolean>? = null,
+        /** The device being forgotten (install id). */
+        val forgetting: String? = null,
         /** Whose week of app usage is open, their loaded history, and whose failed to load. */
         val usageOpen: Set<String> = emptySet(),
         val usageHistory: Map<String, UsageHistory> = emptyMap(),
@@ -265,6 +269,24 @@ class LookAfterViewModel(private val api: ApiClient) : ViewModel() {
         } catch (e: Exception) {
             state.update { it.copy(savingRequired = null) }
             onDone(e.message ?: "Couldn't change it")
+        }
+    }
+
+    /**
+     * Forgets one of [person]'s devices they no longer use, so its silence
+     * stops alerting (web forgetDevice). One still in use comes back with its
+     * next check-in.
+     */
+    fun forgetDevice(person: LookedAfter, device: LookedAfterDevice, onDone: (String) -> Unit) = viewModelScope.launch {
+        edits++
+        state.update { it.copy(forgetting = device.installId) }
+        try {
+            val next = api.forgetDevice(person.id, device.installId)
+            state.update { it.copy(lookAfter = next, forgetting = null) }
+            onDone("Forgot ${person.name}'s ${device.deviceName ?: "device"}")
+        } catch (e: Exception) {
+            state.update { it.copy(forgetting = null) }
+            onDone(e.message ?: "Couldn't forget it")
         }
     }
 
@@ -461,6 +483,11 @@ internal fun LookAfterScreen(
     startPersonId: String? = null,
     /** False when the server admin turned Tasks off: no "Check their tasks before points". */
     showTasks: Boolean = true,
+    /**
+     * False when Location is off: the page still works (owner, 2026-11-08),
+     * without its location parts (Location required, their sharing, Ring).
+     */
+    showLocation: Boolean = true,
 ) {
     val vm = viewModel { LookAfterViewModel(api) }
     var selectedId by rememberSaveable(startPersonId) { mutableStateOf(startPersonId) }
@@ -512,12 +539,13 @@ internal fun LookAfterScreen(
                 items(lookAfter.people, key = { it.id }) { person ->
                     PersonCard(
                         person,
-                        canRing = lookAfter.canRing,
+                        canRing = showLocation && lookAfter.canRing,
+                        showLocation = showLocation,
                         onOpen = { selectedId = person.id },
                         onRing = { vm.ring(person, showMessage) },
                     )
                 }
-                if (!lookAfter.canRing) {
+                if (showLocation && !lookAfter.canRing) {
                     item(span = full) {
                         LookAfterNote(
                             "Ringing needs instant phone alerts: Firebase on this server, or Stay connected turned on " +
@@ -545,7 +573,10 @@ internal fun LookAfterScreen(
                 val savingUsage = state.savingUsage?.takeIf { it.first == selected.id }
                 LookedAfterRow(
                     selected,
-                    canRing = lookAfter.canRing,
+                    canRing = showLocation && lookAfter.canRing,
+                    showLocation = showLocation,
+                    forgetting = state.forgetting,
+                    onForget = { vm.forgetDevice(selected, it, showMessage) },
                     required = saving?.second ?: selected.required,
                     saving = saving != null,
                     sharesUsage = savingUsage?.second ?: selected.appUsage.shared,
@@ -617,14 +648,89 @@ private fun LookAfterNote(text: String, padded: Boolean = true) {
     )
 }
 
-/** Their phone: what's wrong with it (true: shown red), or when it last checked in. */
-private fun phoneStatus(person: LookedAfter): Pair<String, Boolean> {
-    val phone = person.phone ?: return "Their phone hasn't checked in yet" to false
-    val problem = phone.problemText
+/** One device: what's wrong with it (true: shown red), or when it last checked in. */
+private fun deviceStatus(problems: List<String>, lastSeenAt: String): Pair<String, Boolean> {
+    val problem = phoneProblemText(problems)
     return if (problem != null) {
-        "$problem (last seen ${relativeTime(phone.lastSeenAt)})" to true
+        "$problem (last seen ${relativeTime(lastSeenAt)})" to true
     } else {
-        "Phone checked in ${relativeTime(phone.lastSeenAt)}" to false
+        "Phone checked in ${relativeTime(lastSeenAt)}" to false
+    }
+}
+
+/**
+ * Their phone: what's wrong with it (red), or when it last checked in; while
+ * it's quiet, what it last said was wrong. Signed in on more than one device:
+ * a line for each, every one judged on its own (as the web). [onForget]: on
+ * their page, each device has Forget.
+ */
+@Composable
+private fun PhoneLines(
+    person: LookedAfter,
+    forgetting: String? = null,
+    onForget: ((LookedAfterDevice) -> Unit)? = null,
+) {
+    val phone = person.phone
+    if (phone == null) {
+        CardLine("Their phone hasn't checked in yet")
+        return
+    }
+    val devices = phone.devices
+    if (devices.size <= 1) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) { DeviceState(phone.problems, phone.lastKnown, phone.lastSeenAt) }
+            val only = devices.firstOrNull()
+            if (only != null && onForget != null) ForgetDevice(only, person.name, forgetting == only.installId, onForget)
+        }
+        return
+    }
+    devices.forEach { device ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    device.deviceName ?: "A device",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                DeviceState(device.problems, device.lastKnown, device.lastSeenAt)
+            }
+            if (onForget != null) ForgetDevice(device, person.name, forgetting == device.installId, onForget)
+        }
+    }
+}
+
+/** One device's line, and while it's quiet what it last said was wrong (not known to be fixed). */
+@Composable
+private fun DeviceState(problems: List<String>, lastKnown: List<String>, lastSeenAt: String) {
+    val (status, problem) = deviceStatus(problems, lastSeenAt)
+    CardLine(status, error = problem)
+    if (problem) phoneProblemText(lastKnown)?.let { CardLine("When last heard: $it", error = true) }
+}
+
+/**
+ * Forget, with a confirm first: for a device they no longer use, so its
+ * silence stops alerting. One still in use comes back with its next check-in.
+ */
+@Composable
+private fun ForgetDevice(device: LookedAfterDevice, personName: String, busy: Boolean, onForget: (LookedAfterDevice) -> Unit) {
+    var confirm by remember { mutableStateOf(false) }
+    TextButton(onClick = { confirm = true }, enabled = !busy) { Text("Forget") }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text("Forget this device") },
+            text = {
+                Text(
+                    "Forget ${device.deviceName ?: "this device"}? Do this for a device $personName no longer " +
+                        "uses: it stops counting, and its alerts go. If it's still in use, it comes back the next " +
+                        "time it checks in.",
+                )
+            },
+            confirmButton = { TextButton(onClick = { confirm = false; onForget(device) }) { Text("Forget") } },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -635,8 +741,14 @@ private fun phoneStatus(person: LookedAfter): Pair<String, Boolean> {
  * phone has a problem.
  */
 @Composable
-private fun PersonCard(person: LookedAfter, canRing: Boolean, onOpen: () -> Unit, onRing: () -> Unit) {
-    val (status, problem) = phoneStatus(person)
+private fun PersonCard(
+    person: LookedAfter,
+    canRing: Boolean,
+    showLocation: Boolean,
+    onOpen: () -> Unit,
+    onRing: () -> Unit,
+) {
+    val problem = person.phone?.anyProblem == true
     Card(
         onClick = onOpen,
         border = if (problem) BorderStroke(1.dp, MaterialTheme.colorScheme.error) else null,
@@ -661,8 +773,8 @@ private fun PersonCard(person: LookedAfter, canRing: Boolean, onOpen: () -> Unit
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            CardLine(status, error = problem)
-            CardLine(if (person.required) "Location required" else person.sharingNote.orEmpty())
+            PhoneLines(person)
+            if (showLocation) CardLine(if (person.required) "Location required" else person.sharingNote.orEmpty())
             val latest = person.appUsage.latest
             CardLine(
                 when {
@@ -675,7 +787,7 @@ private fun PersonCard(person: LookedAfter, canRing: Boolean, onOpen: () -> Unit
             limitsSummary(person.limits)?.let { CardLine(it) }
             schedulesSummary(person.schedules)?.let { CardLine(it) }
             person.setupSummary()?.let { CardLine(it) }
-            person.ring?.let { ring ->
+            person.ring?.takeIf { showLocation }?.let { ring ->
                 CardLine("You rang ${relativeTime(ring.sentAt)}: ${ring.outcome}", error = ring.phase == "no_answer")
             }
             if (canRing) {
@@ -709,6 +821,11 @@ private fun CardLine(text: String, error: Boolean = false) {
 private fun LookedAfterRow(
     person: LookedAfter,
     canRing: Boolean,
+    /** False when Location is off: no Location card, and no ring line on their phone. */
+    showLocation: Boolean,
+    /** The device of theirs being forgotten (install id). */
+    forgetting: String?,
+    onForget: (LookedAfterDevice) -> Unit,
     required: Boolean,
     saving: Boolean,
     sharesUsage: Boolean,
@@ -761,14 +878,16 @@ private fun LookedAfterRow(
     Box(Modifier.padding(16.dp)) {
         TwoStacks(
             first = {
-                PhoneCard(person, canRing, onRing)
-                CollapsibleCard("Location", if (person.required) "Location required" else person.sharingNote.orEmpty()) {
-                    Column {
-                        SwitchRow("Location required", required, enabled = !saving, onChange = onRequired)
-                        Help(
-                            "Keeps their location sharing on, and lets you check where they are on the Map without " +
-                                "them allowing it. They always see when you check.",
-                        )
+                PhoneCard(person, canRing, showLocation, onRing, forgetting, onForget)
+                if (showLocation) {
+                    CollapsibleCard("Location", if (person.required) "Location required" else person.sharingNote.orEmpty()) {
+                        Column {
+                            SwitchRow("Location required", required, enabled = !saving, onChange = onRequired)
+                            Help(
+                                "Keeps their location sharing on, and lets you check where they are on the Map without " +
+                                    "them allowing it. They always see when you check.",
+                            )
+                        }
                     }
                 }
                 // Opens by itself while their blocked apps open anyway.
@@ -870,9 +989,17 @@ private fun usageSummary(person: LookedAfter): String {
  * edge while their phone has a problem, as on their summary card.
  */
 @Composable
-private fun PhoneCard(person: LookedAfter, canRing: Boolean, onRing: () -> Unit) {
+private fun PhoneCard(
+    person: LookedAfter,
+    canRing: Boolean,
+    showLocation: Boolean,
+    onRing: () -> Unit,
+    /** The device being forgotten (install id). */
+    forgetting: String?,
+    onForget: (LookedAfterDevice) -> Unit,
+) {
     val phone = person.phone
-    val (status, problem) = phoneStatus(person)
+    val problem = phone?.anyProblem == true
     Card(
         border = if (problem) BorderStroke(1.dp, MaterialTheme.colorScheme.error) else null,
         modifier = Modifier.fillMaxWidth(),
@@ -881,11 +1008,8 @@ private fun PhoneCard(person: LookedAfter, canRing: Boolean, onRing: () -> Unit)
             Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
                     Text("Their phone", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        status,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // Each device with Forget, for one they no longer use.
+                    PhoneLines(person, forgetting, onForget)
                     // How instant alerts reach it; nothing for an app too old to say.
                     val alerts = when {
                         phone == null -> null
@@ -895,8 +1019,8 @@ private fun PhoneCard(person: LookedAfter, canRing: Boolean, onRing: () -> Unit)
                         else -> null
                     }
                     alerts?.let { Help(it) }
-                    // My last ring of their phone and what it said back.
-                    person.ring?.let { ring ->
+                    // My last ring of their phone and what it said back (ringing goes with Location).
+                    person.ring?.takeIf { showLocation }?.let { ring ->
                         Text(
                             "You rang ${relativeTime(ring.sentAt)}: ${ring.outcome}",
                             style = MaterialTheme.typography.bodySmall,
@@ -906,15 +1030,17 @@ private fun PhoneCard(person: LookedAfter, canRing: Boolean, onRing: () -> Unit)
                 }
                 if (canRing) TextButton(onClick = onRing) { Text("Ring") }
             }
-            Help(
-                if (canRing) {
-                    "Ring rings their phone loudly for up to 30 seconds, even on silent. You see when it starts " +
-                        "ringing, and whether someone tapped Stop."
-                } else {
-                    "Ringing needs instant phone alerts: Firebase on this server, or Stay connected turned on in the " +
-                        "app on their phone."
-                },
-            )
+            if (showLocation) {
+                Help(
+                    if (canRing) {
+                        "Ring rings their phone loudly for up to 30 seconds, even on silent. You see when it starts " +
+                            "ringing, and whether someone tapped Stop."
+                    } else {
+                        "Ringing needs instant phone alerts: Firebase on this server, or Stay connected turned on in the " +
+                            "app on their phone."
+                    },
+                )
+            }
         }
     }
 }

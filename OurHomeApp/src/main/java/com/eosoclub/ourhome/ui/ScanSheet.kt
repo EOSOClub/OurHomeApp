@@ -309,7 +309,13 @@ class ScanViewModel(private val api: ApiClient) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScanSheet(vm: ScanViewModel, canWrite: Boolean, onFinished: () -> Unit) {
+fun ScanSheet(
+    vm: ScanViewModel,
+    canWrite: Boolean,
+    /** May change what a scan does, its shopping list, and a room tag's room (Inventory "Edit others'"). */
+    canChangeTag: Boolean,
+    onFinished: () -> Unit,
+) {
     val state by vm.state.collectAsStateWithLifecycle()
     if (state.phase == ScanViewModel.Phase.Closed) return
     val close = {
@@ -340,10 +346,10 @@ fun ScanSheet(vm: ScanViewModel, canWrite: Boolean, onFinished: () -> Unit) {
                     val isLocation = phase.lookup.tag?.isLocation == true
                     when {
                         state.settingUp && canWrite -> SetupContent(phase.lookup, state, vm)
-                        isLocation -> LocationContent(phase.lookup, canWrite, state, vm)
+                        isLocation -> LocationContent(phase.lookup, canWrite, canChangeTag, state, vm)
                         !canWrite && phase.lookup.item == null ->
                             Text("This tag isn't set up yet. Ask someone who manages inventory to set it up.")
-                        else -> BoundContent(phase.lookup, canWrite, state, vm)
+                        else -> BoundContent(phase.lookup, canWrite, canChangeTag, state, vm)
                     }
                     if (canWrite && !state.settingUp && (phase.lookup.item != null || isLocation)) WriteTagCard(state, vm)
                 }
@@ -370,7 +376,13 @@ private fun ItemHeader(item: InventoryItem) {
 }
 
 @Composable
-private fun BoundContent(lookup: NfcLookup, canWrite: Boolean, state: ScanViewModel.UiState, vm: ScanViewModel) {
+private fun BoundContent(
+    lookup: NfcLookup,
+    canWrite: Boolean,
+    canChangeTag: Boolean,
+    state: ScanViewModel.UiState,
+    vm: ScanViewModel,
+) {
     val item = lookup.item!!
     val busy = state.busy
     ItemHeader(item)
@@ -410,15 +422,18 @@ private fun BoundContent(lookup: NfcLookup, canWrite: Boolean, state: ScanViewMo
         }
     }
     HorizontalDivider(Modifier.padding(vertical = 4.dp))
-    // Keyed on the saved values so the controls reset after a save.
-    androidx.compose.runtime.key(lookup.tag?.scanAction, lookup.tag?.shoppingListId) {
-        var action by remember { mutableStateOf(lookup.tag?.scanAction ?: OPEN) }
-        var listId by remember { mutableStateOf(lookup.tag?.shoppingListId.orEmpty()) }
-        ScanActionChooser(action, { action = it }, listId, { listId = it }, state.lists)
-        val dirty = action != (lookup.tag?.scanAction ?: OPEN) || listId != lookup.tag?.shoppingListId.orEmpty()
-        if (dirty) {
-            Button(onClick = { vm.saveScanSettings(action, listId.ifEmpty { null }) }, enabled = !busy) {
-                Text(if (busy) "Saving…" else "Save")
+    // Without edit access the server refuses a change, so the controls aren't offered.
+    if (canChangeTag) {
+        // Keyed on the saved values so the controls reset after a save.
+        androidx.compose.runtime.key(lookup.tag?.scanAction, lookup.tag?.shoppingListId) {
+            var action by remember { mutableStateOf(lookup.tag?.scanAction ?: OPEN) }
+            var listId by remember { mutableStateOf(lookup.tag?.shoppingListId.orEmpty()) }
+            ScanActionChooser(action, { action = it }, listId, { listId = it }, state.lists)
+            val dirty = action != (lookup.tag?.scanAction ?: OPEN) || listId != lookup.tag?.shoppingListId.orEmpty()
+            if (dirty) {
+                Button(onClick = { vm.saveScanSettings(action, listId.ifEmpty { null }) }, enabled = !busy) {
+                    Text(if (busy) "Saving…" else "Save")
+                }
             }
         }
     }
@@ -430,7 +445,13 @@ private fun BoundContent(lookup: NfcLookup, canWrite: Boolean, state: ScanViewMo
  * Shown when its room is gone, or from "Change room" after a scan opened it.
  */
 @Composable
-private fun LocationContent(lookup: NfcLookup, canWrite: Boolean, state: ScanViewModel.UiState, vm: ScanViewModel) {
+private fun LocationContent(
+    lookup: NfcLookup,
+    canWrite: Boolean,
+    canChangeTag: Boolean,
+    state: ScanViewModel.UiState,
+    vm: ScanViewModel,
+) {
     val tag = lookup.tag!!
     val room = tag.room
     val places = state.places
@@ -448,6 +469,10 @@ private fun LocationContent(lookup: NfcLookup, canWrite: Boolean, state: ScanVie
     }
     HorizontalDivider(Modifier.padding(vertical = 4.dp))
     when {
+        // Picking its room is a tag setting: it needs edit access, as on the server.
+        !canChangeTag -> if (room == null) {
+            Text("Ask someone who manages inventory to pick its room.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         places == null -> Text("Loading rooms…", color = MaterialTheme.colorScheme.onSurfaceVariant)
         places.rooms.isEmpty() -> Text("No rooms yet. Add them in Settings → Rooms & floors.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         else -> androidx.compose.runtime.key(room?.id) {

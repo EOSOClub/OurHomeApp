@@ -631,9 +631,13 @@ private fun MemberEditor(member: MemberAccount, user: SessionUser, state: Member
     val isHead = member.role == "head"
     val manageable = canManageMember(user.role, member.role)
     val roles = assignableRoles(user.role)
-    val canChangeRole = manageable && !isSelf && !isHead && roles.isNotEmpty()
-    val canResetPassword = manageable && !isSelf
-    val canRemove = manageable && !isSelf && !isHead
+    // The server admin's login, password and role are theirs alone, and they
+    // can't be removed, even by a Head of House they handed it to (web
+    // userService.assertNotServerAdmin refuses them).
+    val adminsOwn = member.runsServer && !isSelf
+    val canChangeRole = manageable && !isSelf && !isHead && roles.isNotEmpty() && !adminsOwn
+    val canResetPassword = manageable && !isSelf && !adminsOwn
+    val canRemove = manageable && !isSelf && !isHead && !adminsOwn
     val canTransfer = user.role == "head" && !isHead && !isSelf
 
     var name by remember { mutableStateOf(member.name) }
@@ -677,11 +681,15 @@ private fun MemberEditor(member: MemberAccount, user: SessionUser, state: Member
             supportingText = nameError?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
-        UsernameField(username, usernameError) { username = it; vm.clearFieldError("username") }
-        if (!isSelf) {
-            EmailField(email, emailError, optional = false) { email = it; vm.clearFieldError("email") }
-        } else {
-            Text(
+        if (!adminsOwn) UsernameField(username, usernameError) { username = it; vm.clearFieldError("username") }
+        when {
+            adminsOwn -> Text(
+                "They run the server, so only they can change their username, email, password or role.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            !isSelf -> EmailField(email, emailError, optional = false) { email = it; vm.clearFieldError("email") }
+            else -> Text(
                 "To change your own email or password, use your Profile.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

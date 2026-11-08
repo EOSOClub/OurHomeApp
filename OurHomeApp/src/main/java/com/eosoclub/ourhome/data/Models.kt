@@ -93,6 +93,11 @@ data class MemberAccount(
     val role: String,
     /** Still on the temporary password set when added or reset. */
     val mustChangePassword: Boolean = false,
+    /**
+     * The server admin: only they change their login, password and role, and
+     * they can't be removed (the server refuses). False from an older server.
+     */
+    val runsServer: Boolean = false,
     val createdAt: String? = null,
 )
 
@@ -195,6 +200,8 @@ data class TaskInput(
     val type: String,
     val priority: String,
     val dueDate: Instant?,
+    /** No time picked: due all day, so a task really due at 12:00 keeps its time. Null without a due date. */
+    val dueAllDay: Boolean? = null,
     /** The task-level (base) TTC and points; points null while they follow time. */
     val estimatedMinutes: Int?,
     val points: Double? = null,
@@ -370,6 +377,11 @@ data class Task(
     val priority: String,
     val status: String,
     val dueDate: String? = null,
+    /**
+     * Due all day (no time), as the server reads it: the task's own flag, else
+     * the 12:00 marker. Null from a server from before it (then 12:00 means all day).
+     */
+    val dueAllDay: Boolean? = null,
     val completedAt: String? = null,
     /** Live TTC: the sum of the steps (or the base without steps). */
     val estimatedMinutes: Int? = null,

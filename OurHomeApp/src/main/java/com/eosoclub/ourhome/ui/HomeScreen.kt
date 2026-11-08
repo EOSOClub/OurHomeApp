@@ -184,17 +184,14 @@ fun HomeScreen(
     LaunchedEffect(features) {
         if (!tab.isOn(features)) tab = Tab.Home
         if (overlay == Overlay.Points && !features.points) overlay = null
-        if ((overlay == Overlay.Map || overlay == Overlay.LookAfter) && !features.location) overlay = null
+        if (overlay == Overlay.Map && !features.location) overlay = null
     }
     // Whether this adult supervises anyone, so the menu offers "People you look
     // after". Asked again on each tab change and each time the menu opens, so a
-    // change the Head makes shows up without restarting the app.
+    // change the Head makes shows up without restarting the app. Not tied to
+    // Location (owner, 2026-11-08): only its location parts go with the Map.
     var looksAfter by remember { mutableStateOf(false) }
-    LaunchedEffect(tab, menuOpen, features.location) {
-        if (!features.location) {
-            looksAfter = false
-            return@LaunchedEffect
-        }
+    LaunchedEffect(tab, menuOpen) {
         runCatching { session.api.lookAfter().people.isNotEmpty() }
             .onSuccess { looksAfter = it }
             .onFailure { if (it is CancellationException) throw it }
@@ -548,7 +545,7 @@ fun HomeScreen(
                         target != null && target.isOn(features) -> { overlay = null; tab = target }
                         n.subjectType == "app_release" -> overlay = Overlay.Profile
                         // A supervised child's phone (phone_alert, new app; subjectId: the child): their page there.
-                        n.subjectType == "phone" && features.location -> {
+                        n.subjectType == "phone" -> {
                             lookAfterStart = n.subjectId
                             overlay = Overlay.LookAfter
                         }
@@ -566,7 +563,14 @@ fun HomeScreen(
             Overlay.Points -> PointsScreen(session.api, user.id, isHead = user.role == "head", showMessage, modifier)
             Overlay.Activity -> ActivityScreen(session.api, user.id, modifier)
             Overlay.Map -> MapScreen(session.api, showMessage, modifier)
-            Overlay.LookAfter -> LookAfterScreen(session.api, showMessage, modifier, startPersonId = lookAfterStart, showTasks = features.tasks)
+            Overlay.LookAfter -> LookAfterScreen(
+                session.api,
+                showMessage,
+                modifier,
+                startPersonId = lookAfterStart,
+                showTasks = features.tasks,
+                showLocation = features.location,
+            )
             Overlay.PhoneSetup -> PhoneSetupScreen(session.api, showMessage, onClose = { overlay = null }, modifier)
             Overlay.Settings -> SettingsScreen(session.api, session.baseUrl, isHead = user.role == "head", features, showMessage, modifier)
             Overlay.Members -> MembersScreen(session, user, showMessage, onSetUpChild = { overlay = Overlay.AddChild }, modifier)
@@ -601,7 +605,14 @@ fun HomeScreen(
 
     // Refresh stock afterward so the Inventory tab shows the new numbers.
     // ± stock and binding a tag need any Inventory access (as on the server).
-    ScanSheet(scan, canWrite = access.inventory.any, onFinished = { inventory.refresh() })
+    // What a scan does, its list and a room tag's room need edit access
+    // ("Edit others'": a tag has no owner), as on the server since 2026-11-08.
+    ScanSheet(
+        scan,
+        canWrite = access.inventory.any,
+        canChangeTag = access.inventory.editOthers,
+        onFinished = { inventory.refresh() },
+    )
 
     // Not over a full-screen page (say, the phone setup checklist): it waits until that closes.
     if (whatsNew.isNotEmpty() && overlay == null) {

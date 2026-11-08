@@ -292,13 +292,40 @@ data class LookedAfterPhone(
     val lastSeenAt: String,
     val deviceName: String? = null,
     val problems: List<String> = emptyList(),
+    /** While it's quiet: what its last report showed wrong (empty otherwise, or from an older server). */
+    val lastKnown: List<String> = emptyList(),
+    /**
+     * Every device they're signed in on, freshest first, each judged on its own
+     * (web phoneStatusService, 2026-11-08). Empty from an older server.
+     */
+    val devices: List<LookedAfterDevice> = emptyList(),
     val lastPushAt: String? = null,
     val stayConnected: Boolean = false,
     val connected: Boolean = false,
 ) {
     /** "Phone hasn't checked in" / "Location turned off on their phone"; null when all is well. */
     val problemText: String?
-        get() = problems.mapNotNull {
+        get() = phoneProblemText(problems)
+
+    /** Something is wrong with any of their devices (a red edge). */
+    val anyProblem: Boolean
+        get() = problems.isNotEmpty() || devices.any { it.problems.isNotEmpty() }
+}
+
+/** One of a child's devices: when it was last heard from, and what's wrong with it. */
+@Serializable
+data class LookedAfterDevice(
+    val installId: String,
+    val deviceName: String? = null,
+    val lastSeenAt: String,
+    val problems: List<String> = emptyList(),
+    /** While it's quiet: what its last report showed wrong. */
+    val lastKnown: List<String> = emptyList(),
+)
+
+/** The problems as a line ("Phone hasn't checked in · Notifications turned off..."); null when there are none. */
+fun phoneProblemText(problems: List<String>): String? =
+        problems.mapNotNull {
             when (it) {
                 "quiet" -> "Phone hasn't checked in"
                 "app_removed" -> "OurHome may have been removed from their phone"
@@ -323,7 +350,6 @@ data class LookedAfterPhone(
                 else -> null
             }
         }.takeIf { it.isNotEmpty() }?.joinToString(" · ")
-}
 
 /**
  * The protections a supervising adult requires on a child's phone (web

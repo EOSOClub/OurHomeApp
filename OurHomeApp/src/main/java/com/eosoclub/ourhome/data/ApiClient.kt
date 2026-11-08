@@ -269,6 +269,8 @@ class ApiClient(
         put("type", input.type)
         put("priority", input.priority)
         put("dueDate", input.dueDate?.toString())
+        // Read with dueDate; a server from before it ignores it (12:00 is all day there).
+        put("dueAllDay", input.dueAllDay)
         put("estimatedMinutes", input.estimatedMinutes)
         put("points", input.points)
         put("pointsFollowTime", input.pointsFollowTime)
@@ -1493,6 +1495,22 @@ class ApiClient(
                     put("supervisedId", supervisedId)
                     put("rule", rule.key)
                     put("required", required)
+                },
+            ),
+            LookAfter.serializer(),
+        )
+
+    /**
+     * Forgets one of a supervised child's devices they no longer use, so its
+     * silence stops alerting. One still in use comes back with its next check-in.
+     */
+    suspend fun forgetDevice(supervisedId: String, installId: String): LookAfter =
+        call(
+            post(
+                "/api/supervision/devices/forget",
+                buildJsonObject {
+                    put("supervisedId", supervisedId)
+                    put("installId", installId)
                 },
             ),
             LookAfter.serializer(),

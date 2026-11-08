@@ -160,7 +160,10 @@ internal fun TaskEditor(
     var type by remember { mutableStateOf(task?.type ?: "one_time") }
     var priority by remember { mutableStateOf(task?.priority ?: "medium") }
     var dueDate by remember { mutableStateOf(originalDue?.toLocalDate()) }
-    var dueTime by remember { mutableStateOf(originalDue?.toLocalTime()) }
+    // All day opens with no time; a task really due at 12:00 shows 12:00. A
+    // server from before the flag: 12:00 is all day, as it always was.
+    val originalAllDay = task?.dueAllDay ?: (originalDue?.toLocalTime() == LocalTime.NOON)
+    var dueTime by remember { mutableStateOf(originalDue?.toLocalTime()?.takeUnless { originalAllDay }) }
     var categoryId by remember { mutableStateOf(task?.category?.id.orEmpty()) }
     // "room:<id>" / "floor:<id>" for each place; empty = the whole house.
     var placeValues by remember { mutableStateOf(task?.placeChoices().orEmpty()) }
@@ -220,8 +223,9 @@ internal fun TaskEditor(
                     notes = notes.trim().ifEmpty { null },
                     type = type,
                     priority = priority,
-                    // Like the web: a blank time means noon local.
+                    // Like the web: a blank time is stored at noon local and said to be all day.
                     dueDate = dueDate?.atTime(dueTime ?: LocalTime.NOON)?.atZone(zone)?.toInstant(),
+                    dueAllDay = dueDate?.let { dueTime == null },
                     estimatedMinutes = base.baseMinutes?.takeIf { it > 0 },
                     points = if (base.pointsFollowTime) null else base.basePointsCenti?.asPoints(),
                     pointsFollowTime = base.pointsFollowTime,

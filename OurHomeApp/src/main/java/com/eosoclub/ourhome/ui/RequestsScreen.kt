@@ -669,9 +669,11 @@ fun RequestsScreen(
         RequestEditor(
             initial = initial,
             modules = modules,
+            // You too, when the server lists you among who may be asked (web
+            // 2026-11-08); a server from before request types: anyone else.
             assignees = state.members?.filter {
-                it.id != user.id && (allowed == null || it.id in allowed || it.id == initial?.assignee?.id)
-            },
+                if (allowed == null) it.id != user.id else it.id in allowed || it.id == initial?.assignee?.id
+            }?.map { if (it.id == user.id) it.copy(name = "${it.name} (you)") else it },
             assigneesError = state.membersError,
             saving = state.saving,
             errors = vm.form,
@@ -719,7 +721,8 @@ fun RequestsScreen(
     state.reassigning?.let { r ->
         ReassignDialog(
             r = r,
-            choices = state.members?.filter { it.id != r.requester.id },
+            // Anyone, the person who asked included (web 2026-11-08).
+            choices = state.members?.map { if (it.id == r.requester.id) it.copy(name = "${it.name} (asked for it)") else it },
             membersError = state.membersError,
             error = vm.form["assigneeId"] ?: vm.form.message,
             busy = r.id in state.busy,
@@ -1091,7 +1094,13 @@ private fun MaintenanceCard(
                         )
                     }
                     Text(
-                        "${who(r.requester, me).replaceFirstChar(Char::uppercase)} asked ${who(r.assignee, me)} · ${formatDate(r.createdAt)}",
+                        if (r.assignee?.id == r.requester.id) {
+                            // Taken on by the person who asked (web 2026-11-08).
+                            "${who(r.requester, me).replaceFirstChar(Char::uppercase)} took it on " +
+                                "${if (r.requester.id == me) "yourself" else "themselves"} · ${formatDate(r.createdAt)}"
+                        } else {
+                            "${who(r.requester, me).replaceFirstChar(Char::uppercase)} asked ${who(r.assignee, me)} · ${formatDate(r.createdAt)}"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1389,9 +1398,9 @@ private fun DeclineDialog(
 }
 
 /**
- * The head gives a maintenance request to someone else: anyone but the
- * requester ([choices], null while the members load). Matches the web's
- * Reassign request window.
+ * The head gives a maintenance request to someone else: anyone, the
+ * requester included ([choices], null while the members load). Matches the
+ * web's Reassign request window.
  */
 @Composable
 private fun ReassignDialog(
@@ -1463,7 +1472,7 @@ private fun ReassignDialog(
 private fun RequestEditor(
     initial: HouseholdRequest?,
     modules: List<RequestModule>,
-    /** Who may be asked (never the member); null while loading. */
+    /** Who may be asked (the member too, marked "(you)", when the server lists them); null while loading. */
     assignees: List<Member>?,
     assigneesError: String?,
     saving: Boolean,
