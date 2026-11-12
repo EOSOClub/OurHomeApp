@@ -413,13 +413,26 @@ class FormErrors {
 }
 
 /**
- * The instant to store for a picked [date]. Matches the web forms: noon local
- * time, or - when editing - the original instant's time of day, so changing
- * only the date never shifts a time the user set on the web.
+ * What a repeat's "Ends on" date is saved as (web lib/format.ts repeatUntil):
+ * the last moment of that day in [zone], so the repeat on the end date still
+ * happens whatever its time. Noon, as it was, dropped a task due later that
+ * day. A date left as it was is sent back exactly as stored ([original]).
  */
-internal fun dueInstant(date: LocalDate?, original: String?): Instant? {
+internal fun repeatUntil(date: LocalDate?, original: String?, zone: ZoneId): Instant? {
     date ?: return null
-    val zone = ZoneId.systemDefault()
+    val stored = original?.let { runCatching { Instant.parse(it) }.getOrNull() }
+    if (stored != null && stored.atZone(zone).toLocalDate() == date) return stored
+    return date.plusDays(1).atStartOfDay(zone).toInstant().minusMillis(1)
+}
+
+/**
+ * The instant to store for a picked [date]. Matches the web forms: noon in
+ * the household's zone ([zone]), or - when editing - the original instant's
+ * time of day, so changing only the date never shifts a time the user set on
+ * the web.
+ */
+internal fun dueInstant(date: LocalDate?, original: String?, zone: ZoneId = HouseholdZone.id): Instant? {
+    date ?: return null
     val time = original?.let { Instant.parse(it).atZone(zone).toLocalTime() } ?: LocalTime.NOON
     return date.atTime(time).atZone(zone).toInstant()
 }

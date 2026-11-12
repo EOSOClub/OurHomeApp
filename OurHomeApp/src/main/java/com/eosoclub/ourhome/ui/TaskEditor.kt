@@ -74,7 +74,6 @@ import com.eosoclub.ourhome.data.setTaskPoints
 import com.eosoclub.ourhome.data.toCenti
 import java.time.Instant
 import java.time.LocalTime
-import java.time.ZoneId
 
 /**
  * A checklist row in the editor; [id] is null for a step not yet saved.
@@ -146,7 +145,10 @@ internal fun TaskEditor(
     /** The task waits for an OK on my own check: I can change nothing until I take it back. */
     sentByMe: Boolean = false,
 ) {
-    val zone = ZoneId.systemDefault()
+    // Dates and times are read and written in the household's zone, like the
+    // web form (not the phone's: see HouseholdZone). Kept as it was when the
+    // editor opened, so the fields and the save agree.
+    val zone = remember { HouseholdZone.id }
     // While it waits for an OK only the name, notes, places and step names may
     // change (the server compares every value, so the full form is still sent).
     val locked = task?.waitingForOk == true
@@ -241,7 +243,7 @@ internal fun TaskEditor(
                             interval = intervalValue ?: 1,
                             byWeekday = weekdays.sorted(),
                             byMonthday = monthdays.sorted(),
-                            until = until?.atTime(LocalTime.NOON)?.atZone(zone)?.toInstant(),
+                            until = repeatUntil(until, rule?.until, zone),
                             rollover = rollover,
                             cycleWeekdays = cycleWeekdays.sorted(),
                             cycleMonthdays = cycleMonthdays.sorted(),
@@ -722,7 +724,7 @@ private fun NumberBox(
     OutlinedTextField(
         value = text ?: show(value),
         onValueChange = { t ->
-            val clean = t.filter { it.isDigit() || (decimals && it == '.') }
+            val clean = decimalInput(t, decimals)
             text = clean
             onValue(parse(clean))
         },

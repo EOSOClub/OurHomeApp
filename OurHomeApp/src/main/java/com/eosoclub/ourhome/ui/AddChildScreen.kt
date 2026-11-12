@@ -115,6 +115,8 @@ class AddChildViewModel(private val api: ApiClient, private val actorId: String)
         /** Their row from People you look after, for Progress; null until loaded or when not supervised. */
         val progress: LookedAfter? = null,
         val progressLoaded: Boolean = false,
+        /** Why Progress hasn't loaded yet; only before the first load (later failures keep what is shown). */
+        val progressError: String? = null,
         /** The setup link (QR code) for their phone, on Install; null until made. */
         val setupLink: SetupLink? = null,
         val setupLinkBusy: Boolean = false,
@@ -190,6 +192,7 @@ class AddChildViewModel(private val api: ApiClient, private val actorId: String)
                     fieldErrors = emptyMap(),
                     progress = null,
                     progressLoaded = false,
+                    progressError = null,
                     setupLink = null,
                     setupLinkError = null,
                 )
@@ -238,9 +241,13 @@ class AddChildViewModel(private val api: ApiClient, private val actorId: String)
         val made = state.value.made ?: return@launch
         state.load(
             fetch = { api.lookAfter() },
-            onOk = { s, data -> s.copy(progress = data.people.firstOrNull { it.id == made.id }, progressLoaded = true) },
-            // Keep what was shown; the next look tries again.
-            onError = { s, _ -> s },
+            onOk = { s, data ->
+                s.copy(progress = data.people.firstOrNull { it.id == made.id }, progressLoaded = true, progressError = null)
+            },
+            // Keep what was shown; the next look tries again. Before anything
+            // has loaded there is nothing to keep, so say it failed: the step
+            // showed "Loading" for good with the server out of reach.
+            onError = { s, e -> if (s.progressLoaded) s else s.copy(progressError = e) },
         )
     }
 
@@ -694,6 +701,8 @@ private fun ProgressStep(
             "it's also under their name on People you look after.",
     )
     when {
+        !state.progressLoaded && state.progressError != null ->
+            Hint("Couldn't load their phone's progress (${state.progressError}). Trying again every few seconds.", error = true)
         !state.progressLoaded -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
             Hint("Loading…")

@@ -27,6 +27,20 @@ class WebFiltersTest {
     }
 
     @Test
+    fun `Private DNS stays closed with no network when the filter was on`() {
+        val host = WebFilterChoice.Family.hostname
+        // Readable: what it is now decides.
+        assertTrue(filterGuarded(host, host, lastOn = false))
+        assertFalse(filterGuarded(host, PRIVATE_DNS_OFF, lastOn = true))
+        // Airplane mode: nothing to read, so what it was when last read stands.
+        assertTrue(filterGuarded(host, null, lastOn = true))
+        // A filter that was never on can still be set up offline.
+        assertFalse(filterGuarded(host, null, lastOn = false))
+        // No filter chosen: never closed.
+        assertFalse(filterGuarded(null, null, lastOn = true))
+    }
+
+    @Test
     fun `the card's line says the filter and whether their phone uses it`() {
         assertEquals("Off", LookedAfterWebFilter().summary)
         assertEquals("Family filter · on", LookedAfterWebFilter("family", true).summary)

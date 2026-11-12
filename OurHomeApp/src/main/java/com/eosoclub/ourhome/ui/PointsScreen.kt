@@ -43,6 +43,8 @@ import com.eosoclub.ourhome.data.PointAward
 import com.eosoclub.ourhome.data.PointsSummary
 import com.eosoclub.ourhome.data.centi
 import com.eosoclub.ourhome.data.formatPoints
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -63,15 +65,25 @@ class PointsViewModel(private val api: ApiClient) : ViewModel() {
 
     val state = MutableStateFlow(UiState())
 
-    fun load() = viewModelScope.launch {
-        val s = state.value
-        state.update { it.copy(loading = true) }
-        try {
-            val summary = api.pointsSummary(s.period, s.date)
-            val awards = api.pointAwards(s.period, s.date)
-            state.update { it.copy(summary = summary, awards = awards, loading = false, error = null) }
-        } catch (e: Exception) {
-            state.update { it.copy(loading = false, error = e.message ?: "Couldn't load points") }
+    // The load on its way. A new one replaces it: after quick taps on the
+    // period chips a slow earlier answer used to land last, leaving one
+    // period's figures under another period's chip.
+    private var loading: Job? = null
+
+    fun load() {
+        loading?.cancel()
+        loading = viewModelScope.launch {
+            val s = state.value
+            state.update { it.copy(loading = true) }
+            try {
+                val summary = api.pointsSummary(s.period, s.date)
+                val awards = api.pointAwards(s.period, s.date)
+                state.update { it.copy(summary = summary, awards = awards, loading = false, error = null) }
+            } catch (e: Exception) {
+                // Replaced by a newer load, which says how it went.
+                if (e is CancellationException) throw e
+                state.update { it.copy(loading = false, error = e.message ?: "Couldn't load points") }
+            }
         }
     }
 

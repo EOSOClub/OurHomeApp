@@ -491,9 +491,14 @@ internal fun LookAfterScreen(
 ) {
     val vm = viewModel { LookAfterViewModel(api) }
     var selectedId by rememberSaveable(startPersonId) { mutableStateOf(startPersonId) }
-    BackHandler(enabled = selectedId != null) { selectedId = null }
     val state by vm.state.collectAsStateWithLifecycle()
     val icons by vm.icons.collectAsStateWithLifecycle()
+    // Back returns to the cards only while someone's page is really open.
+    // Going by the id alone, an id that isn't in the list (an alert about
+    // someone no longer looked after) showed the cards and still swallowed
+    // the first Back press.
+    val onPersonPage = state.lookAfter?.people?.any { it.id == selectedId } == true
+    BackHandler(enabled = onPersonPage) { selectedId = null }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(Unit) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {

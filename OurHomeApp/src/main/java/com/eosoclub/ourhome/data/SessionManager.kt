@@ -12,6 +12,30 @@ sealed interface AuthState {
     data object Checking : AuthState
     data class SignedOut(val message: String? = null) : AuthState
     data class SignedIn(val user: SessionUser) : AuthState
+
+    /**
+     * The saved sign-in couldn't be checked: no network, the server down or
+     * answering with an error. Nobody is signed out. The sign-in screen
+     * shows (with [message]), but the phone keeps its session and everything
+     * that depends on it, and the check runs again when the app comes back.
+     */
+    data class Unreachable(val message: String) : AuthState
+}
+
+/**
+ * What a launch makes of the saved-session check. Only the server saying
+ * "no session" (null) signs out. A failed check used to count as signed out
+ * too, and being signed out releases Prevent uninstall, forgets the parent
+ * PIN and drops every block, limit and schedule: airplane mode and a restart
+ * was enough to strip a supervised phone. A cancelled check (the screen
+ * turned while it ran) is passed on, so the next one decides.
+ */
+internal fun stateAfterRestore(result: Result<SessionUser?>, baseUrl: String): AuthState {
+    result.exceptionOrNull()?.let { e ->
+        if (e is CancellationException) throw e
+        return AuthState.Unreachable("Couldn't reach $baseUrl: ${e.message}")
+    }
+    return result.getOrNull()?.let { AuthState.SignedIn(it) } ?: AuthState.SignedOut()
 }
 
 /** Owns the server URL, the cookie session, and the app-wide [AuthState]. */
@@ -31,14 +55,29 @@ class SessionManager(private val prefs: SharedPreferences, cookiePrefs: SharedPr
         onUnauthorized = { why -> _state.value = AuthState.SignedOut(why ?: "Your session has expired. Please sign in again.") },
     )
 
-    /** Restores a saved session on launch. */
+    /**
+     * Restores a saved session on launch, and tries again after a check that
+     * couldn't reach the server ([AuthState.Unreachable]). See [stateAfterRestore].
+     */
     suspend fun restore() {
-        _state.value = try {
-            api.getSession()?.let { AuthState.SignedIn(it) } ?: AuthState.SignedOut()
-        } catch (e: Exception) {
-            AuthState.SignedOut("Couldn't reach $baseUrl: ${e.message}")
-        }
+        val result = runCatching { api.getSession() }
+        val next = stateAfterRestore(result, baseUrl)
+        // Signed in (or out) by hand while a retry was on its way: leave that alone.
+        val current = _state.value
+        if (current !is AuthState.Checking && current !is AuthState.Unreachable) return
+        if (next is AuthState.SignedIn) rememberUser(next.user)
+        _state.value = next
     }
+
+    /**
+     * Run when someone signs in over an account that was never signed out
+     * (the sign-in screen of [AuthState.Unreachable]): what the earlier
+     * account left on this phone is cleared first, as a sign-out does. Set by
+     * the screen that owns that cleanup (MainActivity).
+     */
+    var onAccountReplaced: (() -> Unit)? = null
+
+    private fun rememberUser(user: SessionUser) = prefs.edit { putString(KEY_LAST_USER, user.id) }
 
     /**
      * Re-reads the signed-in user when the app comes back to the front, so
@@ -79,6 +118,13 @@ class SessionManager(private val prefs: SharedPreferences, cookiePrefs: SharedPr
             api.signOut()
             throw ApiException("This account isn't assigned to a household yet.")
         }
+        // Signing in while the last account's session couldn't be checked: the
+        // same person just carries on (nothing of theirs is dropped); someone
+        // else gets a clean phone, as after a sign-out.
+        if (_state.value is AuthState.Unreachable && prefs.getString(KEY_LAST_USER, null) != user.id) {
+            onAccountReplaced?.invoke()
+        }
+        rememberUser(user)
         _state.value = AuthState.SignedIn(user)
     }
 
@@ -129,5 +175,7 @@ class SessionManager(private val prefs: SharedPreferences, cookiePrefs: SharedPr
     private companion object {
         const val KEY_BASE_URL = "base_url"
         const val KEY_PUSH_TOKEN = "push_token"
+        /** Who was last signed in here, to tell the same person from someone else. */
+        const val KEY_LAST_USER = "last_user"
     }
 }

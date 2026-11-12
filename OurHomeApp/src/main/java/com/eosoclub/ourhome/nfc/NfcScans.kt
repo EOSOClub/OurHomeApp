@@ -96,8 +96,15 @@ object NfcScans {
         } else {
             intent.getParcelableExtra(NfcAdapter.EXTRA_TAG)
         }
-        // The dispatched URI is also on the intent's data (handy for testing).
-        return refFrom(messages, tag) ?: intent.dataString?.let(::tagRefFromUri)
+        // Only a real scan: Android puts the tag itself on every NFC dispatch.
+        // The activity that gets these is open to other apps (it has to be,
+        // for Android to hand it scans), and any app can send an intent with
+        // this action, a link or made-up NDEF messages, to open the scan
+        // sheet on a tag of its choosing. None can make the tag object, short
+        // of hidden system APIs. So no tag, no scan (the link on the intent's
+        // data is no longer read at all).
+        if (tag == null) return null
+        return refFrom(messages, tag)
     }
 
     private fun refFrom(messages: Array<NdefMessage>?, tag: Tag?): TagRef? =

@@ -217,10 +217,20 @@ private fun Root(
     LaunchedEffect(Unit) {
         if (session.state.value == AuthState.Checking) session.restore()
     }
+    // Someone else signing in over an account that was never signed out
+    // (its session couldn't be checked): that account's leftovers go first.
+    DisposableEffect(session) {
+        session.onAccountReplaced = { RequestReminders.cancel(context.applicationContext) }
+        onDispose { session.onAccountReplaced = null }
+    }
     // Back in front: pick up account changes made on the website meanwhile.
     val scope = rememberCoroutineScope()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        scope.launch { session.refreshUser() }
+        scope.launch {
+            // The saved sign-in couldn't be checked last time: check again now.
+            if (session.state.value is AuthState.Unreachable) session.restore()
+            else session.refreshUser()
+        }
     }
     // Background request reminders run only while someone is signed in.
     // Registering for instant alerts on every sign-in/launch also keeps the
@@ -237,6 +247,9 @@ private fun Root(
                 Geofences.syncNow(context)
             }
             is AuthState.SignedOut -> RequestReminders.cancel(context)
+            // Not signed out: the session, the alerts and a supervised phone's
+            // protections all stay as they are until the server can be asked.
+            is AuthState.Unreachable -> Unit
             AuthState.Checking -> Unit
         }
     }
@@ -248,6 +261,9 @@ private fun Root(
             ClearUserScope()
             LoginScreen(session, s.message, pendingPrefill, onPrefillUsed)
         }
+        // The sign-in screen, to try again or sign in. Nothing of the
+        // account's is cleared: it is still signed in as far as anyone knows.
+        is AuthState.Unreachable -> LoginScreen(session, s.message, pendingPrefill, onPrefillUsed)
         // Each account gets its own screen state (see UserScopes).
         is AuthState.SignedIn -> UserScope(s.user.id) {
             // A temporary password is replaced before anything else (web: the

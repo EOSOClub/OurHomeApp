@@ -295,7 +295,7 @@ private fun SetupStep(text: String, button: String, onClick: () -> Unit) {
 }
 
 private fun openAppSettings(context: Context) {
-    context.startActivity(
+    context.openSettingsPage(
         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
     )

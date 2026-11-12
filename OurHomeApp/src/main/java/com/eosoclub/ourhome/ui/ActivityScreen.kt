@@ -41,7 +41,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /** Filters on the Activity page; keys match the web's lib/activityAreas.ts. */
@@ -189,7 +188,7 @@ private val clock = DateTimeFormatter.ofPattern("h:mm a")
 private fun ActivityRow(entry: ActivityEntry) {
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Text(
-            Instant.parse(entry.createdAt).atZone(ZoneId.systemDefault()).format(clock),
+            Instant.parse(entry.createdAt).atZone(HouseholdZone.id).format(clock),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(72.dp).padding(top = 2.dp),
@@ -206,7 +205,7 @@ private fun ActivityRow(entry: ActivityEntry) {
 }
 
 private fun dayLabel(day: LocalDate): String {
-    val today = LocalDate.now()
+    val today = LocalDate.now(HouseholdZone.id)
     return when (day) {
         today -> "Today"
         today.minusDays(1) -> "Yesterday"

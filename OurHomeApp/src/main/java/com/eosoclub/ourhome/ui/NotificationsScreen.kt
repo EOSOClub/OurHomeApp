@@ -41,19 +41,32 @@ class NotificationsViewModel(private val api: ApiClient) : ViewModel() {
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages = _messages.receiveAsFlow()
 
+    /**
+     * Notifications tapped here. Tapping one changes the tab, which fetches
+     * the list again while the "read" is still on its way to the server; that
+     * answer still had it unread, so it came back and the badge went up again.
+     * A fetched list is shown with these already read. An id leaves only if
+     * its "read" failed.
+     */
+    private val readHere = mutableSetOf<String>()
+
     // The server regenerates reminders on every list fetch, so this also
     // brings overdue/low-stock/bill-due notices up to date.
     fun refresh() = viewModelScope.launch {
         state.update { it.copy(loading = true) }
         state.load(
             { api.notifications() },
-            { s, list -> s.copy(items = list.items, unreadCount = list.unreadCount, loading = false, error = null) },
+            { s, list ->
+                val (items, unreadCount) = withReadHere(list.items, list.unreadCount, readHere)
+                s.copy(items = items, unreadCount = unreadCount, loading = false, error = null)
+            },
             { s, e -> s.copy(loading = false, error = e) },
         )
     }
 
     fun markRead(n: Notification) {
         if (n.read) return
+        readHere += n.id
         state.update { s ->
             s.copy(
                 items = s.items.map { if (it.id == n.id) it.copy(read = true) else it },
@@ -61,7 +74,10 @@ class NotificationsViewModel(private val api: ApiClient) : ViewModel() {
             )
         }
         viewModelScope.launch {
-            runCatching { api.markNotificationRead(n.id) }.onFailure { refresh() }
+            runCatching { api.markNotificationRead(n.id) }.onFailure {
+                readHere -= n.id
+                refresh()
+            }
         }
     }
 
@@ -73,6 +89,21 @@ class NotificationsViewModel(private val api: ApiClient) : ViewModel() {
             _messages.send(e.message ?: "Couldn't mark notifications read")
         }
     }
+}
+
+/**
+ * A fetched list with the ones read on this phone ([readHere]) shown as read,
+ * and the unread count lowered by those the server still had as unread.
+ */
+internal fun withReadHere(
+    items: List<Notification>,
+    unreadCount: Int,
+    readHere: Set<String>,
+): Pair<List<Notification>, Int> {
+    val pending = items.count { !it.read && it.id in readHere }
+    if (pending == 0) return items to unreadCount
+    return items.map { if (it.id in readHere) it.copy(read = true) else it } to
+        (unreadCount - pending).coerceAtLeast(0)
 }
 
 /**

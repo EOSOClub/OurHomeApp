@@ -127,6 +127,21 @@ internal fun decodePhoto(bytes: ByteArray, maxEdge: Int): ImageBitmap? {
 }
 
 /**
+ * A picture from another site (a product link's), for a row or a form: never
+ * decoded at full size, and null when it can't be decoded at all. A link is
+ * whatever a member saved, and a picture of a huge width and height took the
+ * app down for everyone who opened the list (out of memory, or "too large
+ * bitmap" when drawn).
+ */
+internal fun decodeRemotePicture(bytes: ByteArray): ImageBitmap? = try {
+    decodePhoto(bytes, REMOTE_PICTURE_MAX_EDGE)
+} catch (_: OutOfMemoryError) {
+    null
+}
+
+private const val REMOTE_PICTURE_MAX_EDGE = 1024
+
+/**
  * Takes a check photo inside Our Home with CameraX: the picture goes to
  * memory only (never the gallery or another camera app), is turned and scaled
  * by [encodeCheckPhoto], and [onTaken] gets the JPEG. The CAMERA permission is

@@ -57,8 +57,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalTime
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 class DashboardViewModel(private val api: ApiClient) : ViewModel() {
@@ -74,7 +74,15 @@ class DashboardViewModel(private val api: ApiClient) : ViewModel() {
 
     fun refresh(location: Boolean) = viewModelScope.launch {
         state.update { it.copy(loading = true) }
-        state.load({ api.dashboard() }, { s, v -> s.copy(data = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
+        state.load(
+            { api.dashboard() },
+            { s, v ->
+                // Home loads first: it tells every screen the household's zone.
+                HouseholdZone.set(v.timezone)
+                s.copy(data = v, loading = false, error = null)
+            },
+            { s, e -> s.copy(loading = false, error = e) },
+        )
         // Separate, so a hiccup here never hides the rest of the dashboard.
         val presence = if (location) runCatching { api.presence() }.getOrNull() else emptyList()
         if (presence != null) state.update { it.copy(presence = presence) }
@@ -350,9 +358,9 @@ private fun WhoIsWhereCard(presence: List<MemberPresence>, onOpenMap: () -> Unit
 
 /** "3:10 PM" today, else "Mon 3:10 PM". */
 private fun sinceLabel(iso: String): String {
-    val at = runCatching { Instant.parse(iso).atZone(ZoneId.systemDefault()) }.getOrNull() ?: return iso
+    val at = runCatching { Instant.parse(iso).atZone(HouseholdZone.id) }.getOrNull() ?: return iso
     val time = at.format(DateTimeFormatter.ofPattern("h:mm a"))
-    return if (at.toLocalDate() == java.time.LocalDate.now()) time else "${at.format(DateTimeFormatter.ofPattern("EEE"))} $time"
+    return if (at.toLocalDate() == java.time.LocalDate.now(HouseholdZone.id)) time else "${at.format(DateTimeFormatter.ofPattern("EEE"))} $time"
 }
 
 @Composable
@@ -397,9 +405,14 @@ private fun ComingUpCard(data: Dashboard, features: Features, onOpenTab: (Tab) -
     val time = DateTimeFormatter.ofPattern("h:mm a")
     val items = (
         data.upcomingEvents.map { e ->
-            val day = dueLabel(e.start, prefix = "").first.trim().replaceFirstChar(Char::uppercase)
             val at = Instant.parse(e.start)
-            val clock = if (e.allDay) "All day" else at.atZone(ZoneId.systemDefault()).format(time)
+            val today = LocalDate.now(HouseholdZone.id)
+            // Began before today: still going on, so it says until when (the
+            // end's day and time), not "Overdue" like a late task.
+            val ongoing = localDate(e.start).isBefore(today)
+            val day = eventDayLabel(localDate(e.start), e.end?.let(::localDate), today)
+            val shown = if (ongoing) e.end?.let(Instant::parse) ?: at else at
+            val clock = if (e.allDay) "All day" else shown.atZone(HouseholdZone.id).format(time)
             // The app has no Calendar tab yet; events aren't tappable.
             Item(at, e.title, listOfNotNull("$day · $clock", e.location).joinToString(" · "), false, null, null)
         } + data.upcomingBills.map { b ->
@@ -409,7 +422,9 @@ private fun ComingUpCard(data: Dashboard, features: Features, onOpenTab: (Tab) -
                 b.name,
                 due?.first ?: "No due date",
                 due?.second == true,
-                formatMoney(b.amount, b.currency),
+                // What is left once part of it is paid, like the Bills tab and the website.
+                if (b.paidTotal > 0) "${formatMoney(maxOf(0.0, b.amount - b.paidTotal), b.currency)} left"
+                else formatMoney(b.amount, b.currency),
                 Tab.Bills,
             )
         }

@@ -120,7 +120,7 @@ internal fun InstantAlertsCard(session: SessionManager, showMessage: (String) ->
                     "Allow Unrestricted battery so it runs on time.",
                 style = MaterialTheme.typography.bodySmall,
             )
-            Button(onClick = { context.startActivity(BatteryAccess.requestIntent(context)) }) {
+            Button(onClick = { open(BatteryAccess.requestIntent(context)) }) {
                 Text("Allow unrestricted battery")
             }
         }

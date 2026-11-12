@@ -89,8 +89,12 @@ private fun RequestTypesForm(
     val handlerIds = if (mediaChosen) media.handlerIds else emptyList()
     val assigneeIds = if (maintenanceChosen) maintenance.assigneeIds else emptyList()
     val askable = if (maintenanceChosen) members.filter { it.id in maintenance.assigneeIds } else members
-    // The default person has to be someone who can be asked.
-    val defaultAssigneeId = maintenance.defaultAssigneeId?.takeIf { id -> askable.any { it.id == id } }
+    // The default person has to be someone who can be asked. With no members
+    // loaded yet (or the load failed) nobody can be checked, so the stored
+    // person is kept: a Save in that gap used to clear them.
+    val defaultAssigneeId =
+        if (members.isEmpty()) maintenance.defaultAssigneeId
+        else maintenance.defaultAssigneeId?.takeIf { id -> askable.any { it.id == id } }
     val missingHandlers = media.enabled && mediaChosen && handlerIds.isEmpty()
     val missingAssignees = maintenance.enabled && maintenanceChosen && assigneeIds.isEmpty()
     val noMediaKinds = media.enabled && media.mediaTypes.isEmpty()

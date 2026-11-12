@@ -8,6 +8,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.edit
 import com.eosoclub.ourhome.data.PRIVATE_DNS_OFF
+import com.eosoclub.ourhome.data.filterGuarded
 import com.eosoclub.ourhome.data.normalizeHost
 import com.eosoclub.ourhome.data.usesFilter
 
@@ -24,6 +25,8 @@ object WebFilter {
     private const val TAG = "WebFilter"
     private const val PREFS = "web_filter"
     private const val KEY_HOSTNAME = "hostname"
+    /** Whether this phone used the chosen filter when Private DNS was last readable. */
+    private const val KEY_LAST_ON = "last_on"
     private const val SETTINGS_PACKAGE = "com.android.settings"
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -45,19 +48,39 @@ object WebFilter {
     /** The hostname from a check-in's answer (null: none chosen, or nobody looks after this member). */
     fun save(context: Context, hostname: String?) {
         if (hostname == expected(context)) return
-        prefs(context).edit { if (hostname == null) remove(KEY_HOSTNAME) else putString(KEY_HOSTNAME, hostname) }
+        prefs(context).edit {
+            if (hostname == null) remove(KEY_HOSTNAME) else putString(KEY_HOSTNAME, hostname)
+            // What was remembered was about the old choice.
+            remove(KEY_LAST_ON)
+        }
         Log.i(TAG, if (hostname == null) "no web filter" else "web filter chosen")
     }
 
     /** Whether this phone's Private DNS is [hostname] right now. */
     fun isOn(context: Context, hostname: String): Boolean = usesFilter(privateDns(context), hostname)
 
-    /** A filter is chosen and this phone uses it: the guard keeps them out of Private DNS. */
-    fun guarded(context: Context): Boolean = expected(context)?.let { isOn(context, it) } == true
+    /**
+     * A filter is chosen and this phone uses it: the guard keeps them out of
+     * Private DNS. With no network Private DNS can't be read; then it counts
+     * as it was when last read ([filterGuarded]), so airplane mode doesn't
+     * open the dialog.
+     */
+    fun guarded(context: Context): Boolean {
+        val expected = expected(context)
+        val read = privateDns(context)
+        val prefs = prefs(context)
+        val lastOn = prefs.getBoolean(KEY_LAST_ON, false)
+        val guarded = filterGuarded(expected, read, lastOn)
+        if (expected != null && read != null && guarded != lastOn) prefs.edit { putBoolean(KEY_LAST_ON, guarded) }
+        return guarded
+    }
 
     /** Signed out: no filter for whoever signs in next. */
     fun signedOut(context: Context) {
-        prefs(context).edit { remove(KEY_HOSTNAME) }
+        prefs(context).edit {
+            remove(KEY_HOSTNAME)
+            remove(KEY_LAST_ON)
+        }
     }
 
     /**

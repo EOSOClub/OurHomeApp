@@ -50,10 +50,15 @@ object DeadlineReminders {
         val keys = alerts.map { it.key(today) }
         val fresh = keys.filterNot { it in alerted }
         Log.i(TAG, "${alerts.size} deadline(s) need attention, ${fresh.size} new")
-        // Only a new milestone posts (and alerts); otherwise leave the
-        // notification alone so a dismissed one doesn't come back every poll.
-        if (fresh.isEmpty()) return
-        show(context, alerts)
+        // Only a new milestone alerts. With nothing new, a notification still
+        // on screen is brought up to date without a sound (it kept listing
+        // requests that were finished or moved since); one that was swiped
+        // away stays away, so it doesn't come back every poll.
+        if (fresh.isEmpty()) {
+            if (isShowing(context)) show(context, alerts, silent = true)
+            return
+        }
+        show(context, alerts, silent = false)
         // Keep keys only for requests that still exist (a set has no order, so
         // capping it would drop arbitrary, still-needed keys and re-alert).
         val live = requests.map { "${it.id}:" }
@@ -67,6 +72,9 @@ object DeadlineReminders {
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { clear() }
     }
+
+    private fun isShowing(context: Context): Boolean =
+        context.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == NOTIFICATION_ID }
 
     private fun DeadlineAlert.key(today: LocalDate): String {
         val base = "${request.id}:${request.dueAt}"
@@ -89,7 +97,7 @@ object DeadlineReminders {
         }
     }
 
-    private fun show(context: Context, alerts: List<DeadlineAlert>) {
+    private fun show(context: Context, alerts: List<DeadlineAlert>, silent: Boolean) {
         if (!RequestReminders.canNotify(context)) return
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Maintenance deadlines", NotificationManager.IMPORTANCE_DEFAULT).apply {
@@ -128,6 +136,7 @@ object DeadlineReminders {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setContentIntent(open)
             .setAutoCancel(true)
+            .setSilent(silent)
             .lockScreenSafe(context, CHANNEL_ID, "Maintenance deadline")
             .build()
         try {

@@ -917,13 +917,29 @@ class CloseGuardService : AccessibilityService() {
         mainHandler.post { coverOnce(app) { startActivity(AppBlockedActivity.intent(this, title, reason, moreTime)) } }
     }
 
-    /** An app's burst of window changes covers it once. */
+    /**
+     * An app's burst of window changes covers it once. A cover asked for
+     * inside that second is not shown, but it is looked at again right after:
+     * switching straight back into a blocked or used-up app used to land in
+     * that second, and nothing looked again, so the app stayed open.
+     */
     private fun coverOnce(app: String, show: () -> Unit) {
         val now = SystemClock.elapsedRealtime()
-        if (app == lastCoveredApp && now - lastCoveredAt < COVER_EVERY_MS) return
+        if (app == lastCoveredApp && now - lastCoveredAt < COVER_EVERY_MS) {
+            mainHandler.removeCallbacks(lookAgain)
+            mainHandler.postDelayed(lookAgain, COVER_EVERY_MS - (now - lastCoveredAt) + 50)
+            return
+        }
         lastCoveredApp = app
         lastCoveredAt = now
         show()
+    }
+
+    /** Whatever is in front once the cover's quiet second is over: covered if it should be. */
+    private val lookAgain = Runnable {
+        val app = activeApp() ?: return@Runnable
+        val block = AppBlocker.blockFor(this, app)
+        if (block != null) cover(block) else AppLimiter.opened(this, app)
     }
 
     /** The app whose window is active (the one being used; a keyboard's window never is), or null. */
@@ -954,6 +970,7 @@ class CloseGuardService : AccessibilityService() {
         if (tornDown) return
         tornDown = true
         if (CloseGuard.service === this) CloseGuard.service = null
+        mainHandler.removeCallbacks(lookAgain)
         runCatching { unregisterReceiver(screenChanges) }
         disconnect()
         StayConnected.ensureRunning(applicationContext)

@@ -1,5 +1,9 @@
 package com.eosoclub.ourhome.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,8 +54,22 @@ internal fun loadState(
     return true
 }
 
+/**
+ * Opens one of Android's settings pages. Not every phone has every page
+ * (Android's own docs say so for battery, usage access and NFC), and starting
+ * one that isn't there closed the app; this says so instead.
+ */
+internal fun Context.openSettingsPage(intent: Intent) {
+    try {
+        startActivity(intent)
+    } catch (e: ActivityNotFoundException) {
+        Toast.makeText(this, "This phone has no such settings page", Toast.LENGTH_LONG).show()
+    }
+}
+
 private val shortDate = DateTimeFormatter.ofPattern("MMM d")
-private val zone: ZoneId get() = ZoneId.systemDefault()
+// The household's zone, not the phone's (see HouseholdZone).
+private val zone: ZoneId get() = HouseholdZone.id
 
 internal fun localDate(iso: String): LocalDate = Instant.parse(iso).atZone(zone).toLocalDate()
 
@@ -67,7 +85,37 @@ internal fun dueLabel(iso: String, prefix: String = "Due"): Pair<String, Boolean
     }
 }
 
+/**
+ * The day an event is listed under: "Today" / "Tomorrow" / "Oct 9". One that
+ * began before today is still going on (the server lists those too), so it
+ * reads "Until Oct 12", never "Overdue" as a task's due date would; without
+ * an end, just the day it began.
+ */
+internal fun eventDayLabel(start: LocalDate, end: LocalDate?, today: LocalDate): String {
+    fun day(date: LocalDate, capital: Boolean) = when (date) {
+        today -> if (capital) "Today" else "today"
+        today.plusDays(1) -> if (capital) "Tomorrow" else "tomorrow"
+        else -> date.format(shortDate)
+    }
+    return when {
+        !start.isBefore(today) -> day(start, capital = true)
+        end != null && !end.isBefore(today) -> "Until ${day(end, capital = false)}"
+        else -> start.format(shortDate)
+    }
+}
+
 internal fun formatDate(iso: String): String = localDate(iso).format(shortDate)
+
+/**
+ * What a number box keeps of what was typed: digits and one decimal point,
+ * with a comma read as the point (many keyboards have only the comma). The
+ * comma used to be dropped without a word, so "4,99" was saved as 499.
+ */
+internal fun decimalInput(text: String, decimals: Boolean = true): String {
+    val kept = text.replace(',', '.').filter { it.isDigit() || (decimals && it == '.') }
+    val point = kept.indexOf('.')
+    return if (point < 0) kept else kept.take(point + 1) + kept.drop(point + 1).replace(".", "")
+}
 
 /** "just now" / "5m ago" / "3h ago" / "2d ago" / "Oct 3". */
 internal fun relativeTime(iso: String): String {

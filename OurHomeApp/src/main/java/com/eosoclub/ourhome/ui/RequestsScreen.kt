@@ -1,6 +1,5 @@
 package com.eosoclub.ourhome.ui
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -63,7 +62,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -100,7 +98,6 @@ import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
-import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -138,9 +135,9 @@ private val DECISION_STATUS_LABELS = mapOf("pending" to "Waiting", "completed" t
 private val dayAndTime = DateTimeFormatter.ofPattern("EEE, MMM d")
 private val timeOfDay = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
 
-/** "Fri, Oct 30, 6:00 PM" in this phone's time. */
+/** "Fri, Oct 30, 6:00 PM" in the household's time (see HouseholdZone). */
 private fun dateTimeLabel(iso: String): String {
-    val at = Instant.parse(iso).atZone(ZoneId.systemDefault())
+    val at = Instant.parse(iso).atZone(HouseholdZone.id)
     return "${at.format(dayAndTime)}, ${at.format(timeOfDay)}"
 }
 
@@ -150,7 +147,7 @@ private fun whenLabel(r: HouseholdRequest): String? =
 
 /** A picked day and time as the instant to send; no time picked means noon, as in the app's other forms. */
 private fun instantOf(date: LocalDate?, time: LocalTime?): Instant? =
-    date?.atTime(time ?: LocalTime.NOON)?.atZone(ZoneId.systemDefault())?.toInstant()
+    date?.atTime(time ?: LocalTime.NOON)?.atZone(HouseholdZone.id)?.toInstant()
 
 /** What the editor submits. */
 sealed interface RequestEdit {
@@ -366,7 +363,7 @@ class RequestsViewModel(private val api: ApiClient) : ViewModel() {
 
     /** A purchase's product picture, or null if it can't be loaded. */
     suspend fun picture(url: String): ImageBitmap? = pictures[url] ?: api.remoteImage(url)?.let { bytes ->
-        withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
+        withContext(Dispatchers.Default) { decodeRemotePicture(bytes) }
     }?.also { pictures[url] = it }
 
     fun startDecline(r: HouseholdRequest) {
@@ -1305,12 +1302,14 @@ private fun AcceptDatePicker(
     /** null: no date. */
     onPick: (LocalDate?) -> Unit,
 ) {
-    val todayUtcMillis = LocalDate.now().atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+    // Today as the household has it, like the dates this saves.
+    val today = LocalDate.now(HouseholdZone.id)
+    val todayUtcMillis = today.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
     val state = rememberDatePickerState(
         initialSelectedDateMillis = initial?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli(),
         selectableDates = object : SelectableDates {
             override fun isSelectableDate(utcTimeMillis: Long) = utcTimeMillis >= todayUtcMillis
-            override fun isSelectableYear(year: Int) = year >= LocalDate.now().year
+            override fun isSelectableYear(year: Int) = year >= today.year
         },
     )
     DatePickerDialog(
@@ -1517,7 +1516,8 @@ private fun RequestEditor(
     var price by remember { mutableStateOf(initial?.price?.let(::priceText).orEmpty()) }
     var quantity by remember { mutableStateOf((initial?.quantity ?: 1).toString()) }
     // Permission: from and until, each a day and a time (no time: noon).
-    val zone = ZoneId.systemDefault()
+    // In the household's zone, like the web form (see HouseholdZone).
+    val zone = remember { HouseholdZone.id }
     var fromDate by remember { mutableStateOf(initial?.startsAt?.let { Instant.parse(it).atZone(zone).toLocalDate() }) }
     var fromTime by remember { mutableStateOf(initial?.startsAt?.let { Instant.parse(it).atZone(zone).toLocalTime() }) }
     var untilDate by remember { mutableStateOf(initial?.endsAt?.let { Instant.parse(it).atZone(zone).toLocalDate() }) }

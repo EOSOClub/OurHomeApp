@@ -1,6 +1,5 @@
 package com.eosoclub.ourhome.ui
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -12,7 +11,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import com.eosoclub.ourhome.data.ApiException
 import com.eosoclub.ourhome.data.CategoryRef
@@ -120,9 +118,14 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
     /** The add bar's last failure: its name field is marked, and the text stays to fix. */
     val addForm = FormErrors()
 
+    // One add at a time: a double tap, or Done and then the button, added the item twice.
+    private var adding = false
+
     /** [onAdded] runs only when it worked, so a refused name stays in the box to fix. */
     fun add(name: String, onAdded: () -> Unit) = viewModelScope.launch {
         val list = state.value.selected ?: return@launch
+        if (adding) return@launch
+        adding = true
         addForm.clear()
         try {
             val item = api.addShoppingItem(list.id, name, 1)
@@ -131,6 +134,8 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
         } catch (e: Exception) {
             addForm.fail(e, "Couldn't add item")
             _messages.send(e.message ?: "Couldn't add item")
+        } finally {
+            adding = false
         }
     }
 
@@ -188,7 +193,7 @@ class ShoppingViewModel(private val api: ApiClient) : ViewModel() {
 
     /** The product picture a link's details found, or null if it can't be loaded. */
     suspend fun picture(url: String): ImageBitmap? = pictures[url] ?: api.remoteImage(url)?.let { bytes ->
-        withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
+        withContext(Dispatchers.Default) { decodeRemotePicture(bytes) }
     }?.also { pictures[url] = it }
 
     fun save(item: ShoppingItem, fields: ShoppingItemFields) =
@@ -758,7 +763,7 @@ private fun ShoppingItemEditor(
         )
         OutlinedTextField(
             value = price,
-            onValueChange = { price = it.filter { c -> c.isDigit() || c == '.' }.take(10); errors.clear("estimatedPrice") },
+            onValueChange = { price = decimalInput(it).take(10); errors.clear("estimatedPrice") },
             label = { Text("Est. price") },
             placeholder = { Text("0.00") },
             prefix = { Text("$") },

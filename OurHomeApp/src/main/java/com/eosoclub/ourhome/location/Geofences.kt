@@ -72,6 +72,8 @@ object Geofences {
     private const val PREFS = "geofences"
     private const val KEY_SIGNATURE = "signature"
     private const val SYNC_WORK = "geofence-sync"
+    /** On every queued arrive/leave report, so sign-out can cancel them. */
+    private const val REPORT_TAG = "presence-report"
     private const val KEY_FORCE = "force"
     private const val CHANNEL_ID = "store_reminders"
     private const val NOTIFICATION_ID = 1006
@@ -171,6 +173,9 @@ object Geofences {
     /** Signed out: nothing watched, no reminder left showing. */
     fun clear(context: Context) {
         removeAll(context)
+        // Arrivals and leavings still waiting for a network were this
+        // member's: left queued, they were sent as whoever signed in next.
+        WorkManager.getInstance(context).cancelAllWorkByTag(REPORT_TAG)
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
         NotificationManagerCompat.from(context).cancel(HOME_NOTIFICATION_ID)
     }
@@ -260,6 +265,8 @@ object Geofences {
         val request = OneTimeWorkRequestBuilder<ReportWorker>()
             .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            // So sign-out can drop the ones not sent yet ([clear]).
+            .addTag(REPORT_TAG)
             .setInputData(
                 workDataOf(
                     "placeId" to report.placeId,

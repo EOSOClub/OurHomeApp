@@ -145,6 +145,7 @@ object RequestReminders {
         BugReportAlerts.clear(context)
         DeadlineReminders.clear(context)
         AppUpdateAlerts.clear(context)
+        QuickScanNotifier.clear(context)
         Geofences.clear(context)
         LiveChecks.stop(context)
         UsageReport.cancel(context)

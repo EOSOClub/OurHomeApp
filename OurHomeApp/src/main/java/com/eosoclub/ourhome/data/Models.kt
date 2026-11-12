@@ -562,6 +562,8 @@ data class Dashboard(
     val upcomingEvents: List<EventOccurrence> = emptyList(),
     val me: DashboardMe? = null,
     val doneToday: DoneToday? = null,
+    /** The household's time zone (IANA name), which dates and times are shown and saved in. */
+    val timezone: String? = null,
 )
 
 /** What is on the signed-in user. Requests come from the Requests tab's own fetch (RequestAttention). */
@@ -642,6 +644,8 @@ data class DashboardBill(
     val amount: Double,
     val currency: String? = null,
     val dueDate: String? = null,
+    /** What is already paid toward its current due date; 0 from a server that doesn't say. */
+    val paidTotal: Double = 0.0,
 )
 
 @Serializable
@@ -649,6 +653,8 @@ data class EventOccurrence(
     val eventId: String,
     val title: String,
     val start: String,
+    /** When it ends; null for one without an end. */
+    val end: String? = null,
     val allDay: Boolean = false,
     val location: String? = null,
 )

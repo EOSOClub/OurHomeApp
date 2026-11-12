@@ -50,6 +50,20 @@ object QuickScanNotifier {
         )
     }
 
+    /**
+     * Signed out: no scan notification is left in the shade. Its buttons
+     * ("-1", "Add to list") act as whoever is signed in when they are tapped,
+     * so one left behind acted as the next account.
+     */
+    fun clear(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        runCatching {
+            manager.activeNotifications
+                .filter { it.notification.channelId == CHANNEL_ID }
+                .forEach { manager.cancel(it.tag, it.id) }
+        }.onFailure { Log.w(TAG, "couldn't clear scan notifications", it) }
+    }
+
     fun show(context: Context, tagId: String, item: InventoryItem) {
         if (!RequestReminders.canNotify(context)) {
             Log.w(TAG, "notifications are off; can't show quick scan for $tagId")

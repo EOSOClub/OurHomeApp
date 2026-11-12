@@ -71,7 +71,7 @@ internal fun AppUsageCard(session: SessionManager) {
                 "It needs Usage access. On the next screen, choose Our Home and turn it on. " + CloseGuard.RESTRICTED_HINT,
                 style = MaterialTheme.typography.bodySmall,
             )
-            Button(onClick = { context.startActivity(UsageReport.settingsIntent()) }) { Text("Allow usage access") }
+            Button(onClick = { context.openSettingsPage(UsageReport.settingsIntent()) }) { Text("Allow usage access") }
         }
         HorizontalDivider()
         val loaded = history

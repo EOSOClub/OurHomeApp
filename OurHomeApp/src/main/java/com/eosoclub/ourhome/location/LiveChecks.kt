@@ -101,6 +101,10 @@ class LiveCheckService : Service() {
     private var job: Job? = null
     private var checkId: String? = null
 
+    /** What the server last said about the running check; null until it answers. */
+    private var current: LiveCheck? = null
+    private var currentCanStop = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -108,14 +112,24 @@ class LiveCheckService : Service() {
         when (intent?.action) {
             LiveChecks.ACTION_STOP -> {
                 // From the notification's Stop (only after unlocking: see [notification]).
-                // The notification goes at once; the service lives until the server knows.
+                // Fixes stop at once. The notification stays, without Stop, until the
+                // server has answered: it may refuse (a supervisor's check under
+                // required sharing), and then the check carries on. Taking the
+                // notification down first left a refused stop stopped on the phone.
                 job?.cancel()
                 job = null
-                checkId = null
-                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                if (id == null) {
+                    finish()
+                    return START_NOT_STICKY
+                }
+                showNotification(notification(id, current, canStop = false))
                 scope.launch {
-                    if (id != null) stopOnServer(id)
-                    stopSelf()
+                    if (stopOnServer(id)) {
+                        checkId = id
+                        job = scope.launch { run(id) }
+                    } else {
+                        finish()
+                    }
                 }
             }
             LiveChecks.ACTION_START -> {
@@ -124,11 +138,18 @@ class LiveCheckService : Service() {
                     return START_NOT_STICKY
                 }
                 // Android requires the notification within seconds of the start;
-                // the name and end time follow once the server answers.
-                if (!enterForeground(notification(id, null, canStop = true))) return START_NOT_STICKY
-                if (id != checkId) {
+                // the name, the end time and Stop follow once the server answers.
+                // No Stop before that: the server decides whether this check may
+                // be stopped, and until it has said so the answer is not yes.
+                // A repeated start of the running check keeps what is showing.
+                val same = id == checkId
+                val first = notification(id, if (same) current else null, canStop = same && currentCanStop)
+                if (!enterForeground(first)) return START_NOT_STICKY
+                if (!same) {
                     job?.cancel()
                     checkId = id
+                    current = null
+                    currentCanStop = false
                     job = scope.launch { run(id) }
                 }
             }
@@ -160,6 +181,8 @@ class LiveCheckService : Service() {
             // The server says per check (not a supervisor's under required sharing);
             // older servers don't, and then sharing being required decides.
             val canStop = check.canStopOnMe ?: runCatching { api.locationConsent().canChange }.getOrDefault(true)
+            current = check
+            currentCanStop = canStop
             showNotification(notification(id, check, canStop))
             val client = LocationServices.getFusedLocationProviderClient(this)
             while (!check.isOver && System.currentTimeMillis() < Instant.parse(check.endsAt).toEpochMilli()) {
@@ -209,18 +232,35 @@ class LiveCheckService : Service() {
         }
     }
 
-    private suspend fun stopOnServer(id: String) {
+    /**
+     * Tells the server the check was stopped here. True when the server refused
+     * (403: this check may not be stopped by the person being checked), so the
+     * check has to carry on. Any other failure counts as stopped, as before:
+     * with no network the fixes couldn't be sent anyway.
+     */
+    private suspend fun stopOnServer(id: String): Boolean {
         try {
             (applicationContext as OurHomeApp).session.api.stopLiveCheck(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ApiException) {
+            if (e.status == 403) {
+                Log.i("LiveChecks", "the server refused the stop; the check carries on")
+                return true
+            }
+            Log.w("LiveChecks", "couldn't tell the server the check was stopped", e)
         } catch (e: Exception) {
             Log.w("LiveChecks", "couldn't tell the server the check was stopped", e)
         }
+        return false
     }
 
     private fun finish() {
         job?.cancel()
         job = null
         checkId = null
+        current = null
+        currentCanStop = false
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

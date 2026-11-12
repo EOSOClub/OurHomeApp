@@ -29,22 +29,23 @@ class PersistentCookieJar(private val prefs: SharedPreferences) : CookieJar {
     @Synchronized
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
         cookies.forEach { cookie ->
-            if (cookie.expiresAt < System.currentTimeMillis()) this.cookies.remove(cookie.key())
+            if (takesCookieAway(cookie)) this.cookies.remove(cookie.key())
             else this.cookies[cookie.key()] = cookie
         }
         persist()
     }
 
+    /**
+     * Every stored cookie for [url], whatever this phone's clock says about
+     * its expiry: the server decides whether a session is still good. They
+     * used to be dropped here, for good, once the phone's clock passed their
+     * expiry. Setting the date a week ahead threw away a session the server
+     * still accepted, and the app then signed out (which, on a supervised
+     * phone, lifts its protections). An expired one that is sent is ignored
+     * by the server.
+     */
     @Synchronized
-    override fun loadForRequest(url: HttpUrl): List<Cookie> {
-        val now = System.currentTimeMillis()
-        val expired = cookies.values.filter { it.expiresAt < now }
-        if (expired.isNotEmpty()) {
-            expired.forEach { cookies.remove(it.key()) }
-            persist()
-        }
-        return cookies.values.filter { it.matches(url) }
-    }
+    override fun loadForRequest(url: HttpUrl): List<Cookie> = cookies.values.filter { it.matches(url) }
 
     @Synchronized
     fun clear() {
@@ -66,3 +67,12 @@ class PersistentCookieJar(private val prefs: SharedPreferences) : CookieJar {
         const val KEY = "cookies"
     }
 }
+
+/**
+ * Whether a Set-Cookie from the server removes the cookie: Max-Age 0 (which
+ * OkHttp reads as the earliest possible expiry) or an empty value, the two
+ * ways Better Auth signs out. Not "its expiry is before this phone's clock":
+ * the clock is the phone owner's to change.
+ */
+internal fun takesCookieAway(cookie: Cookie): Boolean =
+    cookie.expiresAt == Long.MIN_VALUE || cookie.value.isEmpty()

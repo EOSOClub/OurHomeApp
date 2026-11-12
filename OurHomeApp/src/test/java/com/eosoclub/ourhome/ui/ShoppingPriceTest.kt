@@ -25,6 +25,19 @@ class ShoppingPriceTest {
     }
 
     @Test
+    fun aCommaTypedAsTheDecimalPointIsKept() {
+        // It used to be dropped: "4,99" was saved as 499.
+        assertEquals("4.99", decimalInput("4,99"))
+        assertEquals(4.99, priceOrNull(decimalInput("4,99"))!!, 0.0)
+        assertEquals("1.5", decimalInput("1,5"))
+        // Only one point, and nothing but digits around it.
+        assertEquals("1.23", decimalInput("1.2.3"))
+        assertEquals("12.50", decimalInput("$12,50 "))
+        // A whole-number box takes digits alone.
+        assertEquals("15", decimalInput("1,5", decimals = false))
+    }
+
+    @Test
     fun rowDetailsPutTheNotesLast() {
         val item = ShoppingItem(id = "i", listId = "l", name = "Oat milk", priority = "high", recurring = true, notes = "The big carton", estimatedPrice = 4.5)
         assertEquals("$4.50 · Recurring · High priority · The big carton", itemDetails(item))

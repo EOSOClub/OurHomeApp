@@ -142,7 +142,13 @@ class TasksViewModel(private val api: ApiClient) : ViewModel() {
         // Rooms change rarely; a failure (older server) keeps the last.
         launch { runCatching { api.places() }.onSuccess { p -> state.update { it.copy(places = p) } } }
         // Every member may read the rate; a failure keeps the one the tasks carry.
-        launch { runCatching { api.pointsSettings() }.onSuccess { p -> state.update { it.copy(minutesPerPoint = p.minutesPerPoint) } } }
+        launch {
+            runCatching { api.pointsSettings() }.onSuccess { p ->
+                // Also the household's zone, which the task form's dates are in.
+                HouseholdZone.set(p.timezone)
+                state.update { it.copy(minutesPerPoint = p.minutesPerPoint) }
+            }
+        }
         state.load({ api.tasks() }, { s, v -> s.copy(tasks = v, loading = false, error = null) }, { s, e -> s.copy(loading = false, error = e) })
     }
 
@@ -1127,5 +1133,5 @@ private fun HistoryList(history: List<TaskCompletion>?, showPoints: Boolean, onU
 }
 
 private fun shortDate(iso: String): String =
-    Instant.parse(iso).atZone(java.time.ZoneId.systemDefault())
+    Instant.parse(iso).atZone(HouseholdZone.id)
         .format(java.time.format.DateTimeFormatter.ofPattern("EEE MMM d"))

@@ -143,8 +143,11 @@ class InventoryViewModel(private val api: ApiClient) : ViewModel() {
         state.update { it.copy(editing = null) }
     }
 
-    /** [place]: a picker value, or null to leave it (no rooms to pick from). */
-    fun save(item: InventoryItem, name: String, unit: String?, quantity: Double, lowThreshold: Double, reorderDays: Int?, place: String?) =
+    /**
+     * [place]: a picker value, or null to leave it (no rooms to pick from).
+     * [quantity], [lowThreshold]: null when the editor left them as they were.
+     */
+    fun save(item: InventoryItem, name: String, unit: String?, quantity: Double?, lowThreshold: Double?, reorderDays: Int?, place: String?) =
         viewModelScope.launch {
             state.update { it.copy(saving = true) }
             form.clear()
@@ -391,7 +394,7 @@ private fun ScanCard(onOpenScanHistory: () -> Unit) {
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (status == NfcStatus.Disabled) {
-                    TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_NFC_SETTINGS)) }) {
+                    TextButton(onClick = { context.openSettingsPage(Intent(Settings.ACTION_NFC_SETTINGS)) }) {
                         Text("Turn on NFC")
                     }
                 }
@@ -412,15 +415,24 @@ private fun InventoryItemEditor(
     /** False when the user may only delete this item, not change it. */
     canSave: Boolean,
     onDismiss: () -> Unit,
-    /** `place` is null when there was no picker (the item's place is left alone). */
-    onSave: (name: String, unit: String?, quantity: Double, lowThreshold: Double, reorderDays: Int?, place: String?) -> Unit,
+    /**
+     * `place` is null when there was no picker (the item's place is left
+     * alone); `quantity` and `lowThreshold` are null when their box wasn't
+     * changed (the stored amount is left alone).
+     */
+    onSave: (name: String, unit: String?, quantity: Double?, lowThreshold: Double?, reorderDays: Int?, place: String?) -> Unit,
     onDelete: (() -> Unit)?,
 ) {
     var place by remember { mutableStateOf(item.placeChoice()) }
     var name by remember { mutableStateOf(item.name) }
     var unit by remember { mutableStateOf(item.unit.orEmpty()) }
-    var quantity by remember { mutableStateOf(formatQuantity(item.quantity)) }
-    var low by remember { mutableStateOf(formatQuantity(item.lowThreshold)) }
+    // What the boxes opened with: an amount is only sent when its box changed.
+    // Sending the opening amount back with every save undid a scan or a +/-
+    // made while the editor was open (and rounded it to two places).
+    val openedQuantity = remember { formatQuantity(item.quantity) }
+    val openedLow = remember { formatQuantity(item.lowThreshold) }
+    var quantity by remember { mutableStateOf(openedQuantity) }
+    var low by remember { mutableStateOf(openedLow) }
     var days by remember { mutableStateOf(item.reorderIntervalDays?.toString().orEmpty()) }
 
     val qty = quantity.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0 }
@@ -438,7 +450,16 @@ private fun InventoryItemEditor(
         saving = saving,
         saveEnabled = canSave && name.isNotBlank() && qty != null && lowValue != null && daysValid,
         onDismiss = onDismiss,
-        onSave = { onSave(name.trim(), unit.trim().ifEmpty { null }, qty!!, lowValue!!, daysValue, place.takeIf { places != null }) },
+        onSave = {
+            onSave(
+                name.trim(),
+                unit.trim().ifEmpty { null },
+                qty.takeIf { quantity != openedQuantity },
+                lowValue.takeIf { low != openedLow },
+                daysValue,
+                place.takeIf { places != null },
+            )
+        },
         deleteLabel = "Delete item",
         onDelete = onDelete,
         error = errors.message,

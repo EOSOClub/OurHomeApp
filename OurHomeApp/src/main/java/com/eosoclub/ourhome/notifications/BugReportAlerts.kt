@@ -40,8 +40,16 @@ object BugReportAlerts {
         // All read, here or on another device (the server pushes when they
         // are). A cut-off page may just not have reached them.
         if (unread.isEmpty() && !list.hasMore) NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
-        if (fresh.isEmpty()) return
-        show(context, fresh)
+        // The notification lists every unread report, not only the new ones:
+        // a second report used to replace the first, and tapping it marked
+        // only the second read. Nothing new: one still on screen is brought
+        // up to date without a sound (a report read elsewhere leaves it); one
+        // that was swiped away stays away.
+        if (fresh.isEmpty()) {
+            if (unread.isNotEmpty() && isShowing(context)) show(context, unread, silent = true)
+            return
+        }
+        show(context, unread, silent = false)
         // Remember what we alerted about so the next poll stays quiet. Only
         // still-unread ids are worth keeping (a read one never comes back).
         val unreadIds = unread.map { it.id }.toSet()
@@ -55,14 +63,17 @@ object BugReportAlerts {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { clear() }
     }
 
-    private fun show(context: Context, reports: List<Notification>) {
+    private fun isShowing(context: Context): Boolean =
+        context.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == NOTIFICATION_ID }
+
+    private fun show(context: Context, reports: List<Notification>, silent: Boolean) {
         if (!RequestReminders.canNotify(context)) return
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Bug reports", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = "New bug reports from the household"
             },
         )
-        val title = if (reports.size == 1) reports.first().title else "${reports.size} new bug reports"
+        val title = if (reports.size == 1) reports.first().title else "${reports.size} unread bug reports"
         val text = if (reports.size == 1) reports.first().body.orEmpty() else reports.joinToString(" · ") { it.title }
         // Tapping it counts as reading them, on every device.
         val intent = Intent(context, MainActivity::class.java)
@@ -82,6 +93,7 @@ object BugReportAlerts {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setContentIntent(open)
             .setAutoCancel(true)
+            .setSilent(silent)
             // Report text can be anything - keep it off the lock screen.
             .lockScreenSafe(context, CHANNEL_ID, "New bug report")
             .build()

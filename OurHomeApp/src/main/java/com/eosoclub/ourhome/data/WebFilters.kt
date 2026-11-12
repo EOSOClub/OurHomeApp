@@ -40,6 +40,20 @@ fun usesFilter(privateDns: String?, hostname: String): Boolean =
     privateDns != null && normalizeHost(privateDns) == normalizeHost(hostname)
 
 /**
+ * Whether Private DNS is kept closed: a filter is chosen ([expected]) and the
+ * phone uses it. [read] is Private DNS as just read, null when it can't be
+ * read (no network: airplane mode); then what it was when last read
+ * ([lastOn]) stands. Unknown used to count as "not on", which let the filter
+ * be switched off in airplane mode. A filter that was never on stays
+ * settable.
+ */
+fun filterGuarded(expected: String?, read: String?, lastOn: Boolean): Boolean = when {
+    expected == null -> false
+    read == null -> lastOn
+    else -> usesFilter(read, expected)
+}
+
+/**
  * The web filter on a supervised child's phone (web LookAfterDTO webFilter).
  * [filter]: the one chosen ([WebFilterChoice.key]), null when none. [on]:
  * whether their phone uses it; null when none is chosen, no phone checked in

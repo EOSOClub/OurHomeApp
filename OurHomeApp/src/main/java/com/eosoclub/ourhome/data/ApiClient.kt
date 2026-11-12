@@ -33,6 +33,9 @@ import java.util.concurrent.TimeUnit
  * [status]: the HTTP status when the server answered with an error, for callers that tell them apart.
  * [code]: the server's machine code for the refusal (`details.code`, e.g. "check_needed"); null when it sent none.
  */
+/** The most a product picture from another site may weigh ([ApiClient.remoteImage]). */
+private const val REMOTE_IMAGE_MAX_BYTES = 5_000_000L
+
 class ApiException(
     message: String,
     val status: Int? = null,
@@ -493,15 +496,24 @@ class ApiClient(
     private val outside = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        // The whole download: a site that trickles bytes forever can't hold it open.
+        .callTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    /** A product picture from [url] (any site), or null if it can't be had; at most 5 MB. */
+    /**
+     * A product picture from [url] (any site), or null if it can't be had; at
+     * most 5 MB. The link is whatever a member saved, and every viewer's app
+     * fetches it, so the limit holds while reading: a site that names no size
+     * used to be read whole into memory first.
+     */
     suspend fun remoteImage(url: String): ByteArray? = withContext(Dispatchers.IO) {
         runCatching {
             outside.newCall(Request.Builder().url(url).get().build()).execute().use { res ->
                 val body = res.body
-                if (!res.isSuccessful || body.contentLength() > 5_000_000) null
-                else body.bytes().takeIf { it.size <= 5_000_000 }
+                if (!res.isSuccessful || body.contentLength() > REMOTE_IMAGE_MAX_BYTES) return@use null
+                val source = body.source()
+                // True once more than the limit has arrived: too big, stop reading.
+                if (source.request(REMOTE_IMAGE_MAX_BYTES + 1)) null else source.readByteArray()
             }
         }.getOrNull()
     }
@@ -583,12 +595,18 @@ class ApiClient(
             InventoryItem.serializer(),
         )
 
+    /**
+     * [quantity] and [lowThreshold]: null leaves the stored one alone. The
+     * editor sends them only when they were changed in it: sent every time,
+     * a rename put back the amount the editor opened with (rounded to two
+     * places), undoing a scan or a +/- made meanwhile.
+     */
     suspend fun updateInventoryItem(
         itemId: String,
         name: String,
         unit: String?,
-        quantity: Double,
-        lowThreshold: Double,
+        quantity: Double?,
+        lowThreshold: Double?,
         reorderIntervalDays: Int?,
         /** Where it's kept, as a picker value; null = unchanged (no rooms to pick from). */
         place: String? = null,
@@ -600,8 +618,8 @@ class ApiClient(
                     put("itemId", itemId)
                     put("name", name)
                     put("unit", unit)
-                    put("quantity", quantity)
-                    put("lowThreshold", lowThreshold)
+                    quantity?.let { put("quantity", it) }
+                    lowThreshold?.let { put("lowThreshold", it) }
                     put("reorderIntervalDays", reorderIntervalDays)
                     place?.let { putPlace(it) }
                 },
